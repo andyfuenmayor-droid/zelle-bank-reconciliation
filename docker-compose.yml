@@ -10,7 +10,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      PORT: ${PORT:-8540}
+      PORT: ${PORT:-8550}
       DATABASE_URL: ${DATABASE_URL}
       PG_POOL_MAX: ${PG_POOL_MAX:-20}
       PG_SSL_ENABLED: ${PG_SSL_ENABLED:-false}

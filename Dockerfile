@@ -11,8 +11,8 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-EXPOSE 8540
-ENV PORT=8540
+EXPOSE 8550
+ENV PORT=8550
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["npx", "next", "start", "-p", "8540"]
+CMD ["npx", "next", "start", "-p", "8550"]

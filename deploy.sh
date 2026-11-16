@@ -6,22 +6,22 @@ APP_DIR="/opt/zelle-bank-reconciliation"
 PG_CONTAINER="operadora-postgres"
 PG_USER="${POSTGRES_USER:-admin_db}"
 PG_DB="${POSTGRES_DB:-operadora_production}"
-APP_PORT=8540
+APP_PORT=8550
 
 echo "🚀 Iniciando despliegue de Zelle Bank Reconciliation en DigitalOcean..."
 
-# 1. Recuperar credenciales de PostgreSQL del servidor si no existe .env local
-if [ ! -f .env ]; then
-  if [ -f /opt/operadora-cms-web/.env ]; then
-    echo "🔑 Leyendo credenciales de PostgreSQL desde /opt/operadora-cms-web/.env..."
-    PG_PASS=$(grep -E '^POSTGRES_PASSWORD=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
-    PG_USER_ENV=$(grep -E '^POSTGRES_USER=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
-    PG_DB_ENV=$(grep -E '^POSTGRES_DB=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
-    [ -n "$PG_USER_ENV" ] && PG_USER="$PG_USER_ENV"
-    [ -n "$PG_DB_ENV" ] && PG_DB="$PG_DB_ENV"
-  fi
+# 1. Recuperar credenciales de PostgreSQL del servidor
+PG_PASS=""
+if [ -f /opt/operadora-cms-web/.env ]; then
+  echo "🔑 Leyendo credenciales de PostgreSQL desde /opt/operadora-cms-web/.env..."
+  PG_PASS=$(grep -E '^POSTGRES_PASSWORD=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
+  PG_USER_ENV=$(grep -E '^POSTGRES_USER=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
+  PG_DB_ENV=$(grep -E '^POSTGRES_DB=' /opt/operadora-cms-web/.env | cut -d'=' -f2- | tr -d '\r"' || true)
+  [ -n "$PG_USER_ENV" ] && PG_USER="$PG_USER_ENV"
+  [ -n "$PG_DB_ENV" ] && PG_DB="$PG_DB_ENV"
+fi
 
-  cat <<EOF > .env
+cat <<EOF > .env
 PORT=${APP_PORT}
 NODE_ENV=production
 DATABASE_URL=postgresql://${PG_USER}:${PG_PASS:-WZjf5eNhdCX4GJSnsAuF2H1t}@127.0.0.1:5432/${PG_DB}
@@ -30,9 +30,8 @@ PG_SSL_ENABLED=false
 CRON_SECRET=mbe_cron_zelle_secret_2026
 DEFAULT_FEE_PERCENTAGE=4.00
 EOF
-  chmod 600 .env
-  echo "✅ Archivo .env generado correctamente."
-fi
+chmod 600 .env
+echo "✅ Archivo .env configurado en puerto ${APP_PORT}."
 
 # 2. Aplicar esquema SQL (tablas bank_email_alerts, ordenes_pago_pendientes y función fn_conciliar_pago_zelle) en PostgreSQL
 echo "🗄️ Creando/actualizando tablas e índices en el contenedor PostgreSQL ($PG_CONTAINER -> $PG_DB)..."
