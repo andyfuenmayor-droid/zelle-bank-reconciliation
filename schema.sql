@@ -215,13 +215,8 @@ BEGIN
           ) >= 0.45;
 
         IF v_candidate_count = 1 THEN
-            SELECT
-                o.*,
-                GREATEST(
-                    similarity(UPPER(unaccent(COALESCE(o.nombre_remitente_reportado, ''))), v_norm_sender),
-                    similarity(UPPER(unaccent(COALESCE(o.cliente_nombre, ''))), v_norm_sender)
-                )::NUMERIC(5,4)
-            INTO v_orden, v_best_score
+            SELECT o.*
+            INTO v_orden
             FROM ordenes_pago_pendientes o
             WHERE o.estado = 'PENDIENTE'
               AND o.monto_esperado = v_alert.monto_bruto
@@ -233,6 +228,11 @@ BEGIN
             FOR UPDATE SKIP LOCKED;
 
             IF FOUND THEN
+                v_best_score := GREATEST(
+                    similarity(UPPER(unaccent(COALESCE(v_orden.nombre_remitente_reportado, ''))), v_norm_sender),
+                    similarity(UPPER(unaccent(COALESCE(v_orden.cliente_nombre, ''))), v_norm_sender)
+                )::NUMERIC(5,4);
+
                 UPDATE ordenes_pago_pendientes
                 SET estado = 'CONCILIADO',
                     alerta_conciliada_id = v_alert.id,
