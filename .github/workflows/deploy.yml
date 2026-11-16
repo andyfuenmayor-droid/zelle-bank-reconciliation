@@ -1,0 +1,69 @@
+name: Deploy Zelle Bank Reconciliation to DigitalOcean
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy & Migrate PostgreSQL on DigitalOcean via SSH
+        env:
+          KEY_1: ${{ secrets.SSH_KEY }}
+          KEY_2: ${{ secrets.SSH_PRIVATE_KEY }}
+          KEY_3: ${{ secrets.DEPLOY_KEY }}
+          KEY_4: ${{ secrets.PRIVATE_KEY }}
+          KEY_5: ${{ secrets.ID_ED25519 }}
+          KEY_6: ${{ secrets.ED25519 }}
+          KEY_7: ${{ secrets.CLAVE_SSH }}
+          KEY_8: ${{ secrets.SSH }}
+          KEY_9: ${{ secrets.DO_SSH_KEY }}
+          KEY_10: ${{ secrets.DIGITALOCEAN_SSH_KEY }}
+          KEY_VAR_1: ${{ vars.SSH_KEY }}
+          KEY_VAR_2: ${{ vars.SSH_PRIVATE_KEY }}
+          KEY_VAR_3: ${{ vars.DEPLOY_KEY }}
+          HOST_A: ${{ secrets.SSH_HOST }}
+          HOST_B: ${{ secrets.SERVER_IP }}
+          HOST_VAR: ${{ vars.SSH_HOST }}
+          USER_A: ${{ secrets.SSH_USERNAME }}
+          USER_VAR: ${{ vars.SSH_USERNAME }}
+        run: |
+          SSH_KEY=""
+          [ -n "$KEY_1" ] && SSH_KEY="$KEY_1"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_2" ] && SSH_KEY="$KEY_2"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_3" ] && SSH_KEY="$KEY_3"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_4" ] && SSH_KEY="$KEY_4"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_5" ] && SSH_KEY="$KEY_5"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_6" ] && SSH_KEY="$KEY_6"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_7" ] && SSH_KEY="$KEY_7"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_8" ] && SSH_KEY="$KEY_8"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_9" ] && SSH_KEY="$KEY_9"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_10" ] && SSH_KEY="$KEY_10"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_VAR_1" ] && SSH_KEY="$KEY_VAR_1"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_VAR_2" ] && SSH_KEY="$KEY_VAR_2"
+          [ -z "$SSH_KEY" ] && [ -n "$KEY_VAR_3" ] && SSH_KEY="$KEY_VAR_3"
+
+          SSH_HOST="${HOST_A:-${HOST_B:-${HOST_VAR:-67.205.150.98}}}"
+          SSH_USER="${USER_A:-${USER_VAR:-root}}"
+
+          if [ -z "$SSH_KEY" ]; then
+            echo "::error::No se encontró clave SSH configurada en los Secrets del repositorio."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_deploy "$SSH_USER@$SSH_HOST" << 'EOF'
+            set -e
+            [ -d /opt/zelle-bank-reconciliation/.git ] || git clone https://github.com/andyfuenmayor-droid/zelle-bank-reconciliation.git /opt/zelle-bank-reconciliation
+            cd /opt/zelle-bank-reconciliation
+            git config --global --add safe.directory "*" || true
+            git fetch origin main
+            git reset --hard origin/main
+            bash deploy.sh
+          EOF

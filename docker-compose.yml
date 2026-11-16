@@ -1,0 +1,18 @@
+services:
+  zelle-reconciliation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zelle-bank-reconciliation
+    restart: always
+    network_mode: "host"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-8540}
+      DATABASE_URL: ${DATABASE_URL}
+      PG_POOL_MAX: ${PG_POOL_MAX:-20}
+      PG_SSL_ENABLED: ${PG_SSL_ENABLED:-false}
+      CRON_SECRET: ${CRON_SECRET:-mbe_cron_zelle_secret_2026}
+      DEFAULT_FEE_PERCENTAGE: ${DEFAULT_FEE_PERCENTAGE:-4.00}
