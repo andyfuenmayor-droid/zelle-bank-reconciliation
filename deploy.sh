@@ -38,10 +38,10 @@ echo "🗄️ Creando/actualizando tablas e índices en el contenedor PostgreSQL
 docker exec -i "$PG_CONTAINER" psql -v ON_ERROR_STOP=1 -U "$PG_USER" -d "$PG_DB" < schema.sql
 
 # Notificar a PostgREST para que recargue el caché de esquema
-docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -c "NOTIFY pgrst, 'reload schema';" || true
+docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -c "NOTIFY pgrst, 'reload schema';" || true
 
 echo "📋 Verificando tablas creadas en PostgreSQL ($PG_DB):"
-docker exec -i "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -c "\dt public.bank_email_alerts" -c "\dt public.ordenes_pago_pendientes" -c "\df public.fn_conciliar_pago_zelle"
+docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -c "\dt public.bank_email_alerts" -c "\dt public.ordenes_pago_pendientes" -c "\df public.fn_conciliar_pago_zelle"
 
 # 3. Levantar contenedor de la aplicación Next.js
 echo "📦 Construyendo y levantando contenedor Docker zelle-bank-reconciliation en puerto $APP_PORT..."
