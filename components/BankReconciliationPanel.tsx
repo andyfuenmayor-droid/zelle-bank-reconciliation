@@ -192,7 +192,6 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] =
     useState<boolean>(false);
   const [orderClientName, setOrderClientName] = useState<string>('');
-  const [orderClientEmail, setOrderClientEmail] = useState<string>('');
   const [orderZelleSender, setOrderZelleSender] = useState<string>('');
   const [orderBank, setOrderBank] = useState<BankName>('CITIBANK');
   const [orderAmount, setOrderAmount] = useState<string>('');
@@ -569,7 +568,6 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         body: JSON.stringify({
           action: 'CREATE_ORDER',
           clienteNombre: orderClientName,
-          clienteEmail: orderClientEmail,
           nombreRemitenteReportado: orderZelleSender || orderClientName,
           bancoDestino: orderBank,
           montoEsperado: Number.parseFloat(orderAmount),
