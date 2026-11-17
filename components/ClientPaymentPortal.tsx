@@ -208,6 +208,32 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     detail: string;
   } | null>(null);
 
+  // Modal emergente de confirmación de carga exitosa
+  const [successOrderModal, setSuccessOrderModal] = useState<{
+    order: PendingPaymentOrder;
+    instant: boolean;
+    tx?: FinancialTransactionRecord | null;
+  } | null>(null);
+
+  // Toast flotante de notificación rápida
+  const [showToast, setShowToast] = useState<{
+    type: 'instant' | 'success' | 'error';
+    title: string;
+    message: string;
+    codigo?: string;
+  } | null>(null);
+
+  // Auto-cierre del toast a los 6 segundos
+  useEffect(() => {
+    if (!showToast) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setShowToast(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [showToast]);
+
   // Modal preview de captura en historial
   const [previewOrder, setPreviewOrder] = useState<PendingPaymentOrder | null>(null);
 
@@ -586,14 +612,32 @@ export default function ClientPaymentPortal(): React.JSX.Element {
             tx.moneda
           )} netos (Comisión ${tx.porcentaje_comision}%).`,
         });
+        setShowToast({
+          type: 'instant',
+          title: '¡Pago Conciliado Instantáneamente!',
+          message: `Reporte ${data.order.codigo_orden} acreditado a tu saldo disponible.`,
+          codigo: data.order.codigo_orden,
+        });
       } else {
         setReportFeedback({
           type: 'pending',
-          title: `Reporte ${data.order.codigo_orden} recibido`,
+          title: `¡Reporte ${data.order.codigo_orden} Registrado con Éxito!`,
           detail:
-            'Tu captura está guardada. El motor conciliará y acreditará tu saldo automáticamente en cuanto ingrese la alerta del banco o Binance.',
+            'Tu comprobante ha sido recibido correctamente. El motor conciliará y acreditará tu saldo automáticamente en cuanto ingrese la alerta del banco o Binance.',
+        });
+        setShowToast({
+          type: 'success',
+          title: '¡Carga Registrada con Éxito!',
+          message: `Orden ${data.order.codigo_orden} en verificación bancaria.`,
+          codigo: data.order.codigo_orden,
         });
       }
+
+      setSuccessOrderModal({
+        order: data.order as PendingPaymentOrder,
+        instant: Boolean(data.instantReconciled),
+        tx: data.reconciledTransaction,
+      });
 
       setMonto('');
       setRemitente('');
@@ -605,11 +649,17 @@ export default function ClientPaymentPortal(): React.JSX.Element {
       setAiScanMessage(null);
       setAiScanDetails(null);
     } catch (err: unknown) {
+      const errMsg =
+        err instanceof Error ? err.message : 'Revisa los campos ingresados.';
       setReportFeedback({
         type: 'error',
         title: 'No se pudo registrar el pago',
-        detail:
-          err instanceof Error ? err.message : 'Revisa los campos ingresados.',
+        detail: errMsg,
+      });
+      setShowToast({
+        type: 'error',
+        title: 'Error al enviar reporte',
+        message: errMsg,
       });
     } finally {
       setIsSubmittingReport(false);
@@ -1408,6 +1458,55 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       />
                     </div>
 
+                    {/* Mensaje / Alerta visible directamente sobre el botón de envío */}
+                    {reportFeedback && (
+                      <div
+                        className={`rounded-xl border p-3.5 transition-all shadow-lg animate-in fade-in duration-200 ${
+                          reportFeedback.type === 'instant'
+                            ? 'border-emerald-500/50 bg-emerald-950/80 text-emerald-100 shadow-emerald-950/50'
+                            : reportFeedback.type === 'pending'
+                              ? 'border-amber-500/50 bg-amber-950/70 text-amber-100 shadow-amber-950/50'
+                              : 'border-rose-500/50 bg-rose-950/80 text-rose-100 shadow-rose-950/50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2.5">
+                          <div className="flex items-start gap-2.5">
+                            {reportFeedback.type === 'instant' ? (
+                              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+                            ) : reportFeedback.type === 'pending' ? (
+                              <Clock className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                            ) : (
+                              <X className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+                            )}
+                            <div>
+                              <h4 className="text-xs font-bold leading-tight">
+                                {reportFeedback.title}
+                              </h4>
+                              <p className="mt-1 text-xs opacity-90 leading-relaxed">
+                                {reportFeedback.detail}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setReportFeedback(null)}
+                            className="rounded p-1 text-slate-400 hover:text-white"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {!receiptBase64 && (
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400">
+                        <UploadCloud className="h-4 w-4 shrink-0 text-emerald-400" />
+                        <span>
+                          Sube o arrastra la captura de tu comprobante en el <strong>Paso 1</strong> para habilitar el botón de confirmación.
+                        </span>
+                      </div>
+                    )}
+
                     {/* Botón de Confirmación y Envío */}
                     <button
                       type="submit"
@@ -1576,6 +1675,145 @@ export default function ClientPaymentPortal(): React.JSX.Element {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+
+        {/* Modal de Confirmación Exitosa tras Cargar / Reportar un Pago */}
+        <Dialog.Root
+          open={successOrderModal !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSuccessOrderModal(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-700 bg-slate-900 p-6 text-slate-100 shadow-2xl animate-in zoom-in-95 duration-200">
+              <div className="flex flex-col items-center text-center">
+                {successOrderModal?.instant ? (
+                  <div className="relative mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/20 text-emerald-400 shadow-lg shadow-emerald-950/60">
+                    <CheckCircle2 className="h-9 w-9 text-emerald-400" />
+                    <span className="absolute -top-1 -right-1 flex h-4 w-4">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-4 w-4 rounded-full bg-emerald-500" />
+                    </span>
+                  </div>
+                ) : (
+                  <div className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-400 shadow-lg shadow-amber-950/60">
+                    <Clock className="h-9 w-9 text-amber-400 animate-pulse" />
+                  </div>
+                )}
+
+                <Dialog.Title className="text-lg font-extrabold text-white">
+                  {successOrderModal?.instant
+                    ? '¡Pago Conciliado Instantáneamente!'
+                    : '¡Carga Registrada con Éxito!'}
+                </Dialog.Title>
+
+                <Dialog.Description className="mt-1.5 text-xs text-slate-300">
+                  {successOrderModal?.instant
+                    ? 'Tu comprobante coincidió al instante con el extracto bancario. Tu saldo ha sido acreditado inmediatamente.'
+                    : 'Tu comprobante y reporte fueron guardados. El sistema conciliará y acreditará tu saldo de forma automática al recibir la confirmación bancaria.'}
+                </Dialog.Description>
+
+                {/* Tarjeta de detalles del pago reportado */}
+                {successOrderModal?.order && (
+                  <div className="mt-5 w-full space-y-2.5 rounded-xl border border-slate-800 bg-slate-950 p-4 text-left text-xs">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="font-semibold text-slate-400">Código de Orden:</span>
+                      <span className="inline-flex items-center gap-1 font-mono font-bold text-emerald-400">
+                        {successOrderModal.order.codigo_orden}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="font-semibold text-slate-400">Monto Reportado:</span>
+                      <span className="text-sm font-extrabold text-white">
+                        {formatAmount(
+                          successOrderModal.order.monto_esperado,
+                          successOrderModal.order.moneda
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="font-semibold text-slate-400">Destino / Banco:</span>
+                      <span className="font-medium text-slate-200">
+                        {successOrderModal.order.plataforma_esperada || successOrderModal.order.banco_destino}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <span className="font-semibold text-slate-400">Titular Remitente:</span>
+                      <span className="font-medium text-slate-200">
+                        {successOrderModal.order.remitente_reportado || successOrderModal.order.nombre_remitente_reportado}
+                      </span>
+                    </div>
+
+                    {successOrderModal.order.referencia_reportada && (
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                        <span className="font-semibold text-slate-400">Referencia / TxID:</span>
+                        <span className="font-mono text-slate-300">
+                          {successOrderModal.order.referencia_reportada}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="font-semibold text-slate-400">Estado:</span>
+                      {successOrderModal.instant ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-bold text-emerald-400 border border-emerald-500/30">
+                          <CheckCircle2 className="h-3 w-3" /> Conciliado Automáticamente
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-400 border border-amber-500/30">
+                          <Clock className="h-3 w-3" /> Verificando en Banco
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-6 flex w-full gap-3">
+                  <Dialog.Close asChild>
+                    <button
+                      type="button"
+                      className="w-full rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/60 transition hover:from-emerald-500 hover:to-teal-500"
+                    >
+                      Aceptar y Continuar
+                    </button>
+                  </Dialog.Close>
+                </div>
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* Toast flotante de notificación rápida */}
+        {showToast && (
+          <div className="fixed bottom-5 right-5 z-50 flex max-w-sm items-start gap-3 rounded-2xl border border-slate-700 bg-slate-900/95 p-4 text-slate-100 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-5 duration-300">
+            {showToast.type === 'instant' || showToast.type === 'success' ? (
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+            ) : (
+              <X className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+            )}
+            <div className="flex-1">
+              <h5 className="text-xs font-bold text-white">{showToast.title}</h5>
+              <p className="mt-0.5 text-xs text-slate-300">{showToast.message}</p>
+              {showToast.codigo && (
+                <span className="mt-1 inline-block font-mono text-[10px] font-bold text-emerald-400">
+                  {showToast.codigo}
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowToast(null)}
+              className="rounded p-1 text-slate-400 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
