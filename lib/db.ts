@@ -9,7 +9,7 @@ declare global {
   var __fintechPgPool: Pool | undefined;
 }
 
-export type SqlPrimitive = string | number | boolean | Date | null;
+export type SqlPrimitive = string | number | boolean | Date | null | ReadonlyArray<string>;
 
 function createPostgresPool(): Pool {
   const connectionString = process.env.DATABASE_URL;

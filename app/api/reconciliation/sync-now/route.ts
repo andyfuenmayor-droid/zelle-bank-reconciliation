@@ -1,13 +1,14 @@
-import { NextResponse } from 'next/server';
-import { executeAllMailboxesSync } from '@/lib/imap-sync';
+import { NextRequest, NextResponse } from 'next/server';
+import { executeUnifiedMultiChannelSync } from '@/lib/imap-sync';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const summary = await executeAllMailboxesSync();
+    const negocioId = request.headers.get('x-negocio-id')?.trim() || null;
+    const summary = await executeUnifiedMultiChannelSync(negocioId);
     return NextResponse.json({
       ok: true,
       syncedAt: new Date().toISOString(),
@@ -17,7 +18,7 @@ export async function POST(): Promise<NextResponse> {
     const message =
       error instanceof Error
         ? error.message
-        : 'Error interno durante sincronización IMAP.';
+        : 'Error interno durante sincronización multi-canal.';
 
     return NextResponse.json(
       {

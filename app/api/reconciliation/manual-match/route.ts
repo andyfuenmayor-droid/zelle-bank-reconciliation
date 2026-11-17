@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
-import { BankEmailAlertRecord, PendingPaymentOrder } from '@/types/reconciliation';
+import { getDemoStore } from '@/lib/mock-seed-data';
+import {
+  FinancialTransactionRecord,
+  PendingPaymentOrder,
+} from '@/types/reconciliation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,7 +26,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!alertId) {
       return NextResponse.json(
-        { ok: false, error: 'El identificador de la alerta (alertId) es requerido.' },
+        { ok: false, error: 'El identificador de la transacción (alertId) es requerido.' },
         { status: 400 }
       );
     }
@@ -40,44 +44,70 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const dbConnected = await isDatabaseAvailable();
 
-    // Si PostgreSQL aún no está conectado localmente, confirmar para actualización optimista en el panel
     if (!dbConnected) {
-      return NextResponse.json({
-        ok: true,
-        mode: 'DEMO_FALLBACK',
-        reconciledAt: new Date().toISOString(),
-      });
-    }
+      const store = getDemoStore();
+      const tx = store.transactions.find((t) => t.id === alertId);
+      if (!tx) {
+        return NextResponse.json(
+          { ok: false, error: 'Transacción no encontrada en modo Demo.' },
+          { status: 404 }
+        );
+      }
 
-    const updatedAlert = await withTransaction<BankEmailAlertRecord>(async (client) => {
+      let resolvedClientId: string | null = null;
       let resolvedClientName = clienteNombreManual;
       let resolvedOrderCode = '';
 
       if (ordenPagoId) {
-        const orderRes = await client.query<PendingPaymentOrder>(
-          `
-          UPDATE ordenes_pago_pendientes
-          SET estado = 'CONCILIADO',
-              alerta_conciliada_id = $1::uuid,
-              conciliado_por = 'MANUAL_ADMIN',
-              score_similitud = 1.0000,
-              conciliado_at = NOW(),
-              updated_at = NOW()
-          WHERE id = $2::uuid
-          RETURNING *;
-          `,
-          [alertId, ordenPagoId]
-        );
-
-        const matchedOrder = orderRes.rows[0];
-        if (!matchedOrder) {
-          throw new Error('La orden de pago seleccionada no existe.');
+        const order = store.orders.find((o) => o.id === ordenPagoId);
+        if (!order) {
+          return NextResponse.json(
+            { ok: false, error: 'La orden seleccionada no existe.' },
+            { status: 404 }
+          );
         }
+        order.estado = 'CONCILIADO';
+        order.transaccion_conciliada_id = tx.id;
+        order.updated_at = new Date().toISOString();
 
-        resolvedClientName = matchedOrder.cliente_nombre;
-        resolvedOrderCode = matchedOrder.codigo_orden;
+        resolvedClientId = order.cliente_id;
+        resolvedClientName = order.cliente_nombre;
+        resolvedOrderCode = order.codigo_orden;
+
+        tx.comprobante_base64 = order.comprobante_base64;
+        tx.comprobante_mime = order.comprobante_mime;
+        tx.datos_ocr_extraidos = order.datos_ocr_extraidos;
+        tx.codigo_orden = order.codigo_orden;
+      } else {
+        const clientMatch = store.clients.find(
+          (c) =>
+            c.nombre_titular.toLowerCase() === clienteNombreManual.toLowerCase()
+        );
+        if (clientMatch) {
+          resolvedClientId = clientMatch.id;
+          resolvedClientName = clientMatch.nombre_titular;
+        }
       }
 
+      const clientRecord = store.clients.find(
+        (c) =>
+          (resolvedClientId && c.id === resolvedClientId) ||
+          c.nombre_titular.toLowerCase() === resolvedClientName.toLowerCase()
+      );
+
+      if (clientRecord) {
+        resolvedClientId = clientRecord.id;
+        const feePct = tx.plataforma.startsWith('BINANCE')
+          ? clientRecord.porcentaje_comision_binance
+          : clientRecord.porcentaje_comision_zelle;
+        tx.porcentaje_comision = feePct;
+        tx.monto_comision =
+          Math.round(tx.monto_bruto * (feePct / 100) * 100) / 100;
+        tx.monto_neto =
+          Math.round((tx.monto_bruto - tx.monto_comision) * 100) / 100;
+      }
+
+      const nowIso = new Date().toISOString();
       const auditNote =
         notasConciliacion.length > 0
           ? notasConciliacion
@@ -85,27 +115,164 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             ? `Conciliación manual autorizada con orden ${resolvedOrderCode} (Titular: ${resolvedClientName}).`
             : `Conciliación manual directa asignada al cliente: ${resolvedClientName}.`;
 
-      const alertRes = await client.query<BankEmailAlertRecord>(
-        `
-        UPDATE bank_email_alerts
-        SET estado = 'CONCILIADO',
-            orden_pago_id = $2::uuid,
-            cliente_asignado_nombre = $3,
-            notas_conciliacion = $4,
-            conciliado_at = NOW()
-        WHERE id = $1::uuid
-        RETURNING *;
-        `,
-        [alertId, ordenPagoId, resolvedClientName, auditNote]
-      );
+      tx.estado = 'CONCILIADO';
+      tx.orden_conciliada_id = ordenPagoId;
+      tx.orden_pago_id = ordenPagoId;
+      tx.cliente_id = resolvedClientId;
+      tx.cliente_asignado_nombre = resolvedClientName;
+      tx.nota_auditoria = auditNote;
+      tx.notas_conciliacion = auditNote;
+      tx.conciliado_at = nowIso;
 
-      const alertRow = alertRes.rows[0];
-      if (!alertRow) {
-        throw new Error('La alerta bancaria especificada no fue encontrada.');
+      return NextResponse.json({
+        ok: true,
+        mode: 'DEMO_FALLBACK',
+        reconciledAt: nowIso,
+        alert: tx,
+      });
+    }
+
+    const updatedAlert = await withTransaction<FinancialTransactionRecord>(
+      async (client) => {
+        const currentTxRes = await client.query<{
+          id: string;
+          plataforma: string;
+          porcentaje_comision: number;
+        }>(
+          `
+          SELECT id, plataforma, porcentaje_comision
+          FROM financial_transactions_reconciliation
+          WHERE id = $1::uuid
+          FOR UPDATE;
+          `,
+          [alertId]
+        );
+
+        const currentTx = currentTxRes.rows[0];
+        if (!currentTx) {
+          throw new Error('La transacción financiera especificada no fue encontrada.');
+        }
+
+        let resolvedClientId: string | null = null;
+        let resolvedClientName = clienteNombreManual;
+        let resolvedOrderCode = '';
+
+        if (ordenPagoId) {
+          const orderRes = await client.query<PendingPaymentOrder>(
+            `
+            UPDATE ordenes_pago_pendientes
+            SET estado = 'CONCILIADO',
+                transaccion_conciliada_id = $1::uuid,
+                alerta_conciliada_id = $1::uuid,
+                conciliado_por = 'MANUAL_ADMIN',
+                score_similitud = 1.0000,
+                conciliado_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $2::uuid
+            RETURNING *;
+            `,
+            [alertId, ordenPagoId]
+          );
+
+          const matchedOrder = orderRes.rows[0];
+          if (!matchedOrder) {
+            throw new Error('La orden de pago seleccionada no existe.');
+          }
+
+          resolvedClientId = matchedOrder.cliente_id;
+          resolvedClientName = matchedOrder.cliente_nombre;
+          resolvedOrderCode = matchedOrder.codigo_orden;
+        } else {
+          const clientLookup = await client.query<{
+            id: string;
+            nombre_titular: string;
+          }>(
+            `
+            SELECT id, nombre_titular
+            FROM clientes_titulares
+            WHERE UPPER(TRIM(nombre_titular)) = UPPER(TRIM($1))
+            LIMIT 1;
+            `,
+            [clienteNombreManual]
+          );
+          if (clientLookup.rows[0]) {
+            resolvedClientId = clientLookup.rows[0].id;
+            resolvedClientName = clientLookup.rows[0].nombre_titular;
+          }
+        }
+
+        let effectiveFee = currentTx.porcentaje_comision;
+        if (resolvedClientId) {
+          const feeLookup = await client.query<{
+            porcentaje_comision_zelle: number;
+            porcentaje_comision_binance: number;
+          }>(
+            `
+            SELECT porcentaje_comision_zelle, porcentaje_comision_binance
+            FROM clientes_titulares
+            WHERE id = $1::uuid
+            LIMIT 1;
+            `,
+            [resolvedClientId]
+          );
+          const feeRow = feeLookup.rows[0];
+          if (feeRow) {
+            effectiveFee = currentTx.plataforma.startsWith('BINANCE')
+              ? feeRow.porcentaje_comision_binance
+              : feeRow.porcentaje_comision_zelle;
+          }
+        }
+
+        const auditNote =
+          notasConciliacion.length > 0
+            ? notasConciliacion
+            : resolvedOrderCode
+              ? `Conciliación manual autorizada con orden ${resolvedOrderCode} (Titular: ${resolvedClientName}).`
+              : `Conciliación manual directa asignada al cliente: ${resolvedClientName}.`;
+
+        const txRes = await client.query<FinancialTransactionRecord>(
+          `
+          UPDATE financial_transactions_reconciliation
+          SET estado = 'CONCILIADO',
+              porcentaje_comision = $2,
+              orden_conciliada_id = $3::uuid,
+              cliente_id = $4::uuid,
+              cliente_asignado_nombre = $5,
+              nota_auditoria = $6,
+              conciliado_at = NOW()
+          WHERE id = $1::uuid
+          RETURNING
+            *,
+            external_unique_id AS message_id,
+            plataforma AS banco,
+            remitente_o_contraparte AS remitente_o_destinatario,
+            COALESCE(raw_payload->>'raw_body', raw_payload::text) AS raw_body,
+            CASE
+              WHEN origen_deteccion = 'EMAIL_AI' THEN 'AI_FALLBACK'
+              WHEN origen_deteccion = 'BINANCE_API' THEN 'BINANCE_API'
+              ELSE 'REGEX'
+            END AS metodo_extraccion,
+            orden_conciliada_id AS orden_pago_id,
+            nota_auditoria AS notas_conciliacion;
+          `,
+          [
+            alertId,
+            effectiveFee,
+            ordenPagoId,
+            resolvedClientId,
+            resolvedClientName,
+            auditNote,
+          ]
+        );
+
+        const row = txRes.rows[0];
+        if (!row) {
+          throw new Error('No se pudo actualizar la transacción.');
+        }
+
+        return row;
       }
-
-      return alertRow;
-    });
+    );
 
     return NextResponse.json({
       ok: true,

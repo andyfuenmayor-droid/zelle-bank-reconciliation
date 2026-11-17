@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Conciliación Bancaria Zelle & Transferencias | Citibank & TD Bank',
+  title: 'Conciliación Multi-Canal Zelle & Binance | Portal FinTech',
   description:
-    'Módulo FinTech de conciliación automática de pagos Zelle y transferencias vía IMAP, Regex + AI Fallback y PostgreSQL puro.',
+    'Plataforma FinTech de conciliación automática de pagos Zelle (Citibank / TD Bank) y Binance (Pay / P2P / On-Chain) con Portal de Clientes y PostgreSQL puro.',
 };
 
 export default function RootLayout({

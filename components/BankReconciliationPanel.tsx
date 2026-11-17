@@ -1,26 +1,40 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
+  AlertCircle,
   AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
+  Bot,
+  Briefcase,
   Building2,
+  Check,
   CheckCircle2,
   Clock,
+  Coins,
+  Copy,
   Cpu,
   DollarSign,
+  ExternalLink,
+  Eye,
   FilePlus2,
   FileText,
   Filter,
+  Globe,
   HelpCircle,
+  ImageIcon,
   Inbox,
   KeyRound,
   Loader2,
+  Lock,
+  LogIn,
+  LogOut,
   Mail,
   MailPlus,
-  Percent,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -34,32 +48,49 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import {
-  INITIAL_DEMO_ALERTS,
-  INITIAL_DEMO_PENDING_ORDERS,
-} from '@/lib/mock-seed-data';
+import LandingPageView from '@/components/LandingPageView';
 import {
   AlertStatus,
+  AssignedReceivingAccount,
   BankEmailAlertRecord,
-  BankName,
+  BusinessUserRecord,
+  BusinessUserRole,
   ClientAccountRecord,
+  CurrencyType,
+  ExpectedPlatformType,
   FinancialSummaryMetrics,
   ImapMailboxRecord,
   MovementType,
   PendingPaymentOrder,
+  PlatformType,
 } from '@/types/reconciliation';
 
-type ActiveTab = 'ALERTS' | 'CLIENTS' | 'MAILBOXES';
+const STORAGE_BUSINESS_USER_KEY = 'fintech_business_user_id';
+const STORAGE_ACTIVE_NEGOCIO_KEY = 'fintech_active_negocio_id';
 
-const usdFormatter = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
+type ActiveTab = 'ALERTS' | 'CLIENTS' | 'MAILBOXES' | 'BUSINESS_USERS';
 
-function formatUsd(amount: number): string {
-  return usdFormatter.format(Number.isFinite(amount) ? amount : 0);
+interface LightboxContext {
+  title: string;
+  comprobanteBase64: string;
+  order: PendingPaymentOrder | null;
+  tx: BankEmailAlertRecord | null;
+}
+
+function formatMoney(amount: number, currency: CurrencyType | string = 'USD'): string {
+  const safe = Number.isFinite(amount) ? amount : 0;
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(safe);
+
+  if (currency === 'USDT') {
+    return `${formatted} USDT`;
+  }
+  if (currency === 'VES') {
+    return `${formatted} VES`;
+  }
+  return `$${formatted}`;
 }
 
 function formatDateTime(isoString: string | null): string {
@@ -76,6 +107,82 @@ function formatDateTime(isoString: string | null): string {
   }).format(date);
 }
 
+function getPlatformBadgeMeta(platform: PlatformType): {
+  label: string;
+  badgeClass: string;
+} {
+  switch (platform) {
+    case 'CITIBANK':
+      return {
+        label: 'Citibank',
+        badgeClass: 'border-sky-500/30 bg-sky-500/15 text-sky-300',
+      };
+    case 'TD_BANK':
+      return {
+        label: 'TD Bank',
+        badgeClass: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300',
+      };
+    case 'BINANCE_PAY':
+      return {
+        label: 'Binance Pay',
+        badgeClass: 'border-amber-500/30 bg-amber-500/15 text-amber-300',
+      };
+    case 'BINANCE_P2P':
+      return {
+        label: 'Binance P2P',
+        badgeClass: 'border-yellow-500/30 bg-yellow-500/15 text-yellow-300',
+      };
+    case 'BINANCE_ONCHAIN':
+      return {
+        label: 'Depósito Red',
+        badgeClass: 'border-purple-500/30 bg-purple-500/15 text-purple-300',
+      };
+    default:
+      return {
+        label: 'Otro',
+        badgeClass: 'border-slate-600 bg-slate-800 text-slate-300',
+      };
+  }
+}
+
+function platformDefaultLabel(platform: ExpectedPlatformType): string {
+  switch (platform) {
+    case 'CITIBANK':
+      return 'Citibank Zelle';
+    case 'TD_BANK':
+      return 'TD Bank Zelle';
+    case 'BINANCE_PAY':
+      return 'Binance Pay';
+    case 'BINANCE_P2P':
+      return 'Binance P2P';
+    case 'BINANCE_ONCHAIN':
+      return 'Depósito Red USDT';
+  }
+}
+
+function platformDefaultCurrency(platform: ExpectedPlatformType): CurrencyType {
+  return platform.startsWith('BINANCE') ? 'USDT' : 'USD';
+}
+
+function mapMailboxesToAssignedAccounts(
+  list: ReadonlyArray<ImapMailboxRecord>
+): AssignedReceivingAccount[] {
+  return list
+    .filter((mb) => mb.activo)
+    .map((mb) => {
+      const plat: ExpectedPlatformType = mb.plataforma ?? 'CITIBANK';
+      const curr: CurrencyType = mb.moneda ?? platformDefaultCurrency(plat);
+      return {
+        id: mb.id,
+        mailbox_id: mb.id,
+        plataforma: plat,
+        alias: mb.alias || platformDefaultLabel(plat),
+        cuenta_receptora: mb.cuenta_receptora || mb.email_address,
+        moneda: curr,
+      };
+    });
+}
+
 const SAMPLE_TEMPLATES: ReadonlyArray<{
   label: string;
   from: string;
@@ -83,7 +190,7 @@ const SAMPLE_TEMPLATES: ReadonlyArray<{
   body: string;
 }> = [
   {
-    label: 'Citibank Zelle Recibido (Inglés)',
+    label: 'Citibank Zelle (Inglés)',
     from: 'alerts@citibank.com',
     subject: 'Citibank® Alert: You received a Zelle® payment',
     body: `<html><body>
@@ -98,7 +205,7 @@ const SAMPLE_TEMPLATES: ReadonlyArray<{
     </body></html>`,
   },
   {
-    label: 'TD Bank Zelle de Tercero / LLC (Inglés)',
+    label: 'TD Bank Zelle LLC (Inglés)',
     from: 'no-reply@tdbank.com',
     subject: 'TD Bank: Zelle® payment deposited',
     body: `TD Bank Online Banking Alert
@@ -108,7 +215,7 @@ Sender Name: GLOBAL LOGISTICS HOLDINGS LLC
 Confirmation Code: TDZ77482910`,
   },
   {
-    label: 'Citibank Zelle Recibido (Español)',
+    label: 'Citibank Zelle (Español)',
     from: 'notificaciones@alerts.citibank.com',
     subject: 'Alerta de Citibank: Recibiste un pago con Zelle®',
     body: `Hola:
@@ -117,25 +224,85 @@ Monto: $780.00
 Remitente: GABRIELA CAROLINA MENDEZ
 Número de confirmación: CITI330194827`,
   },
+  {
+    label: 'Binance Pay Recibido (USDT)',
+    from: 'do-not-reply@binance.com',
+    subject: 'Binance Pay: You have received 320.00 USDT',
+    body: `Binance Pay Notification
+You have received 320.00 USDT via Binance Pay.
+From: CarlosMendoza_Pay
+Amount: 320.00 USDT
+Transaction ID: 293849208877`,
+  },
+  {
+    label: 'Binance P2P Completado (USDT)',
+    from: 'directmail.binance.com <do-not-reply@directmail.binance.com>',
+    subject: '[Binance] P2P Order Completed - 206649182736999',
+    body: `Binance P2P Order Completed
+Order Type: BUY
+Amount: 640.00 USDT
+Counterparty: AndesExchange_VE
+Order Number: 206649182736999`,
+  },
+  {
+    label: 'Binance On-Chain Depósito TRC20',
+    from: 'do-not-reply@binance.com',
+    subject: '[Binance] Deposit Confirmed - 500.00 USDT',
+    body: `Deposit Confirmed
+Your deposit of 500.00 USDT has been credited to your Binance spot wallet.
+Network: TRX (TRC20)
+TxID: TX88492011A9F82C1`,
+  },
 ];
 
 export default function BankReconciliationPanel(): React.JSX.Element {
+  // Autenticación y Multi-Negocio
+  const [currentBusinessUser, setCurrentBusinessUser] =
+    useState<BusinessUserRecord | null>(null);
+  const [businessUsers, setBusinessUsers] = useState<BusinessUserRecord[]>([]);
+  const [activeNegocioId, setActiveNegocioId] = useState<string>('');
+  const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [loginEmail, setLoginEmail] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isSubmittingLogin, setIsSubmittingLogin] = useState<boolean>(false);
+  const [isPreviewingLanding, setIsPreviewingLanding] = useState<boolean>(false);
+
+  // Modal Crear / Editar Cuenta de Negocio
+  const [isBusinessUserModalOpen, setIsBusinessUserModalOpen] =
+    useState<boolean>(false);
+  const [editingBusinessUserId, setEditingBusinessUserId] = useState<
+    string | null
+  >(null);
+  const [bizName, setBizName] = useState<string>('');
+  const [bizOwnerName, setBizOwnerName] = useState<string>('');
+  const [bizEmail, setBizEmail] = useState<string>('');
+  const [bizPhone, setBizPhone] = useState<string>('');
+  const [bizPassword, setBizPassword] = useState<string>('');
+  const [bizRole, setBizRole] = useState<BusinessUserRole>('NEGOCIO');
+  const [isSavingBusinessUser, setIsSavingBusinessUser] =
+    useState<boolean>(false);
+  const [lastBusinessCredentials, setLastBusinessCredentials] = useState<{
+    negocio: string;
+    email: string;
+    password: string;
+  } | null>(null);
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('ALERTS');
 
-  const [alerts, setAlerts] = useState<BankEmailAlertRecord[]>([
-    ...INITIAL_DEMO_ALERTS,
-  ]);
-  const [pendingOrders, setPendingOrders] = useState<PendingPaymentOrder[]>([
-    ...INITIAL_DEMO_PENDING_ORDERS,
-  ]);
+  const [alerts, setAlerts] = useState<BankEmailAlertRecord[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<PendingPaymentOrder[]>([]);
   const [clients, setClients] = useState<ClientAccountRecord[]>([]);
   const [mailboxes, setMailboxes] = useState<ImapMailboxRecord[]>([]);
   const [dataSourceMode, setDataSourceMode] = useState<
     'POSTGRESQL_LIVE' | 'DEMO_FALLBACK'
   >('DEMO_FALLBACK');
 
-  // Estados de filtros
-  const [bankFilter, setBankFilter] = useState<'TODOS' | BankName>('TODOS');
+  // Filtros
+  const [platformFilter, setPlatformFilter] = useState<'TODOS' | PlatformType>(
+    'TODOS'
+  );
   const [movementFilter, setMovementFilter] = useState<'TODOS' | MovementType>(
     'TODOS'
   );
@@ -144,15 +311,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Estados de carga y feedback
+  // Estados UI / Feedback
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSyncingImap, setIsSyncingImap] = useState<boolean>(false);
+  const [portalLinkCopied, setPortalLinkCopied] = useState<boolean>(false);
   const [bannerMessage, setBannerMessage] = useState<{
     type: 'success' | 'info' | 'warning' | 'error';
     text: string;
   } | null>(null);
 
-  // Estado del Modal de Conciliación Manual
+  // Modal Conciliación Manual
   const [selectedAlertForMatch, setSelectedAlertForMatch] =
     useState<BankEmailAlertRecord | null>(null);
   const [selectedOrderId, setSelectedOrderId] = useState<string>('');
@@ -160,11 +328,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [manualNotes, setManualNotes] = useState<string>('');
   const [isSubmittingMatch, setIsSubmittingMatch] = useState<boolean>(false);
 
-  // Estado del Modal de Inspección de Correo Crudo
+  // Modal Inspector Crudo / Payload
   const [inspectedAlert, setInspectedAlert] =
     useState<BankEmailAlertRecord | null>(null);
 
-  // Estado del Modal de Prueba del Motor de Parseo Híbrido
+  // Lightbox Visor de Captura Lado a Lado
+  const [lightboxData, setLightboxData] = useState<LightboxContext | null>(
+    null
+  );
+
+  // Modal Simulador Multi-Canal
   const [isSimulatorOpen, setIsSimulatorOpen] = useState<boolean>(false);
   const [simFrom, setSimFrom] = useState<string>(
     SAMPLE_TEMPLATES[0]?.from ?? 'alerts@citibank.com'
@@ -177,30 +350,42 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
 
-  // Estados para Crear Cuenta de Cliente (Titular)
+  // Modal Crear / Editar Cliente y Credenciales del Portal
   const [isNewClientModalOpen, setIsNewClientModalOpen] =
     useState<boolean>(false);
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [newClientName, setNewClientName] = useState<string>('');
   const [newClientEmail, setNewClientEmail] = useState<string>('');
   const [newClientPhone, setNewClientPhone] = useState<string>('');
-  const [newClientZelleSenders, setNewClientZelleSenders] =
-    useState<string>('');
-  const [newClientFee, setNewClientFee] = useState<string>('4.00');
+  const [newClientPin, setNewClientPin] = useState<string>('');
+  const [newClientFeeZelle, setNewClientFeeZelle] = useState<string>('4.00');
+  const [newClientFeeBinance, setNewClientFeeBinance] =
+    useState<string>('1.50');
+  const [newClientAssignedAccounts, setNewClientAssignedAccounts] = useState<
+    AssignedReceivingAccount[]
+  >([]);
   const [isSavingClient, setIsSavingClient] = useState<boolean>(false);
+  const [lastPortalCredentials, setLastPortalCredentials] = useState<{
+    nombre: string;
+    email: string;
+    pin: string;
+  } | null>(null);
 
-  // Estados para Crear Orden / Reporte de Pago Esperado
+  // Modal Crear Orden Esperada
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] =
     useState<boolean>(false);
   const [orderClientName, setOrderClientName] = useState<string>('');
   const [orderZelleSender, setOrderZelleSender] = useState<string>('');
-  const [orderBank, setOrderBank] = useState<BankName>('CITIBANK');
+  const [orderBank, setOrderBank] = useState<ExpectedPlatformType>('CITIBANK');
+  const [orderCurrency, setOrderCurrency] = useState<CurrencyType>('USD');
   const [orderAmount, setOrderAmount] = useState<string>('');
   const [orderReference, setOrderReference] = useState<string>('');
   const [isSavingOrder, setIsSavingOrder] = useState<boolean>(false);
 
-  // Estados para Agregar Correo IMAP a Monitorear
+  // Formulario Buzón IMAP / Cuenta Receptora Monitoreada
+  const [editingMailboxId, setEditingMailboxId] = useState<string | null>(null);
   const [mailboxAlias, setMailboxAlias] = useState<string>(
-    'Buzón Principal Alertas Citibank & TD Bank'
+    'Buzón Principal Alertas Citibank, TD Bank & Binance'
   );
   const [mailboxEmail, setMailboxEmail] = useState<string>('');
   const [mailboxPassword, setMailboxPassword] = useState<string>('');
@@ -208,19 +393,78 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [mailboxPort, setMailboxPort] = useState<string>('993');
   const [mailboxFolder, setMailboxFolder] = useState<string>('INBOX');
   const [mailboxBanks, setMailboxBanks] = useState<string>(
-    'CITIBANK_Y_TD_BANK'
+    'CITIBANK_TD_BINANCE'
   );
+  const [mailboxPlatform, setMailboxPlatform] =
+    useState<ExpectedPlatformType>('CITIBANK');
+  const [mailboxReceivingAccount, setMailboxReceivingAccount] =
+    useState<string>('');
+  const [mailboxCurrency, setMailboxCurrency] = useState<CurrencyType>('USD');
   const [verifyImapBeforeSave, setVerifyImapBeforeSave] =
     useState<boolean>(true);
   const [isSavingMailbox, setIsSavingMailbox] = useState<boolean>(false);
 
+  // Estados de Configuración de Inteligencia Artificial
+  const [aiSettings, setAiSettings] = useState<{
+    hasOpenAiKey: boolean;
+    openAiKeyPreview: string;
+    openAiModel: string;
+    hasGeminiKey: boolean;
+    geminiKeyPreview: string;
+    geminiModel?: string;
+    hasGroqKey?: boolean;
+    groqKeyPreview?: string;
+    groqModel?: string;
+    aiProvider: string;
+  } | null>(null);
+  const [selectedAiProvider, setSelectedAiProvider] = useState<'gemini' | 'openai' | 'groq'>('gemini');
+  const [openAiInputKey, setOpenAiInputKey] = useState<string>('');
+  const [isSavingAiConfig, setIsSavingAiConfig] = useState<boolean>(false);
+  const [isVerifyingAiConfig, setIsVerifyingAiConfig] = useState<boolean>(false);
+  const [verifyFeedback, setVerifyFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  const buildScopeHeaders = useCallback(
+    (isJson = false): Record<string, string> => {
+      const headers: Record<string, string> = {};
+      if (isJson) {
+        headers['content-type'] = 'application/json';
+      }
+      if (activeNegocioId) {
+        headers['x-negocio-id'] = activeNegocioId;
+      }
+      return headers;
+    },
+    [activeNegocioId]
+  );
+
   const fetchAllData = useCallback(async () => {
+    if (!currentBusinessUser || !activeNegocioId) {
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const [alertsRes, clientsRes, mailboxesRes] = await Promise.all([
-        fetch('/api/reconciliation/alerts', { cache: 'no-store' }),
-        fetch('/api/reconciliation/clients', { cache: 'no-store' }),
-        fetch('/api/reconciliation/mailboxes', { cache: 'no-store' }),
+      const reqHeaders = buildScopeHeaders(false);
+      const [alertsRes, clientsRes, mailboxesRes, authRes] = await Promise.all([
+        fetch('/api/reconciliation/alerts', {
+          cache: 'no-store',
+          headers: reqHeaders,
+        }),
+        fetch('/api/reconciliation/clients', {
+          cache: 'no-store',
+          headers: reqHeaders,
+        }),
+        fetch('/api/reconciliation/mailboxes', {
+          cache: 'no-store',
+          headers: reqHeaders,
+        }),
+        fetch(
+          `/api/auth/business?userId=${encodeURIComponent(currentBusinessUser.id)}`,
+          { cache: 'no-store' }
+        ),
       ]);
 
       if (alertsRes.ok) {
@@ -245,7 +489,6 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         const cData = (await clientsRes.json()) as {
           ok: boolean;
           clients?: ClientAccountRecord[];
-          pendingOrders?: PendingPaymentOrder[];
         };
         if (cData.ok && Array.isArray(cData.clients)) {
           setClients(cData.clients);
@@ -261,50 +504,323 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           setMailboxes(mData.mailboxes);
         }
       }
+
+      if (authRes.ok) {
+        const aData = (await authRes.json()) as {
+          ok: boolean;
+          user?: BusinessUserRecord;
+          businessUsers?: BusinessUserRecord[];
+        };
+        if (aData.ok && aData.user) {
+          setCurrentBusinessUser(aData.user);
+          if (Array.isArray(aData.businessUsers)) {
+            setBusinessUsers(aData.businessUsers);
+          }
+        }
+      }
     } catch {
-      // Mantiene estado previo si hay corte de red
+      // Mantener estado actual si falla red
     } finally {
       setIsLoading(false);
     }
+  }, [activeNegocioId, buildScopeHeaders, currentBusinessUser]);
+
+  // Restaurar sesión de negocio desde localStorage y revisar ?login=1
+  useEffect(() => {
+    let active = true;
+    const restoreSession = async (): Promise<void> => {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('login') === '1') {
+        setIsLoginModalOpen(true);
+      }
+
+      const savedUserId = window.localStorage.getItem(STORAGE_BUSINESS_USER_KEY);
+      if (!savedUserId) {
+        if (active) {
+          setIsCheckingAuth(false);
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch(
+          `/api/auth/business?userId=${encodeURIComponent(savedUserId)}`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) {
+          window.localStorage.removeItem(STORAGE_BUSINESS_USER_KEY);
+          window.localStorage.removeItem(STORAGE_ACTIVE_NEGOCIO_KEY);
+          return;
+        }
+        const data = (await res.json()) as {
+          ok: boolean;
+          mode?: 'POSTGRESQL_LIVE' | 'DEMO_FALLBACK';
+          user?: BusinessUserRecord;
+          businessUsers?: BusinessUserRecord[];
+        };
+        if (active && data.ok && data.user) {
+          setCurrentBusinessUser(data.user);
+          const list = data.businessUsers ?? [data.user];
+          setBusinessUsers(list);
+          const savedScope = window.localStorage.getItem(
+            STORAGE_ACTIVE_NEGOCIO_KEY
+          );
+          const validScope =
+            data.user.rol === 'SUPER_ADMIN' &&
+            savedScope &&
+            list.some((b) => b.id === savedScope)
+              ? savedScope
+              : data.user.id;
+          setActiveNegocioId(validScope);
+          if (data.mode) {
+            setDataSourceMode(data.mode);
+          }
+        }
+      } catch {
+        // Ignorar error de red al restaurar sesión
+      } finally {
+        if (active) {
+          setIsCheckingAuth(false);
+        }
+      }
+    };
+
+    void restoreSession();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  useEffect(() => {
-    void fetchAllData();
-  }, [fetchAllData]);
+  const fetchAiSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/settings', { cache: 'no-store' });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok: boolean;
+          hasOpenAiKey: boolean;
+          openAiKeyPreview: string;
+          openAiModel: string;
+          hasGeminiKey: boolean;
+          geminiKeyPreview: string;
+          geminiModel?: string;
+          hasGroqKey?: boolean;
+          groqKeyPreview?: string;
+          groqModel?: string;
+          aiProvider: string;
+        };
+        if (data.ok) {
+          setAiSettings(data);
+          if (data.aiProvider === 'gemini' || data.aiProvider === 'openai' || data.aiProvider === 'groq') {
+            setSelectedAiProvider(data.aiProvider);
+          }
+        }
+      }
+    } catch {
+      // ignorar en fallo de red
+    }
+  }, []);
 
-  // Cálculo de tarjetas de resumen financiero
+  const handleSaveAiConfig = async (
+    e: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    e.preventDefault();
+    if (!openAiInputKey.trim()) {
+      return;
+    }
+    setIsSavingAiConfig(true);
+    try {
+      const payload: Record<string, string> = {
+        ai_provider: selectedAiProvider,
+      };
+
+      if (selectedAiProvider === 'gemini') {
+        payload.gemini_api_key = openAiInputKey.trim();
+        payload.gemini_model = 'gemini-3.5-flash-lite';
+      } else if (selectedAiProvider === 'groq') {
+        payload.groq_api_key = openAiInputKey.trim();
+        payload.groq_model = 'llama-3.2-11b-vision-preview';
+      } else {
+        payload.openai_api_key = openAiInputKey.trim();
+        payload.openai_model = 'gpt-4o-mini';
+      }
+
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        message?: string;
+        error?: string;
+      };
+      if (res.ok && data.ok) {
+        await fetchAiSettings();
+        setOpenAiInputKey('');
+        const providerName =
+          selectedAiProvider === 'gemini'
+            ? 'Google Gemini (Gratis)'
+            : selectedAiProvider === 'groq'
+              ? 'Groq Cloud (Gratis)'
+              : 'OpenAI Vision';
+        setBannerMessage({
+          type: 'success',
+          text: `¡Clave de ${providerName} guardada con éxito! La lectura automática con IA en el portal de clientes está activa.`,
+        });
+      } else {
+        setBannerMessage({
+          type: 'error',
+          text: data.error ?? 'No se pudo guardar la clave de IA.',
+        });
+      }
+    } catch (err: unknown) {
+      setBannerMessage({
+        type: 'error',
+        text:
+          err instanceof Error
+            ? err.message
+            : 'Error guardando configuración de IA.',
+      });
+    } finally {
+      setIsSavingAiConfig(false);
+    }
+  };
+
+  const handleVerifyAiKey = async (): Promise<void> => {
+    if (!openAiInputKey.trim()) {
+      setBannerMessage({
+        type: 'warning',
+        text: 'Ingresa una clave para verificar antes de probar.',
+      });
+      return;
+    }
+    setIsVerifyingAiConfig(true);
+    setVerifyFeedback(null);
+    try {
+      const payload: Record<string, string> = {
+        action: 'VERIFY',
+        ai_provider: selectedAiProvider,
+      };
+
+      if (selectedAiProvider === 'gemini') {
+        payload.gemini_api_key = openAiInputKey.trim();
+      } else if (selectedAiProvider === 'groq') {
+        payload.groq_api_key = openAiInputKey.trim();
+      } else {
+        payload.openai_api_key = openAiInputKey.trim();
+      }
+
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (res.ok && data.ok) {
+        setVerifyFeedback({
+          ok: true,
+          message: data.message ?? '¡Clave válida y verificada en vivo con éxito!',
+        });
+      } else {
+        setVerifyFeedback({
+          ok: false,
+          message: data.error ?? data.message ?? 'Error verificando la clave.',
+        });
+      }
+    } catch (err: unknown) {
+      setVerifyFeedback({
+        ok: false,
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Error conectando con el servicio de verificación.',
+      });
+    } finally {
+      setIsVerifyingAiConfig(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentBusinessUser && activeNegocioId) {
+      void fetchAllData();
+      void fetchAiSettings();
+    }
+  }, [currentBusinessUser, activeNegocioId, fetchAllData, fetchAiSettings]);
+
+  // Métricas separadas para Bloque Zelle (USD) y Bloque Binance (USDT)
   const financialMetrics = useMemo<FinancialSummaryMetrics>(() => {
-    let totalBrutoRecibido = 0;
-    let totalComisionDescontada = 0;
-    let totalNetoDisponible = 0;
-    let totalBrutoEnviado = 0;
+    let zelleBrutoRecibidoUsd = 0;
+    let zelleComisionRetenidaUsd = 0;
+    let zelleNetoLiquidableUsd = 0;
+    let zelleBrutoEnviadoUsd = 0;
+
+    let binanceRecibidoUsdt = 0;
+    let binanceComisionRetenidaUsdt = 0;
+    let binanceEnviadoUsdt = 0;
+    let binanceNetoDisponibleUsdt = 0;
+
     let pagosConciliadosCount = 0;
     let pagosRevisionManualCount = 0;
     let pagosDetectadosCount = 0;
 
-    for (const alert of alerts) {
-      if (alert.tipo_movimiento === 'RECIBIDO') {
-        totalBrutoRecibido += alert.monto_bruto;
-        totalComisionDescontada += alert.monto_comision;
-        totalNetoDisponible += alert.monto_neto;
+    for (const item of alerts) {
+      const isBinance =
+        item.plataforma.startsWith('BINANCE') || item.moneda === 'USDT';
+
+      if (isBinance) {
+        if (item.tipo_movimiento === 'RECIBIDO') {
+          binanceRecibidoUsdt += item.monto_bruto;
+          binanceComisionRetenidaUsdt += item.monto_comision;
+          binanceNetoDisponibleUsdt += item.monto_neto;
+        } else {
+          binanceEnviadoUsdt += item.monto_bruto;
+        }
       } else {
-        totalBrutoEnviado += alert.monto_bruto;
+        if (item.tipo_movimiento === 'RECIBIDO') {
+          zelleBrutoRecibidoUsd += item.monto_bruto;
+          zelleComisionRetenidaUsd += item.monto_comision;
+          zelleNetoLiquidableUsd += item.monto_neto;
+        } else {
+          zelleBrutoEnviadoUsd += item.monto_bruto;
+        }
       }
 
-      if (alert.estado === 'CONCILIADO') {
+      if (item.estado === 'CONCILIADO') {
         pagosConciliadosCount += 1;
-      } else if (alert.estado === 'REVISION_MANUAL') {
+      } else if (item.estado === 'REVISION_MANUAL') {
         pagosRevisionManualCount += 1;
-      } else if (alert.estado === 'DETECTADO') {
+      } else if (item.estado === 'DETECTADO') {
         pagosDetectadosCount += 1;
       }
     }
 
+    const round = (val: number): number => Math.round(val * 100) / 100;
+
     return {
-      totalBrutoRecibido: Math.round(totalBrutoRecibido * 100) / 100,
-      totalComisionDescontada: Math.round(totalComisionDescontada * 100) / 100,
-      totalNetoDisponible: Math.round(totalNetoDisponible * 100) / 100,
-      totalBrutoEnviado: Math.round(totalBrutoEnviado * 100) / 100,
+      zelleBrutoRecibidoUsd: round(zelleBrutoRecibidoUsd),
+      zelleComisionRetenidaUsd: round(zelleComisionRetenidaUsd),
+      zelleNetoLiquidableUsd: round(zelleNetoLiquidableUsd),
+      zelleBrutoEnviadoUsd: round(zelleBrutoEnviadoUsd),
+      binanceRecibidoUsdt: round(binanceRecibidoUsdt),
+      binanceComisionRetenidaUsdt: round(binanceComisionRetenidaUsdt),
+      binanceEnviadoUsdt: round(binanceEnviadoUsdt),
+      binanceNetoDisponibleUsdt: round(binanceNetoDisponibleUsdt),
+      totalBrutoRecibido: round(zelleBrutoRecibidoUsd + binanceRecibidoUsdt),
+      totalComisionDescontada: round(
+        zelleComisionRetenidaUsd + binanceComisionRetenidaUsdt
+      ),
+      totalNetoDisponible: round(
+        zelleNetoLiquidableUsd + binanceNetoDisponibleUsdt
+      ),
+      totalBrutoEnviado: round(zelleBrutoEnviadoUsd + binanceEnviadoUsdt),
       pagosConciliadosCount,
       pagosRevisionManualCount,
       pagosDetectadosCount,
@@ -315,7 +831,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
     return alerts.filter((item) => {
-      if (bankFilter !== 'TODOS' && item.banco !== bankFilter) {
+      if (platformFilter !== 'TODOS' && item.plataforma !== platformFilter) {
         return false;
       }
       if (
@@ -328,22 +844,60 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         return false;
       }
       if (normalizedQuery.length > 0) {
-        const sender = (item.remitente_o_destinatario ?? '').toLowerCase();
+        const sender = (item.remitente_o_contraparte ?? '').toLowerCase();
         const ref = (item.referencia ?? '').toLowerCase();
         const client = (item.cliente_asignado_nombre ?? '').toLowerCase();
-        const msgId = item.message_id.toLowerCase();
+        const dedup = (item.dedup_key ?? '').toLowerCase();
         return (
           sender.includes(normalizedQuery) ||
           ref.includes(normalizedQuery) ||
           client.includes(normalizedQuery) ||
-          msgId.includes(normalizedQuery)
+          dedup.includes(normalizedQuery)
         );
       }
       return true;
     });
-  }, [alerts, bankFilter, movementFilter, statusFilter, searchQuery]);
+  }, [alerts, platformFilter, movementFilter, statusFilter, searchQuery]);
 
-  // Botón "Sincronizar Ahora" usando el endpoint interno `/api/reconciliation/sync-now`
+  // Busca orden pendiente candidata (con captura) asociada a una transacción en REVISION_MANUAL
+  const findAssociatedCaptureOrder = useCallback(
+    (tx: BankEmailAlertRecord): PendingPaymentOrder | null => {
+      const exactMatch = pendingOrders.find(
+        (o) =>
+          o.id === tx.orden_conciliada_id ||
+          (o.moneda === tx.moneda &&
+            Math.abs(o.monto_esperado - tx.monto_bruto) < 0.01 &&
+            o.plataforma_esperada === tx.plataforma)
+      );
+      if (exactMatch) {
+        return exactMatch;
+      }
+      return (
+        pendingOrders.find(
+          (o) =>
+            o.moneda === tx.moneda &&
+            Math.abs(o.monto_esperado - tx.monto_bruto) < 0.01
+        ) ?? null
+      );
+    },
+    [pendingOrders]
+  );
+
+  const handleCopyPortalLink = async (): Promise<void> => {
+    try {
+      const portalUrl = `${window.location.origin}/portal`;
+      await navigator.clipboard.writeText(portalUrl);
+      setPortalLinkCopied(true);
+      setTimeout(() => setPortalLinkCopied(false), 2500);
+    } catch {
+      setBannerMessage({
+        type: 'info',
+        text: `Portal disponible en: ${window.location.origin}/portal`,
+      });
+    }
+  };
+
+  // Sincronización Multi-Canal (IMAP + Binance API)
   const handleSyncImapNow = async (): Promise<void> => {
     setIsSyncingImap(true);
     setBannerMessage(null);
@@ -351,11 +905,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     try {
       const response = await fetch('/api/reconciliation/sync-now', {
         method: 'POST',
+        headers: buildScopeHeaders(false),
       });
 
       const payload = (await response.json()) as {
         ok: boolean;
         mailboxesProcessed?: number;
+        binanceApiConfigured?: boolean;
+        binanceFetchedCount?: number;
         insertedCount?: number;
         reconciledCount?: number;
         duplicateCount?: number;
@@ -366,56 +923,55 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       await fetchAllData();
 
       if (response.ok && payload.ok) {
-        if ((payload.mailboxesProcessed ?? 0) === 0) {
-          setActiveTab('MAILBOXES');
+        if (
+          (payload.mailboxesProcessed ?? 0) === 0 &&
+          !payload.binanceApiConfigured
+        ) {
           setBannerMessage({
             type: 'warning',
             text:
               payload.errors?.[0] ??
-              'Primero agrega el correo IMAP que recibe las alertas de Citibank / TD Bank en la pestaña "3. Correos IMAP".',
+              'Configura al menos un correo IMAP o las credenciales de Binance API.',
           });
         } else if (payload.errors && payload.errors.length > 0) {
           setBannerMessage({
             type: 'warning',
-            text: `Sincronización con avisos: ${payload.errors.join(' | ')}`,
+            text: `Sincronización completada con avisos (${payload.insertedCount ?? 0} nuevos, ${payload.reconciledCount ?? 0} conciliados): ${payload.errors.join(' | ')}`,
           });
         } else {
           setBannerMessage({
             type: 'success',
-            text: `Sincronización IMAP completada (${payload.mailboxesProcessed} buzón/es): ${payload.insertedCount ?? 0} nuevas alertas leídas, ${payload.reconciledCount ?? 0} conciliadas automáticamente y ${payload.duplicateCount ?? 0} duplicados omitidos.`,
+            text: `Sincronización Multi-Canal completada (${payload.mailboxesProcessed ?? 0} buzón/es IMAP · Binance API: ${payload.binanceFetchedCount ?? 0} mov.): ${payload.insertedCount ?? 0} nuevos, ${payload.reconciledCount ?? 0} conciliados y ${payload.duplicateCount ?? 0} duplicados omitidos por dedup_key.`,
           });
         }
       } else {
         setBannerMessage({
           type: 'error',
-          text: payload.error ?? 'Error al sincronizar buzones IMAP.',
+          text: payload.error ?? 'Error al sincronizar canales.',
         });
       }
     } catch {
       setBannerMessage({
         type: 'warning',
-        text: 'No se pudo conectar al motor IMAP.',
+        text: 'No se pudo conectar al motor de sincronización.',
       });
     } finally {
       setIsSyncingImap(false);
     }
   };
 
-  // Abrir modal de conciliación manual
   const openManualReconciliationModal = (
-    alert: BankEmailAlertRecord
+    alert: BankEmailAlertRecord,
+    preselectedOrder?: PendingPaymentOrder | null
   ): void => {
     setSelectedAlertForMatch(alert);
 
-    const exactAmountOrder = pendingOrders.find(
-      (order) =>
-        order.estado === 'PENDIENTE' &&
-        Math.abs(order.monto_esperado - alert.monto_bruto) < 0.01
-    );
+    const candidateOrder =
+      preselectedOrder ?? findAssociatedCaptureOrder(alert);
 
-    if (exactAmountOrder) {
-      setSelectedOrderId(exactAmountOrder.id);
-      setManualClientName(exactAmountOrder.cliente_nombre);
+    if (candidateOrder) {
+      setSelectedOrderId(candidateOrder.id);
+      setManualClientName(candidateOrder.cliente_nombre);
     } else {
       setSelectedOrderId('');
       setManualClientName(
@@ -424,13 +980,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
 
     setManualNotes(
-      `Verificado manualmente: Zelle enviado por (${
-        alert.remitente_o_destinatario ?? 'Sin nombre'
-      }) acreditado a la cuenta del cliente.`
+      `Verificado manualmente (${alert.plataforma}): pago de (${
+        alert.remitente_o_contraparte ?? 'Sin nombre'
+      }) acreditado tras revisar comprobante.`
     );
   };
 
-  // Confirmar conciliación manual
   const handleConfirmManualReconciliation = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
@@ -455,7 +1010,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     try {
       const response = await fetch('/api/reconciliation/manual-match', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildScopeHeaders(true),
         body: JSON.stringify({
           alertId: selectedAlertForMatch.id,
           ordenPagoId: selectedOrderId || null,
@@ -478,10 +1033,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
       setBannerMessage({
         type: 'success',
-        text: `Pago Zelle de ${formatUsd(
-          selectedAlertForMatch.monto_bruto
-        )} (Neto: ${formatUsd(
-          selectedAlertForMatch.monto_neto
+        text: `Pago de ${formatMoney(
+          selectedAlertForMatch.monto_bruto,
+          selectedAlertForMatch.moneda
+        )} (Neto: ${formatMoney(
+          result.alert?.monto_neto ?? selectedAlertForMatch.monto_neto,
+          selectedAlertForMatch.moneda
         )}) conciliado a favor de "${targetClientName}".`,
       });
       setSelectedAlertForMatch(null);
@@ -496,7 +1053,150 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
-  // Crear nuevo Cliente (Titular de Cuenta)
+  const openCreateClientModal = (): void => {
+    setEditingClientId(null);
+    setNewClientName('');
+    setNewClientEmail('');
+    setNewClientPhone('');
+    setNewClientPin(String(Math.floor(1000 + Math.random() * 9000)));
+    setNewClientFeeZelle('4.00');
+    setNewClientFeeBinance('1.50');
+    setNewClientAssignedAccounts(mapMailboxesToAssignedAccounts(mailboxes));
+    setIsNewClientModalOpen(true);
+  };
+
+  const openEditClientModal = (client: ClientAccountRecord): void => {
+    setEditingClientId(client.id);
+    setNewClientName(client.nombre_titular);
+    setNewClientEmail(client.email ?? client.email_contacto ?? '');
+    setNewClientPhone(client.telefono ?? '');
+    setNewClientPin('');
+    setNewClientFeeZelle(String(client.porcentaje_comision_zelle ?? 4.0));
+    setNewClientFeeBinance(String(client.porcentaje_comision_binance ?? 1.5));
+    const existingAssigned =
+      client.cuentas_asignadas && client.cuentas_asignadas.length > 0
+        ? client.cuentas_asignadas.map((acc) => ({ ...acc }))
+        : mapMailboxesToAssignedAccounts(mailboxes);
+    setNewClientAssignedAccounts(existingAssigned);
+    setIsNewClientModalOpen(true);
+  };
+
+  const handleToggleMailboxAssignment = (mb: ImapMailboxRecord): void => {
+    setNewClientAssignedAccounts((prev) => {
+      const exists = prev.some(
+        (acc) => acc.mailbox_id === mb.id || acc.id === mb.id
+      );
+      if (exists) {
+        return prev.filter(
+          (acc) => acc.mailbox_id !== mb.id && acc.id !== mb.id
+        );
+      }
+      const plat: ExpectedPlatformType = mb.plataforma ?? 'CITIBANK';
+      const curr: CurrencyType = mb.moneda ?? platformDefaultCurrency(plat);
+      return [
+        ...prev,
+        {
+          id: mb.id,
+          mailbox_id: mb.id,
+          plataforma: plat,
+          alias: mb.alias || platformDefaultLabel(plat),
+          cuenta_receptora: mb.cuenta_receptora || mb.email_address,
+          moneda: curr,
+        },
+      ];
+    });
+  };
+
+  const handleAddCustomAssignedAccount = (): void => {
+    setNewClientAssignedAccounts((prev) => [
+      ...prev,
+      {
+        id: `custom-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        mailbox_id: null,
+        plataforma: 'CITIBANK',
+        alias: 'Citibank Zelle',
+        cuenta_receptora: '',
+        moneda: 'USD',
+      },
+    ]);
+  };
+
+  const handleUpdateAssignedAccount = (
+    index: number,
+    patch: Partial<AssignedReceivingAccount>
+  ): void => {
+    setNewClientAssignedAccounts((prev) =>
+      prev.map((acc, idx) => {
+        if (idx !== index) {
+          return acc;
+        }
+        const nextPlatform = patch.plataforma ?? acc.plataforma;
+        const autoCurrency =
+          patch.plataforma !== undefined && patch.moneda === undefined
+            ? platformDefaultCurrency(patch.plataforma)
+            : patch.moneda ?? acc.moneda;
+        const autoAlias =
+          patch.plataforma !== undefined &&
+          (!acc.alias || acc.alias === platformDefaultLabel(acc.plataforma))
+            ? platformDefaultLabel(patch.plataforma)
+            : patch.alias ?? acc.alias;
+        return {
+          ...acc,
+          ...patch,
+          plataforma: nextPlatform,
+          moneda: autoCurrency,
+          alias: autoAlias,
+        };
+      })
+    );
+  };
+
+  const handleRemoveAssignedAccount = (index: number): void => {
+    setNewClientAssignedAccounts((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleGenerateRandomPin = (): void => {
+    setNewClientPin(String(Math.floor(1000 + Math.random() * 9000)));
+  };
+
+  const handleDeleteClient = async (id: string, nombre: string): Promise<void> => {
+    try {
+      const res = await fetch(
+        `/api/reconciliation/clients?id=${encodeURIComponent(id)}`,
+        { method: 'DELETE' }
+      );
+      if (res.ok) {
+        await fetchAllData();
+        setBannerMessage({
+          type: 'info',
+          text: `Cuenta de acceso "${nombre}" eliminada.`,
+        });
+      }
+    } catch {
+      // ignorar
+    }
+  };
+
+  const handleCopyPortalCredentials = async (creds: {
+    nombre: string;
+    email: string;
+    pin: string;
+  }): Promise<void> => {
+    try {
+      const portalUrl = `${window.location.origin}/portal`;
+      const text = `Acceso al Portal de Pagos:\nLink: ${portalUrl}\nCorreo: ${creds.email}${
+        creds.pin ? `\nPIN: ${creds.pin}` : ''
+      }`;
+      await navigator.clipboard.writeText(text);
+      setBannerMessage({
+        type: 'success',
+        text: `Credenciales de "${creds.nombre}" copiadas al portapapeles.`,
+      });
+    } catch {
+      // ignorar si el navegador bloquea clipboard
+    }
+  };
+
   const handleCreateClient = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
@@ -504,56 +1204,79 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     setIsSavingClient(true);
     setBannerMessage(null);
 
+    const isEditing = editingClientId !== null;
+    const savedName = newClientName.trim();
+    const savedEmail = newClientEmail.trim().toLowerCase();
+    const savedPin = newClientPin.trim();
+    const validAssignedAccounts = newClientAssignedAccounts
+      .map((acc) => ({
+        ...acc,
+        alias: acc.alias.trim() || platformDefaultLabel(acc.plataforma),
+        cuenta_receptora: acc.cuenta_receptora.trim(),
+      }))
+      .filter((acc) => acc.cuenta_receptora.length > 0);
+
     try {
       const response = await fetch('/api/reconciliation/clients', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildScopeHeaders(true),
         body: JSON.stringify({
-          action: 'CREATE_CLIENT',
-          nombreTitular: newClientName,
-          emailContacto: newClientEmail,
+          action: isEditing ? 'UPDATE_CLIENT' : 'CREATE_CLIENT',
+          negocioId: activeNegocioId || undefined,
+          clientId: editingClientId ?? undefined,
+          nombreTitular: savedName,
+          emailContacto: savedEmail,
           telefono: newClientPhone,
-          remitentesZelleHabituales: newClientZelleSenders,
-          porcentajeComision: Number.parseFloat(newClientFee || '4.00'),
+          pin: savedPin,
+          porcentajeComisionZelle: Number.parseFloat(newClientFeeZelle || '4.00'),
+          porcentajeComisionBinance: Number.parseFloat(
+            newClientFeeBinance || '1.50'
+          ),
+          cuentasAsignadas: validAssignedAccounts,
         }),
       });
 
       const data = (await response.json()) as {
         ok: boolean;
-        autoReconciledCount?: number;
         error?: string;
       };
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.error ?? 'No se pudo crear el cliente.');
+        throw new Error(data.error ?? 'No se pudo guardar la cuenta del cliente.');
       }
 
       await fetchAllData();
       setIsNewClientModalOpen(false);
+      setEditingClientId(null);
       setNewClientName('');
       setNewClientEmail('');
       setNewClientPhone('');
-      setNewClientZelleSenders('');
-      setNewClientFee('4.00');
+      setNewClientPin('');
+      setNewClientFeeZelle('4.00');
+      setNewClientFeeBinance('1.50');
+      setNewClientAssignedAccounts([]);
+
+      setLastPortalCredentials({
+        nombre: savedName,
+        email: savedEmail,
+        pin: savedPin,
+      });
 
       setBannerMessage({
         type: 'success',
-        text: `Cuenta de cliente "${newClientName}" creada con éxito.${
-          (data.autoReconciledCount ?? 0) > 0
-            ? ` ¡Además se conciliaron automáticamente ${data.autoReconciledCount} pago(s) Zelle que ya habían llegado de su remitente!`
-            : ''
-        }`,
+        text: `${isEditing ? 'Cuenta actualizada' : 'Cuenta de acceso creada'} para "${savedName}" (Correo: ${savedEmail}${
+          savedPin ? ` · PIN: ${savedPin}` : ''
+        }).`,
       });
     } catch (error: unknown) {
       const msg =
-        error instanceof Error ? error.message : 'Error al crear cliente.';
+        error instanceof Error ? error.message : 'Error al guardar cliente.';
       setBannerMessage({ type: 'error', text: msg });
     } finally {
       setIsSavingClient(false);
     }
   };
 
-  // Crear nueva Orden / Reporte de Pago Esperado
   const handleCreateOrder = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
@@ -564,12 +1287,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     try {
       const response = await fetch('/api/reconciliation/clients', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildScopeHeaders(true),
         body: JSON.stringify({
           action: 'CREATE_ORDER',
+          negocioId: activeNegocioId || undefined,
           clienteNombre: orderClientName,
           nombreRemitenteReportado: orderZelleSender || orderClientName,
+          plataformaEsperada: orderBank,
           bancoDestino: orderBank,
+          moneda: orderCurrency,
           montoEsperado: Number.parseFloat(orderAmount),
           referenciaReportada: orderReference,
         }),
@@ -593,12 +1319,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
       setBannerMessage({
         type: 'success',
-        text: `Orden de pago esperada por ${formatUsd(
-          Number.parseFloat(orderAmount)
+        text: `Orden de pago esperada por ${formatMoney(
+          Number.parseFloat(orderAmount),
+          orderCurrency
         )} registrada.${
           (data.autoReconciledCount ?? 0) > 0
-            ? ` ¡Se hizo match inmediato con un pago Zelle ya recibido en tabla!`
-            : ' Cuando entre el correo de Citibank/TD Bank se conciliará automáticamente.'
+            ? ' ¡Se hizo match inmediato con una transacción ya recibida!'
+            : ' Cuando ingrese el movimiento del banco o Binance se conciliará automáticamente.'
         }`,
       });
     } catch (error: unknown) {
@@ -610,7 +1337,38 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
-  // Guardar Buzón de Correo IMAP
+  const resetMailboxForm = (): void => {
+    setEditingMailboxId(null);
+    setMailboxAlias('Buzón Principal Alertas Citibank, TD Bank & Binance');
+    setMailboxEmail('');
+    setMailboxPassword('');
+    setMailboxHost('imap.gmail.com');
+    setMailboxPort('993');
+    setMailboxFolder('INBOX');
+    setMailboxBanks('CITIBANK_TD_BINANCE');
+    setMailboxPlatform('CITIBANK');
+    setMailboxReceivingAccount('');
+    setMailboxCurrency('USD');
+    setVerifyImapBeforeSave(true);
+  };
+
+  const openEditMailbox = (mb: ImapMailboxRecord): void => {
+    const plat: ExpectedPlatformType = mb.plataforma ?? 'CITIBANK';
+    const curr: CurrencyType = mb.moneda ?? platformDefaultCurrency(plat);
+    setEditingMailboxId(mb.id);
+    setMailboxAlias(mb.alias);
+    setMailboxEmail(mb.email_address);
+    setMailboxPassword('');
+    setMailboxHost(mb.imap_host);
+    setMailboxPort(String(mb.imap_port));
+    setMailboxFolder(mb.mailbox_folder);
+    setMailboxBanks(mb.bancos_monitoreados);
+    setMailboxPlatform(plat);
+    setMailboxReceivingAccount(mb.cuenta_receptora || mb.email_address);
+    setMailboxCurrency(curr);
+    setVerifyImapBeforeSave(false);
+  };
+
   const handleSaveMailbox = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
@@ -618,11 +1376,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     setIsSavingMailbox(true);
     setBannerMessage(null);
 
+    const resolvedReceivingAccount =
+      mailboxReceivingAccount.trim() || mailboxEmail.trim();
+
     try {
       const response = await fetch('/api/reconciliation/mailboxes', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildScopeHeaders(true),
         body: JSON.stringify({
+          negocioId: activeNegocioId || undefined,
+          mailboxId: editingMailboxId ?? undefined,
           alias: mailboxAlias,
           emailAddress: mailboxEmail,
           imapHost: mailboxHost,
@@ -631,6 +1394,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           imapPassword: mailboxPassword,
           mailboxFolder,
           bancosMonitoreados: mailboxBanks,
+          plataforma: mailboxPlatform,
+          cuentaReceptora: resolvedReceivingAccount,
+          moneda: mailboxCurrency,
           verifyConnection: verifyImapBeforeSave,
         }),
       });
@@ -646,11 +1412,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         );
       }
 
+      const wasEditing = editingMailboxId !== null;
+      const savedTarget = resolvedReceivingAccount;
+      const savedCurr = mailboxCurrency;
+
       await fetchAllData();
-      setMailboxPassword('');
+      resetMailboxForm();
       setBannerMessage({
         type: 'success',
-        text: `Correo "${mailboxEmail}" conectado exitosamente. Ya puedes usar "Sincronizar Ahora" para leer las alertas de Citibank y TD Bank.`,
+        text: wasEditing
+          ? `Cuenta receptora "${savedTarget}" (${savedCurr}) actualizada exitosamente.`
+          : `Correo "${mailboxEmail}" conectado exitosamente (${savedTarget} · ${savedCurr}).`,
       });
     } catch (error: unknown) {
       const msg =
@@ -670,11 +1442,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       });
       await fetchAllData();
     } catch {
-      // ignore
+      // ignorar
     }
   };
 
-  // Ejecutar simulador del motor de parseo híbrido (`lib/bank-parser.ts`)
   const handleRunEmailSimulator = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
@@ -685,8 +1456,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     try {
       const response = await fetch('/api/reconciliation/alerts', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: buildScopeHeaders(true),
         body: JSON.stringify({
+          negocioId: activeNegocioId || undefined,
           fromAddress: simFrom,
           subject: simSubject,
           rawEmailBody: simBody,
@@ -712,11 +1484,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       const newAlert = result.alert;
       setBannerMessage({
         type: 'success',
-        text: `Alerta procesada vía ${newAlert.metodo_extraccion}: ${newAlert.banco} | Bruto ${formatUsd(
-          newAlert.monto_bruto
-        )} | Comisión (${newAlert.porcentaje_comision}%): ${formatUsd(
-          newAlert.monto_comision
-        )} | Neto: ${formatUsd(newAlert.monto_neto)} | Estado: ${newAlert.estado}.`,
+        text: `Alerta procesada vía ${newAlert.origen_deteccion}: ${newAlert.plataforma} | Bruto ${formatMoney(
+          newAlert.monto_bruto,
+          newAlert.moneda
+        )} | Comisión (${newAlert.porcentaje_comision}%): ${formatMoney(
+          newAlert.monto_comision,
+          newAlert.moneda
+        )} | Neto: ${formatMoney(newAlert.monto_neto, newAlert.moneda)} | Estado: ${newAlert.estado}.`,
       });
     } catch (error: unknown) {
       const msg =
@@ -727,6 +1501,410 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
+  const openLightboxForTx = (tx: BankEmailAlertRecord): void => {
+    const linkedOrCandidateOrder = findAssociatedCaptureOrder(tx);
+    const captureBase64 =
+      tx.comprobante_base64 ?? linkedOrCandidateOrder?.comprobante_base64 ?? '';
+    if (!captureBase64) {
+      return;
+    }
+    setLightboxData({
+      title: `Auditoría de Comprobante · ${tx.codigo_orden ?? linkedOrCandidateOrder?.codigo_orden ?? tx.referencia}`,
+      comprobanteBase64: captureBase64,
+      order: linkedOrCandidateOrder,
+      tx,
+    });
+  };
+
+  const openLightboxForOrder = (order: PendingPaymentOrder): void => {
+    if (!order.comprobante_base64) {
+      return;
+    }
+    const matchingTx =
+      alerts.find(
+        (t) =>
+          t.orden_conciliada_id === order.id ||
+          (t.moneda === order.moneda &&
+            Math.abs(t.monto_bruto - order.monto_esperado) < 0.01)
+      ) ?? null;
+
+    setLightboxData({
+      title: `Captura Subida en Portal · ${order.codigo_orden}`,
+      comprobanteBase64: order.comprobante_base64,
+      order,
+      tx: matchingTx,
+    });
+  };
+
+  // =========================================================================
+  // HANDLERS: LOGIN DE USUARIOS / NEGOCIOS Y GESTIÓN MULTI-NEGOCIO
+  // =========================================================================
+  const handleBusinessLoginSubmit = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    setIsSubmittingLogin(true);
+    setLoginError(null);
+
+    try {
+      const response = await fetch('/api/auth/business', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'LOGIN',
+          email: loginEmail.trim().toLowerCase(),
+          password: loginPassword,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        ok: boolean;
+        mode?: 'POSTGRESQL_LIVE' | 'DEMO_FALLBACK';
+        user?: BusinessUserRecord;
+        businessUsers?: BusinessUserRecord[];
+        error?: string;
+      };
+
+      if (!response.ok || !data.ok || !data.user) {
+        throw new Error(data.error ?? 'Error al iniciar sesión.');
+      }
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STORAGE_BUSINESS_USER_KEY, data.user.id);
+        window.localStorage.setItem(STORAGE_ACTIVE_NEGOCIO_KEY, data.user.id);
+        if (window.location.search.includes('login=')) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      }
+
+      setCurrentBusinessUser(data.user);
+      setBusinessUsers(data.businessUsers ?? [data.user]);
+      setActiveNegocioId(data.user.id);
+      if (data.mode) {
+        setDataSourceMode(data.mode);
+      }
+      setLoginPassword('');
+      setIsLoginModalOpen(false);
+      setIsPreviewingLanding(false);
+      setActiveTab('ALERTS');
+    } catch (error: unknown) {
+      setLoginError(
+        error instanceof Error ? error.message : 'Error de autenticación.'
+      );
+    } finally {
+      setIsSubmittingLogin(false);
+    }
+  };
+
+  const handleBusinessLogout = (): void => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(STORAGE_BUSINESS_USER_KEY);
+      window.localStorage.removeItem(STORAGE_ACTIVE_NEGOCIO_KEY);
+    }
+    setCurrentBusinessUser(null);
+    setBusinessUsers([]);
+    setActiveNegocioId('');
+    setAlerts([]);
+    setPendingOrders([]);
+    setClients([]);
+    setMailboxes([]);
+    setIsPreviewingLanding(false);
+    setBannerMessage(null);
+  };
+
+  const handleSwitchBusinessScope = (nextNegocioId: string): void => {
+    setActiveNegocioId(nextNegocioId);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(STORAGE_ACTIVE_NEGOCIO_KEY, nextNegocioId);
+    }
+    resetMailboxForm();
+  };
+
+  const openCreateBusinessUserModal = (): void => {
+    setEditingBusinessUserId(null);
+    setBizName('');
+    setBizOwnerName('');
+    setBizEmail('');
+    setBizPhone('');
+    setBizPassword(`Biz${Math.floor(1000 + Math.random() * 9000)}!`);
+    setBizRole('NEGOCIO');
+    setIsBusinessUserModalOpen(true);
+  };
+
+  const openEditBusinessUserModal = (user: BusinessUserRecord): void => {
+    setEditingBusinessUserId(user.id);
+    setBizName(user.nombre_negocio);
+    setBizOwnerName(user.nombre_usuario);
+    setBizEmail(user.email);
+    setBizPhone(user.telefono ?? '');
+    setBizPassword('');
+    setBizRole(user.rol);
+    setIsBusinessUserModalOpen(true);
+  };
+
+  const handleGenerateRandomBizPassword = (): void => {
+    setBizPassword(`Neg${Math.floor(10000 + Math.random() * 89999)}`);
+  };
+
+  const handleSaveBusinessUser = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    setIsSavingBusinessUser(true);
+    setBannerMessage(null);
+
+    const isEditing = editingBusinessUserId !== null;
+    const savedNegocio = bizName.trim();
+    const savedEmail = bizEmail.trim().toLowerCase();
+    const savedPassword = bizPassword.trim();
+
+    try {
+      const response = await fetch('/api/auth/business', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: isEditing ? 'UPDATE_BUSINESS_USER' : 'CREATE_BUSINESS_USER',
+          userId: editingBusinessUserId ?? undefined,
+          nombreNegocio: savedNegocio,
+          nombreUsuario: bizOwnerName.trim(),
+          email: savedEmail,
+          telefono: bizPhone,
+          password: savedPassword,
+          rol: bizRole,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        ok: boolean;
+        user?: BusinessUserRecord;
+        businessUsers?: BusinessUserRecord[];
+        error?: string;
+      };
+
+      if (!response.ok || !data.ok) {
+        throw new Error(
+          data.error ?? 'No se pudo guardar la cuenta del negocio.'
+        );
+      }
+
+      if (Array.isArray(data.businessUsers)) {
+        setBusinessUsers(data.businessUsers);
+      }
+      if (data.user && data.user.id === currentBusinessUser?.id) {
+        setCurrentBusinessUser(data.user);
+      }
+
+      setIsBusinessUserModalOpen(false);
+      setEditingBusinessUserId(null);
+      setBizName('');
+      setBizOwnerName('');
+      setBizEmail('');
+      setBizPhone('');
+      setBizPassword('');
+
+      if (!isEditing || savedPassword) {
+        setLastBusinessCredentials({
+          negocio: savedNegocio,
+          email: savedEmail,
+          password: savedPassword,
+        });
+      }
+
+      setBannerMessage({
+        type: 'success',
+        text: `${isEditing ? 'Cuenta de negocio actualizada' : 'Nueva cuenta creada'} para "${savedNegocio}" (${savedEmail}).`,
+      });
+    } catch (error: unknown) {
+      setBannerMessage({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Error guardando usuario de negocio.',
+      });
+    } finally {
+      setIsSavingBusinessUser(false);
+    }
+  };
+
+  const handleDeleteBusinessUser = async (
+    id: string,
+    nombreNegocio: string
+  ): Promise<void> => {
+    try {
+      const res = await fetch(
+        `/api/auth/business?id=${encodeURIComponent(id)}`,
+        { method: 'DELETE' }
+      );
+      const data = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error ?? 'No se pudo eliminar el negocio.');
+      }
+
+      if (activeNegocioId === id && currentBusinessUser) {
+        handleSwitchBusinessScope(currentBusinessUser.id);
+      }
+      await fetchAllData();
+      setBannerMessage({
+        type: 'info',
+        text: `Cuenta del negocio "${nombreNegocio}" eliminada.`,
+      });
+    } catch (error: unknown) {
+      setBannerMessage({
+        type: 'error',
+        text:
+          error instanceof Error ? error.message : 'Error eliminando negocio.',
+      });
+    }
+  };
+
+  const handleCopyBusinessCredentials = async (creds: {
+    negocio: string;
+    email: string;
+    password: string;
+  }): Promise<void> => {
+    try {
+      const panelUrl = `${window.location.origin}/?login=1`;
+      const text = `Acceso al Panel de Negocio (${creds.negocio}):\nLink: ${panelUrl}\nCorreo: ${creds.email}${
+        creds.password ? `\nContraseña: ${creds.password}` : ''
+      }`;
+      await navigator.clipboard.writeText(text);
+      setBannerMessage({
+        type: 'success',
+        text: `Credenciales del negocio "${creds.negocio}" copiadas al portapapeles.`,
+      });
+    } catch {
+      // ignorar si clipboard no disponible
+    }
+  };
+
+  const activeBusinessRecord =
+    businessUsers.find((b) => b.id === activeNegocioId) ?? currentBusinessUser;
+
+  if (isCheckingAuth) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-300">
+        <div className="flex items-center gap-3 text-sm">
+          <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
+          Cargando Plataforma ConciliaPay...
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentBusinessUser || isPreviewingLanding) {
+    return (
+      <>
+        <LandingPageView
+          onOpenLoginModal={() => {
+            setLoginError(null);
+            setIsLoginModalOpen(true);
+          }}
+          isAuthenticated={Boolean(currentBusinessUser)}
+          onBackToDashboard={() => setIsPreviewingLanding(false)}
+        />
+
+        {/* Modal Login de Usuario / Negocio */}
+        <Dialog.Root
+          open={isLoginModalOpen}
+          onOpenChange={(open) => {
+            setIsLoginModalOpen(open);
+            if (!open) {
+              setLoginError(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div>
+                  <Dialog.Title className="flex items-center gap-2 text-lg font-bold text-white">
+                    <Lock className="h-4 w-4 text-emerald-400" />
+                    Acceso de Usuarios y Negocios
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                    Ingresa con el correo y la contraseña asignados a tu negocio.
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {loginError && (
+                <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/50 px-3.5 py-2.5 text-xs text-rose-200">
+                  {loginError}
+                </div>
+              )}
+
+              <form
+                onSubmit={(e) => void handleBusinessLoginSubmit(e)}
+                className="mt-4 space-y-4"
+              >
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                    Correo Electrónico *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="usuario@tunegocio.com"
+                    className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                    Contraseña *
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmittingLogin}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:opacity-60"
+                >
+                  {isSubmittingLogin ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <LogIn className="h-4 w-4" />
+                  )}
+                  Entrar al Panel del Negocio
+                </button>
+
+                <div className="border-t border-slate-800 pt-3 text-center text-[11px] text-slate-400">
+                  ¿Eres cliente final reportando un comprobante?{' '}
+                  <Link
+                    href="/portal"
+                    className="font-semibold text-sky-400 hover:text-sky-300"
+                  >
+                    Ir al Portal de Clientes
+                  </Link>
+                </div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      </>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -736,7 +1914,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-emerald-400">
                 <ShieldCheck className="h-3.5 w-3.5" />
-                FINTECH TREASURY ENGINE
+                MULTI-CHANNEL FINTECH ENGINE
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-3 py-1 text-xs font-semibold text-violet-200">
+                <Briefcase className="h-3.5 w-3.5 text-violet-400" />
+                {activeBusinessRecord?.nombre_negocio ?? 'Negocio Activo'}
               </span>
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
@@ -752,50 +1934,110 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-0.5 text-xs text-slate-300">
                 <Mail className="h-3 w-3 text-emerald-400" />
                 {mailboxes.length > 0
-                  ? `${mailboxes.length} correo(s) IMAP monitoreado(s)`
+                  ? `${mailboxes.length} correo(s) IMAP`
                   : 'Sin correo IMAP configurado'}
               </span>
             </div>
             <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
-              Conciliación Automática Zelle &amp; Transferencias
+              Conciliación Multi-Canal: Zelle &amp; Binance
             </h1>
             <p className="mt-1 text-sm text-slate-400">
-              Monitoreo IMAP de Citibank y TD Bank · Extracción Híbrida (Regex +
-              AI Fallback) · Retención automática del 4.00% de comisión
+              Operador: <strong className="text-slate-200">{currentBusinessUser.nombre_usuario}</strong> ({currentBusinessUser.email}) · Citibank, TD Bank &amp; Binance
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            {currentBusinessUser.rol === 'SUPER_ADMIN' &&
+              businessUsers.length > 1 && (
+                <select
+                  value={activeNegocioId}
+                  onChange={(e) => handleSwitchBusinessScope(e.target.value)}
+                  aria-label="Seleccionar negocio activo"
+                  className="rounded-lg border border-violet-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-violet-200 focus:border-violet-400 focus:outline-none"
+                >
+                  {businessUsers.map((biz) => (
+                    <option key={biz.id} value={biz.id}>
+                      Negocio: {biz.nombre_negocio}
+                    </option>
+                  ))}
+                </select>
+              )}
+
             <button
               type="button"
-              onClick={() => setIsNewClientModalOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3.5 py-2.5 text-sm font-medium text-emerald-300 transition hover:bg-emerald-900/50"
+              onClick={() => setIsPreviewingLanding(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-sky-300 transition hover:border-sky-500/50 hover:bg-slate-800"
             >
-              <UserPlus className="h-4 w-4" />
-              + Crear Cliente
+              <Globe className="h-3.5 w-3.5" />
+              Ver Landing Page
+            </button>
+
+            <Link
+              href="/portal"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Portal Clientes (/portal)
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => void handleCopyPortalLink()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-white"
+              title="Copiar enlace del Portal de Clientes"
+            >
+              {portalLinkCopied ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  Link Copiado
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  Copiar Link Portal
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={openCreateClientModal}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-900/50"
+            >
+              <UserPlus className="h-3.5 w-3.5" />
+              + Crear Acceso Cliente
             </button>
 
             <button
               type="button"
               onClick={() => setIsSimulatorOpen(true)}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3.5 py-2.5 text-sm font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
             >
-              <MailPlus className="h-4 w-4 text-sky-400" />
-              Probar Parser con Email
+              <MailPlus className="h-3.5 w-3.5 text-sky-400" />
+              Simular Email
             </button>
 
             <button
               type="button"
               onClick={() => void handleSyncImapNow()}
               disabled={isSyncingImap || isLoading}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSyncingImap ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <RefreshCw className="h-4 w-4" />
+                <RefreshCw className="h-3.5 w-3.5" />
               )}
-              Sincronizar Ahora
+              Sincronizar IMAP + Binance
+            </button>
+
+            <button
+              type="button"
+              onClick={handleBusinessLogout}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-900/40"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Salir
             </button>
           </div>
         </header>
@@ -812,7 +2054,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <DollarSign className="h-4 w-4" />
-            1. Alertas y Conciliación ({alerts.length})
+            1. Transacciones y Conciliación ({alerts.length})
           </button>
 
           <button
@@ -825,7 +2067,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <Users className="h-4 w-4" />
-            2. Cuentas de Clientes y Órdenes ({clients.length})
+            2. Clientes, Saldos y Órdenes ({clients.length} / {pendingOrders.length})
           </button>
 
           <button
@@ -840,6 +2082,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <Inbox className="h-4 w-4" />
             3. Correos IMAP Monitoreados ({mailboxes.length})
           </button>
+
+          {currentBusinessUser.rol === 'SUPER_ADMIN' && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('BUSINESS_USERS')}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+                activeTab === 'BUSINESS_USERS'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
+                  : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              <Briefcase className="h-4 w-4" />
+              4. Usuarios y Negocios ({businessUsers.length})
+            </button>
+          )}
         </div>
 
         {/* Notificación de Estado */}
@@ -870,99 +2127,156 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           </div>
         )}
 
-        {/* Tarjetas de Resumen Financiero (5 KPIs Requeridos) */}
+        {/* =====================================================================
+            TARJETAS SUPERIORES SEPARADAS: BLOQUE ZELLE (USD) + BLOQUE BINANCE (USDT)
+           ===================================================================== */}
         <section
-          aria-label="Resumen Financiero"
-          className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5"
+          aria-label="Resumen Financiero Multi-Canal"
+          className="mb-8 grid grid-cols-1 gap-5 lg:grid-cols-2"
         >
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
-                Total Bruto Recibido
-              </span>
-              <span className="rounded-lg bg-sky-500/10 p-2 text-sky-400">
-                <DollarSign className="h-4 w-4" />
+          {/* Bloque Zelle (Citibank + TD Bank en USD) */}
+          <div className="rounded-2xl border border-sky-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/30 p-5 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="rounded-lg bg-sky-500/15 p-2 text-sky-400">
+                  <Building2 className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Bloque Zelle (Citibank + TD Bank)
+                  </h2>
+                  <p className="text-[11px] text-slate-400">
+                    Moneda USD · Comisión estándar 4.00%
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-sky-300">
+                USD
               </span>
             </div>
-            <p className="mt-3 font-mono text-2xl font-bold text-white">
-              {formatUsd(financialMetrics.totalBrutoRecibido)}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Depósitos Zelle / Wire entrantes
-            </p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-slate-400">
+                  Bruto Recibido
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-white">
+                  {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')}
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  Enviado: {formatMoney(financialMetrics.zelleBrutoEnviadoUsd, 'USD')}
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-slate-400">
+                  Comisión Retenida
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-violet-300">
+                  -{formatMoney(financialMetrics.zelleComisionRetenidaUsd, 'USD')}
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  SQL GENERATED
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/30 p-3.5">
+                <span className="text-[11px] font-semibold uppercase text-emerald-300">
+                  Neto Liquidable
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-emerald-400">
+                  {formatMoney(financialMetrics.zelleNetoLiquidableUsd, 'USD')}
+                </p>
+                <span className="text-[10px] text-emerald-300/70">
+                  Acreditable USD
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
-                Comisión Descontada (4%)
-              </span>
-              <span className="rounded-lg bg-violet-500/10 p-2 text-violet-400">
-                <Percent className="h-4 w-4" />
+          {/* Bloque Binance (Pay + P2P + On-Chain en USDT) */}
+          <div className="rounded-2xl border border-amber-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/25 p-5 shadow-lg">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="rounded-lg bg-amber-500/15 p-2 text-amber-400">
+                  <Coins className="h-4 w-4" />
+                </span>
+                <div>
+                  <h2 className="text-sm font-bold text-white">
+                    Bloque Binance (Pay + P2P + On-Chain)
+                  </h2>
+                  <p className="text-[11px] text-slate-400">
+                    Moneda USDT · Comisión estándar 1.50%
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-amber-300">
+                USDT
               </span>
             </div>
-            <p className="mt-3 font-mono text-2xl font-bold text-violet-300">
-              -{formatUsd(financialMetrics.totalComisionDescontada)}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Calculada en columna GENERATED SQL
-            </p>
-          </div>
 
-          <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                Total Neto Disponible
-              </span>
-              <span className="rounded-lg bg-emerald-500/20 p-2 text-emerald-400">
-                <Wallet className="h-4 w-4" />
-              </span>
-            </div>
-            <p className="mt-3 font-mono text-2xl font-bold text-emerald-400">
-              {formatUsd(financialMetrics.totalNetoDisponible)}
-            </p>
-            <p className="mt-1 text-xs text-emerald-300/70">
-              Saldo líquido acreditable a clientes
-            </p>
-          </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-slate-400">
+                  Total USDT Recibido
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-white">
+                  {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  Fee: -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
+                </span>
+              </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
-                Pagos Conciliados
-              </span>
-              <span className="rounded-lg bg-emerald-500/10 p-2 text-emerald-400">
-                <CheckCircle2 className="h-4 w-4" />
-              </span>
-            </div>
-            <p className="mt-3 font-mono text-2xl font-bold text-white">
-              {financialMetrics.pagosConciliadosCount}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Match exacto + similitud pg_trgm
-            </p>
-          </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-slate-400">
+                  Total USDT Enviado
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-rose-300">
+                  {formatMoney(financialMetrics.binanceEnviadoUsdt, 'USDT')}
+                </p>
+                <span className="text-[10px] text-slate-500">
+                  Pay / P2P Saliente
+                </span>
+              </div>
 
-          <div className="rounded-xl border border-amber-500/30 bg-slate-900/80 p-5 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium uppercase tracking-wider text-amber-300">
-                Revisión Manual
-              </span>
-              <span className="rounded-lg bg-amber-500/10 p-2 text-amber-400">
-                <AlertTriangle className="h-4 w-4" />
-              </span>
+              <div className="rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
+                <span className="text-[11px] font-semibold uppercase text-amber-300">
+                  Neto USDT Disponible
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-amber-300">
+                  {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
+                </p>
+                <span className="text-[10px] text-amber-300/70">
+                  Saldo líquido USDT
+                </span>
+              </div>
             </div>
-            <p className="mt-3 font-mono text-2xl font-bold text-amber-400">
-              {financialMetrics.pagosRevisionManualCount}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              Zelle de terceros o AI Fallback
-            </p>
           </div>
         </section>
 
+        {/* Barra de Estado de Conciliación */}
+        <div className="mb-6 flex flex-wrap items-center gap-3 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-semibold text-emerald-300">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Conciliados: {financialMetrics.pagosConciliadosCount}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-semibold text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Revisión Manual: {financialMetrics.pagosRevisionManualCount}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 font-semibold text-sky-300">
+            <Clock className="h-3.5 w-3.5" />
+            Detectados (Sin Orden): {financialMetrics.pagosDetectadosCount}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300">
+            <Wallet className="h-3.5 w-3.5 text-slate-400" />
+            Órdenes Pendientes en Portal: {pendingOrders.length}
+          </span>
+        </div>
+
         {/* =====================================================================
-            PESTAÑA 1: TABLA DE ALERTAS Y CONCILIACIÓN
+            PESTAÑA 1: TABLA DE TRANSACCIONES Y CONCILIACIÓN MULTICANAL
            ===================================================================== */}
         {activeTab === 'ALERTS' && (
           <>
@@ -977,25 +2291,30 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar por remitente Zelle, referencia o cliente..."
+                    placeholder="Buscar por remitente, nickname Binance, TxID, referencia o cliente..."
                     className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
 
-                <div className="md:col-span-2">
+                <div className="md:col-span-3">
                   <div className="relative">
                     <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <select
-                      value={bankFilter}
+                      value={platformFilter}
                       onChange={(e) =>
-                        setBankFilter(e.target.value as 'TODOS' | BankName)
+                        setPlatformFilter(e.target.value as 'TODOS' | PlatformType)
                       }
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
                     >
-                      <option value="TODOS">Todos los Bancos</option>
-                      <option value="CITIBANK">Citibank</option>
-                      <option value="TD_BANK">TD Bank</option>
-                      <option value="OTRO">Otro Banco</option>
+                      <option value="TODOS">Todas las Plataformas</option>
+                      <option value="CITIBANK">Citibank (Zelle)</option>
+                      <option value="TD_BANK">TD Bank (Zelle)</option>
+                      <option value="BINANCE_PAY">Binance Pay</option>
+                      <option value="BINANCE_P2P">Binance P2P</option>
+                      <option value="BINANCE_ONCHAIN">
+                        Depósitos Red (On-Chain)
+                      </option>
+                      <option value="OTRO">Otro</option>
                     </select>
                   </div>
                 </div>
@@ -1010,13 +2329,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     }
                     className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
                   >
-                    <option value="TODOS">Recibidos y Enviados</option>
-                    <option value="RECIBIDO">Recibido (Ingreso)</option>
-                    <option value="ENVIADO">Enviado (Egreso)</option>
+                    <option value="TODOS">Todos Flujos</option>
+                    <option value="RECIBIDO">Recibido</option>
+                    <option value="ENVIADO">Enviado</option>
                   </select>
                 </div>
 
-                <div className="md:col-span-3">
+                <div className="md:col-span-2">
                   <div className="relative">
                     <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <select
@@ -1026,12 +2345,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
                     >
-                      <option value="TODOS">Todos los Estados</option>
+                      <option value="TODOS">Todos Estados</option>
                       <option value="CONCILIADO">Conciliado</option>
-                      <option value="REVISION_MANUAL">
-                        En Revisión Manual
-                      </option>
-                      <option value="DETECTADO">Detectado (Sin Orden)</option>
+                      <option value="REVISION_MANUAL">Revisión Manual</option>
+                      <option value="DETECTADO">Detectado</option>
                     </select>
                   </div>
                 </div>
@@ -1043,17 +2360,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <table className="w-full border-collapse text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="px-4 py-3.5">Banco &amp; Fecha</th>
+                      <th className="px-4 py-3.5">Canal &amp; Fecha</th>
                       <th className="px-4 py-3.5">Flujo</th>
                       <th className="px-4 py-3.5">
-                        Remitente Zelle / Titular Asignado
+                        Contraparte / Titular Asignado
                       </th>
-                      <th className="px-4 py-3.5">Referencia &amp; Motor</th>
+                      <th className="px-4 py-3.5">Referencia &amp; Origen</th>
                       <th className="px-4 py-3.5 text-right">Monto Bruto</th>
-                      <th className="px-4 py-3.5 text-right">Comisión (4%)</th>
+                      <th className="px-4 py-3.5 text-right">Comisión</th>
                       <th className="px-4 py-3.5 text-right">Monto Neto</th>
                       <th className="px-4 py-3.5">Estado</th>
-                      <th className="px-4 py-3.5 text-right">Acciones</th>
+                      <th className="px-4 py-3.5 text-right">
+                        Captura &amp; Acciones
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
@@ -1063,154 +2382,170 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           colSpan={9}
                           className="px-6 py-12 text-center text-slate-400"
                         >
-                          No se encontraron alertas bancarias con los filtros
+                          No se encontraron transacciones con los filtros
                           seleccionados.
                         </td>
                       </tr>
                     ) : (
-                      filteredAlerts.map((alert) => (
-                        <tr
-                          key={alert.id}
-                          className="transition hover:bg-slate-800/40"
-                        >
-                          <td className="whitespace-nowrap px-4 py-4">
-                            <span
-                              className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold ${
-                                alert.banco === 'CITIBANK'
-                                  ? 'border border-sky-500/30 bg-sky-500/15 text-sky-300'
-                                  : alert.banco === 'TD_BANK'
-                                    ? 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
-                                    : 'border border-slate-600 bg-slate-800 text-slate-300'
-                              }`}
-                            >
-                              {alert.banco === 'CITIBANK'
-                                ? 'Citibank'
-                                : alert.banco === 'TD_BANK'
-                                  ? 'TD Bank'
-                                  : 'Otro'}
-                            </span>
-                            <p className="mt-1 text-xs text-slate-400">
-                              {formatDateTime(alert.fecha_transaccion)}
-                            </p>
-                          </td>
+                      filteredAlerts.map((alert) => {
+                        const badge = getPlatformBadgeMeta(alert.plataforma);
+                        const candidateOrder = findAssociatedCaptureOrder(alert);
+                        const hasCapture = Boolean(
+                          alert.comprobante_base64 ??
+                            candidateOrder?.comprobante_base64
+                        );
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {alert.tipo_movimiento === 'RECIBIDO' ? (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                                <ArrowDownLeft className="h-3.5 w-3.5" />
-                                Recibido
+                        return (
+                          <tr
+                            key={alert.id}
+                            className="transition hover:bg-slate-800/40"
+                          >
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <span
+                                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
+                              >
+                                {badge.label}
                               </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-400">
-                                <ArrowUpRight className="h-3.5 w-3.5" />
-                                Enviado
-                              </span>
-                            )}
-                          </td>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {formatDateTime(alert.fecha_transaccion)}
+                              </p>
+                            </td>
 
-                          <td className="max-w-xs px-4 py-4">
-                            <div className="font-semibold text-white">
-                              {alert.remitente_o_destinatario ?? (
-                                <span className="italic text-amber-400">
-                                  Remitente no identificado
+                            <td className="whitespace-nowrap px-4 py-4">
+                              {alert.tipo_movimiento === 'RECIBIDO' ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+                                  <ArrowDownLeft className="h-3.5 w-3.5" />
+                                  Recibido
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-400">
+                                  <ArrowUpRight className="h-3.5 w-3.5" />
+                                  Enviado
                                 </span>
                               )}
-                            </div>
-                            {alert.cliente_asignado_nombre ? (
-                              <div className="mt-1 flex items-center gap-1 text-xs text-emerald-400">
-                                <UserCheck className="h-3.5 w-3.5 shrink-0" />
-                                <span className="truncate">
-                                  Titular: {alert.cliente_asignado_nombre}
-                                </span>
+                            </td>
+
+                            <td className="max-w-xs px-4 py-4">
+                              <div className="font-semibold text-white">
+                                {alert.remitente_o_contraparte || (
+                                  <span className="italic text-amber-400">
+                                    Remitente no identificado
+                                  </span>
+                                )}
                               </div>
-                            ) : (
-                              alert.notas_conciliacion && (
-                                <p className="mt-1 line-clamp-2 text-xs text-slate-400">
-                                  {alert.notas_conciliacion}
-                                </p>
-                              )
-                            )}
-                          </td>
+                              {alert.cliente_asignado_nombre ? (
+                                <div className="mt-1 flex items-center gap-1 text-xs text-emerald-400">
+                                  <UserCheck className="h-3.5 w-3.5 shrink-0" />
+                                  <span className="truncate">
+                                    Titular: {alert.cliente_asignado_nombre}
+                                  </span>
+                                </div>
+                              ) : (
+                                (alert.nota_auditoria ?? alert.notas_conciliacion) && (
+                                  <p className="mt-1 line-clamp-2 text-xs text-slate-400">
+                                    {alert.nota_auditoria ?? alert.notas_conciliacion}
+                                  </p>
+                                )
+                              )}
+                            </td>
 
-                          <td className="whitespace-nowrap px-4 py-4">
-                            <div className="font-mono text-xs font-medium text-slate-200">
-                              {alert.referencia ?? 'SIN-REF'}
-                            </div>
-                            <span
-                              className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                                alert.metodo_extraccion === 'REGEX'
-                                  ? 'bg-slate-800 text-slate-300'
-                                  : 'border border-purple-500/30 bg-purple-500/15 text-purple-300'
-                              }`}
-                            >
-                              <Cpu className="h-3 w-3" />
-                              {alert.metodo_extraccion}
-                            </span>
-                          </td>
-
-                          <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-semibold text-slate-100">
-                            {formatUsd(alert.monto_bruto)}
-                          </td>
-
-                          <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-xs text-violet-300">
-                            {alert.monto_comision > 0
-                              ? `-${formatUsd(alert.monto_comision)} (${alert.porcentaje_comision}%)`
-                              : '$0.00'}
-                          </td>
-
-                          <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-bold text-emerald-400">
-                            {formatUsd(alert.monto_neto)}
-                          </td>
-
-                          <td className="whitespace-nowrap px-4 py-4">
-                            {alert.estado === 'CONCILIADO' && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                CONCILIADO
-                              </span>
-                            )}
-                            {alert.estado === 'REVISION_MANUAL' && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
-                                <AlertTriangle className="h-3.5 w-3.5" />
-                                REVISIÓN MANUAL
-                              </span>
-                            )}
-                            {alert.estado === 'DETECTADO' && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">
-                                <Clock className="h-3.5 w-3.5" />
-                                DETECTADO
-                              </span>
-                            )}
-                          </td>
-
-                          <td className="whitespace-nowrap px-4 py-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setInspectedAlert(alert)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <div className="font-mono text-xs font-medium text-slate-200">
+                                {alert.referencia || 'SIN-REF'}
+                              </div>
+                              <span
+                                className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                                  alert.origen_deteccion === 'BINANCE_API'
+                                    ? 'border border-amber-500/30 bg-amber-500/15 text-amber-300'
+                                    : alert.origen_deteccion === 'EMAIL_AI'
+                                      ? 'border border-purple-500/30 bg-purple-500/15 text-purple-300'
+                                      : 'bg-slate-800 text-slate-300'
+                                }`}
                               >
-                                <FileText className="h-3.5 w-3.5" />
-                                Email
-                              </button>
+                                <Cpu className="h-3 w-3" />
+                                {alert.origen_deteccion}
+                              </span>
+                            </td>
 
-                              {alert.estado !== 'CONCILIADO' &&
-                                alert.tipo_movimiento === 'RECIBIDO' && (
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-semibold text-slate-100">
+                              {formatMoney(alert.monto_bruto, alert.moneda)}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-xs text-violet-300">
+                              {alert.monto_comision > 0
+                                ? `-${formatMoney(alert.monto_comision, alert.moneda)} (${alert.porcentaje_comision}%)`
+                                : formatMoney(0, alert.moneda)}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-bold text-emerald-400">
+                              {formatMoney(alert.monto_neto, alert.moneda)}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4">
+                              {alert.estado === 'CONCILIADO' && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  CONCILIADO
+                                </span>
+                              )}
+                              {alert.estado === 'REVISION_MANUAL' && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                                  <AlertTriangle className="h-3.5 w-3.5" />
+                                  REVISIÓN MANUAL
+                                </span>
+                              )}
+                              {alert.estado === 'DETECTADO' && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">
+                                  <Clock className="h-3.5 w-3.5" />
+                                  DETECTADO
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {hasCapture && (
                                   <button
                                     type="button"
-                                    onClick={() =>
-                                      openManualReconciliationModal(alert)
-                                    }
-                                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-amber-400"
+                                    onClick={() => openLightboxForTx(alert)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1.5 text-xs font-semibold text-sky-300 transition hover:bg-sky-500/25"
+                                    title="Ver Captura subida por el cliente lado a lado"
                                   >
-                                    <UserCheck className="h-3.5 w-3.5" />
-                                    Conciliar Manual
+                                    <ImageIcon className="h-3.5 w-3.5" />
+                                    Ver Captura
                                   </button>
                                 )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+
+                                <button
+                                  type="button"
+                                  onClick={() => setInspectedAlert(alert)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  Payload
+                                </button>
+
+                                {alert.estado !== 'CONCILIADO' &&
+                                  alert.tipo_movimiento === 'RECIBIDO' && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        openManualReconciliationModal(
+                                          alert,
+                                          candidateOrder
+                                        )
+                                      }
+                                      className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-amber-400"
+                                    >
+                                      <UserCheck className="h-3.5 w-3.5" />
+                                      Conciliar
+                                    </button>
+                                  )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1220,17 +2555,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         )}
 
         {/* =====================================================================
-            PESTAÑA 2: CUENTAS DE CLIENTES (USUARIOS) Y ÓRDENES DE PAGO
+            PESTAÑA 2: CUENTAS DE CLIENTES Y ÓRDENES PENDIENTES
            ===================================================================== */}
         {activeTab === 'CLIENTS' && (
           <div className="space-y-8">
             <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
               <div>
                 <h2 className="text-lg font-bold text-white">
-                  Directorio de Clientes (Titulares) y Remitentes Zelle Autorizados
+                  Directorio de Clientes y Cuentas de Acceso al Portal
                 </h2>
                 <p className="mt-1 text-xs text-slate-400">
-                  Cuando registras un cliente y los nombres desde los cuales envía Zelle (ej. su propio nombre, esposa o LLC), cualquier pago entrante de esos remitentes se concilia y acredita automáticamente a su saldo neto.
+                  Cada cliente ingresa a `/portal` con su Correo y PIN para reportar los pagos de terceros que recibe y consultar su saldo neto liquidable en USD y USDT.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -1240,24 +2575,46 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   className="inline-flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-950/40 px-4 py-2 text-sm font-semibold text-sky-300 hover:bg-sky-900/50"
                 >
                   <FilePlus2 className="h-4 w-4" />
-                  + Registrar Orden de Pago Esperada
+                  + Registrar Orden Esperada
                 </button>
                 <button
                   type="button"
-                  onClick={() => setIsNewClientModalOpen(true)}
+                  onClick={openCreateClientModal}
                   className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
                 >
                   <UserPlus className="h-4 w-4" />
-                  + Nueva Cuenta de Cliente
+                  + Nueva Cuenta de Acceso
                 </button>
               </div>
             </div>
 
-            {/* Tabla de Cuentas de Clientes y Saldos */}
+            {lastPortalCredentials && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200">
+                <div>
+                  <strong>Último acceso asignado ({lastPortalCredentials.nombre}):</strong>{' '}
+                  Correo <code className="text-white">{lastPortalCredentials.email}</code>
+                  {lastPortalCredentials.pin && (
+                    <>
+                      {' '}· PIN <code className="text-white">{lastPortalCredentials.pin}</code>
+                    </>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyPortalCredentials(lastPortalCredentials)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-200 hover:bg-emerald-500/25"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  Copiar Link + Credenciales
+                </button>
+              </div>
+            )}
+
+            {/* Tabla de Cuentas de Clientes */}
             <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
               <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
                 <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
-                  Cuentas de Usuarios / Clientes Registrados ({clients.length})
+                  Cuentas de Clientes Registrados ({clients.length})
                 </h3>
               </div>
               <div className="overflow-x-auto">
@@ -1265,16 +2622,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
                       <th className="px-4 py-3">Cliente / Titular</th>
-                      <th className="px-4 py-3">Contacto</th>
-                      <th className="px-4 py-3">
-                        Remitentes Zelle Reconocidos Automáticamente
-                      </th>
-                      <th className="px-4 py-3 text-center">% Comisión</th>
-                      <th className="px-4 py-3 text-right">Bruto Recibido</th>
-                      <th className="px-4 py-3 text-right">Comisión Retenida</th>
-                      <th className="px-4 py-3 text-right">
-                        Saldo Neto a Favor
-                      </th>
+                      <th className="px-4 py-3">Correo &amp; Acceso Portal</th>
+                      <th className="px-4 py-3">Cuentas Asignadas (Destino &amp; Moneda)</th>
+                      <th className="px-4 py-3 text-center">Fees (Zelle / Bin.)</th>
+                      <th className="px-4 py-3 text-right">Saldo Neto USD</th>
+                      <th className="px-4 py-3 text-right">Saldo Neto USDT</th>
+                      <th className="px-4 py-3 text-right">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
@@ -1284,15 +2637,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           colSpan={7}
                           className="px-6 py-10 text-center text-slate-400"
                         >
-                          Aún no has creado cuentas de clientes. Haz clic en{' '}
-                          <strong className="text-emerald-400">
-                            &quot;+ Nueva Cuenta de Cliente&quot;
-                          </strong>{' '}
-                          para registrar tu primer titular (por ejemplo,{' '}
-                          <code className="text-sky-300">
-                            ALEJANDRO JOSE PEREZ
-                          </code>
-                          ).
+                          Aún no hay cuentas de clientes registradas. Haz clic en &quot;+ Nueva Cuenta de Acceso&quot; para crear un usuario y asignarle su PIN del portal.
                         </td>
                       </tr>
                     ) : (
@@ -1305,25 +2650,84 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             </div>
                           </td>
                           <td className="px-4 py-3.5 text-xs text-slate-300">
-                            <div>{c.email_contacto ?? 'Sin email'}</div>
-                            <div className="text-slate-400">
-                              {c.telefono ?? ''}
+                            <div>{c.email ?? c.email_contacto ?? 'Sin email'}</div>
+                            <div className="mt-1 flex items-center gap-2">
+                              {c.tiene_pin_configurado ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                  <KeyRound className="h-2.5 w-2.5" />
+                                  PIN Activo
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                                  Sin PIN
+                                </span>
+                              )}
+                              {c.telefono && (
+                                <span className="text-slate-400">{c.telefono}</span>
+                              )}
                             </div>
                           </td>
-                          <td className="max-w-xs px-4 py-3.5 text-xs text-amber-300">
-                            {c.remitentes_zelle_habituales || c.nombre_titular}
+                          <td className="px-4 py-3.5 text-xs text-slate-300">
+                            {c.cuentas_asignadas && c.cuentas_asignadas.length > 0 ? (
+                              <div className="space-y-1.5">
+                                {c.cuentas_asignadas.map((acc) => {
+                                  const badge = getPlatformBadgeMeta(acc.plataforma);
+                                  return (
+                                    <div
+                                      key={acc.id}
+                                      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/90 px-2.5 py-1.5"
+                                    >
+                                      <span
+                                        className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
+                                      >
+                                        {badge.label}
+                                      </span>
+                                      <span className="font-mono text-[11px] font-semibold text-white">
+                                        {acc.cuenta_receptora}
+                                      </span>
+                                      <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                                        {acc.moneda}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-amber-300">
+                                Sin cuentas asignadas (usa Editar)
+                              </span>
+                            )}
                           </td>
                           <td className="px-4 py-3.5 text-center font-mono text-xs text-violet-300">
-                            {c.porcentaje_comision}%
-                          </td>
-                          <td className="px-4 py-3.5 text-right font-mono text-slate-200">
-                            {formatUsd(c.total_bruto_conciliado)}
-                          </td>
-                          <td className="px-4 py-3.5 text-right font-mono text-xs text-violet-300">
-                            -{formatUsd(c.total_comision_retenida)}
+                            {c.porcentaje_comision_zelle}% / {c.porcentaje_comision_binance}%
                           </td>
                           <td className="px-4 py-3.5 text-right font-mono font-bold text-emerald-400">
-                            {formatUsd(c.total_neto_disponible)}
+                            {formatMoney(c.total_neto_usd, 'USD')}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono font-bold text-amber-300">
+                            {formatMoney(c.total_neto_usdt, 'USDT')}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3.5 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => openEditClientModal(c)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                              >
+                                <KeyRound className="h-3 w-3 text-emerald-400" />
+                                Editar / PIN
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void handleDeleteClient(c.id, c.nombre_titular)
+                                }
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                                title="Eliminar cliente"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1333,12 +2737,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
             </div>
 
-            {/* Tabla de Órdenes de Pago Pendientes */}
+            {/* Tabla de Órdenes de Pago Pendientes (Reportadas en el Portal) */}
             <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
               <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
                 <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
-                  Órdenes / Reportes de Pago Pendientes de Recibir (
-                  {pendingOrders.length})
+                  Órdenes / Reportes de Pago Pendientes ({pendingOrders.length})
                 </h3>
               </div>
               <div className="overflow-x-auto">
@@ -1347,45 +2750,69 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
                       <th className="px-4 py-3">Código Orden</th>
                       <th className="px-4 py-3">Cliente Titular</th>
-                      <th className="px-4 py-3">Remitente Zelle Reportado</th>
-                      <th className="px-4 py-3">Banco Destino</th>
-                      <th className="px-4 py-3">Referencia Esperada</th>
+                      <th className="px-4 py-3">Remitente Reportado</th>
+                      <th className="px-4 py-3">Plataforma</th>
+                      <th className="px-4 py-3">Referencia</th>
                       <th className="px-4 py-3 text-right">Monto Esperado</th>
+                      <th className="px-4 py-3 text-right">Comprobante</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
                     {pendingOrders.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="px-6 py-8 text-center text-slate-400"
                         >
                           No hay órdenes de pago pendientes en este momento.
                         </td>
                       </tr>
                     ) : (
-                      pendingOrders.map((o) => (
-                        <tr key={o.id} className="hover:bg-slate-800/40">
-                          <td className="px-4 py-3 font-mono text-xs font-bold text-sky-300">
-                            {o.codigo_orden}
-                          </td>
-                          <td className="px-4 py-3 font-medium text-white">
-                            {o.cliente_nombre}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300">
-                            {o.nombre_remitente_reportado}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-300">
-                            {o.banco_destino}
-                          </td>
-                          <td className="px-4 py-3 font-mono text-xs text-slate-400">
-                            {o.referencia_reportada ?? 'Cualquiera / Por Nombre'}
-                          </td>
-                          <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
-                            {formatUsd(o.monto_esperado)}
-                          </td>
-                        </tr>
-                      ))
+                      pendingOrders.map((o) => {
+                        const badge = getPlatformBadgeMeta(o.plataforma_esperada);
+                        return (
+                          <tr key={o.id} className="hover:bg-slate-800/40">
+                            <td className="px-4 py-3 font-mono text-xs font-bold text-sky-300">
+                              {o.codigo_orden}
+                            </td>
+                            <td className="px-4 py-3 font-medium text-white">
+                              {o.cliente_nombre}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300">
+                              {o.remitente_reportado || o.nombre_remitente_reportado}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-semibold ${badge.badgeClass}`}
+                              >
+                                {badge.label}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                              {o.referencia_reportada ?? 'SIN-REF'}
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
+                              {formatMoney(o.monto_esperado, o.moneda)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {o.comprobante_base64 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openLightboxForOrder(o)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/25"
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  Ver Captura
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-500">
+                                  Sin imagen
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1395,30 +2822,40 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         )}
 
         {/* =====================================================================
-            PESTAÑA 3: CORREOS IMAP MONITOREADOS (CITIBANK / TD BANK)
+            PESTAÑA 3: CORREOS IMAP MONITOREADOS
            ===================================================================== */}
         {activeTab === 'MAILBOXES' && (
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-            {/* Columna Izquierda: Formulario para conectar el correo */}
             <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 lg:col-span-7">
-              <div className="flex items-center gap-2.5 border-b border-slate-800 pb-4">
-                <Mail className="h-5 w-5 text-emerald-400" />
-                <div>
-                  <h2 className="text-lg font-bold text-white">
-                    Conectar Correo que Recibe las Alertas de Zelle
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Agrega aquí el correo electrónico donde Citibank y/o TD Bank
-                    te envían los avisos de depósito Zelle.
-                  </p>
+              <div className="flex items-center justify-between gap-2.5 border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <Mail className="h-5 w-5 text-emerald-400" />
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      {editingMailboxId
+                        ? 'Editar Cuenta Receptora y Correo Monitoreado'
+                        : 'Conectar Correo que Recibe Alertas (Zelle + Binance)'}
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Define el correo monitoreado, la cuenta exacta a la que envían el pago y su moneda (`USD` o `USDT`).
+                    </p>
+                  </div>
                 </div>
+                {editingMailboxId && (
+                  <button
+                    type="button"
+                    onClick={resetMailboxForm}
+                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
               </div>
 
               <form
                 onSubmit={(e) => void handleSaveMailbox(e)}
                 className="mt-5 space-y-4"
               >
-                {/* Botones rápidos de proveedor */}
                 <div>
                   <span className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
                     Autocompletar Servidor según tu Correo:
@@ -1432,7 +2869,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }}
                       className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
                     >
-                      Gmail / Google Workspace (imap.gmail.com)
+                      Gmail / Workspace (imap.gmail.com)
                     </button>
                     <button
                       type="button"
@@ -1442,7 +2879,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }}
                       className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
                     >
-                      Outlook / Hotmail (outlook.office365.com)
+                      Outlook / Office 365
                     </button>
                     <button
                       type="button"
@@ -1452,7 +2889,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }}
                       className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
                     >
-                      GoDaddy Workspace (imap.secureserver.net)
+                      GoDaddy Workspace
                     </button>
                   </div>
                 </div>
@@ -1467,26 +2904,91 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={mailboxAlias}
                       onChange={(e) => setMailboxAlias(e.target.value)}
-                      placeholder="Ej. Correo Principal Citibank Zelle"
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Bancos que llegan a este correo
+                      Canales Monitoreados
                     </label>
                     <select
                       value={mailboxBanks}
                       onChange={(e) => setMailboxBanks(e.target.value)}
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     >
+                      <option value="CITIBANK_TD_BINANCE">
+                        Citibank, TD Bank y Binance (Todos)
+                      </option>
                       <option value="CITIBANK_Y_TD_BANK">
-                        Citibank y TD Bank (Ambos)
+                        Solo Citibank y TD Bank
                       </option>
                       <option value="SOLO_CITIBANK">Solo Citibank</option>
-                      <option value="SOLO_TD_BANK">Solo TD Bank</option>
+                      <option value="SOLO_BINANCE">Solo Binance</option>
                     </select>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-3.5">
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                    Datos visibles para el cliente en el Portal (/portal)
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                        Plataforma Principal
+                      </label>
+                      <select
+                        value={mailboxPlatform}
+                        onChange={(e) => {
+                          const nextPlat = e.target
+                            .value as ExpectedPlatformType;
+                          setMailboxPlatform(nextPlat);
+                          setMailboxCurrency(platformDefaultCurrency(nextPlat));
+                        }}
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white"
+                      >
+                        <option value="CITIBANK">Citibank Zelle</option>
+                        <option value="TD_BANK">TD Bank Zelle</option>
+                        <option value="BINANCE_PAY">Binance Pay</option>
+                        <option value="BINANCE_P2P">Binance P2P</option>
+                        <option value="BINANCE_ONCHAIN">
+                          Binance On-Chain
+                        </option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-5">
+                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                        Cuenta a la que envían el pago
+                      </label>
+                      <input
+                        type="text"
+                        value={mailboxReceivingAccount}
+                        onChange={(e) =>
+                          setMailboxReceivingAccount(e.target.value)
+                        }
+                        placeholder={
+                          mailboxEmail || 'Ej. pagos@empresa.com o Pay ID'
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 font-mono text-xs text-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-3">
+                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                        Moneda
+                      </label>
+                      <select
+                        value={mailboxCurrency}
+                        onChange={(e) =>
+                          setMailboxCurrency(e.target.value as CurrencyType)
+                        }
+                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 font-mono text-xs text-white"
+                      >
+                        <option value="USD">USD</option>
+                        <option value="USDT">USDT</option>
+                        <option value="VES">VES</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -1499,24 +3001,35 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       type="email"
                       required
                       value={mailboxEmail}
-                      onChange={(e) => setMailboxEmail(e.target.value)}
-                      placeholder="tucorreo-alertas@gmail.com"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setMailboxEmail(val);
+                        if (!mailboxReceivingAccount) {
+                          setMailboxReceivingAccount(val);
+                        }
+                      }}
+                      placeholder="alertas-fintech@gmail.com"
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Contraseña IMAP / App Password (16 letras)
+                      Contraseña IMAP / App Password{' '}
+                      {editingMailboxId ? '(Opcional al editar)' : ''}
                     </label>
                     <div className="relative mt-1.5">
                       <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                       <input
                         type="password"
-                        required
+                        required={!editingMailboxId}
                         value={mailboxPassword}
                         onChange={(e) => setMailboxPassword(e.target.value)}
-                        placeholder="xxxx xxxx xxxx xxxx"
+                        placeholder={
+                          editingMailboxId
+                            ? 'Dejar vacío para mantener contraseña actual'
+                            : 'xxxx xxxx xxxx xxxx'
+                        }
                         className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 font-mono text-sm text-white"
                       />
                     </div>
@@ -1526,7 +3039,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Servidor IMAP (Host)
+                      Servidor IMAP
                     </label>
                     <div className="relative mt-1.5">
                       <Server className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -1585,18 +3098,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   >
                     {isSavingMailbox ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : editingMailboxId ? (
+                      <Pencil className="h-4 w-4" />
                     ) : (
                       <Plus className="h-4 w-4" />
                     )}
-                    Guardar y Conectar Correo IMAP
+                    {editingMailboxId
+                      ? 'Guardar Cambios de la Cuenta Receptora'
+                      : 'Guardar y Conectar Correo IMAP'}
                   </button>
                 </div>
               </form>
             </div>
 
-            {/* Columna Derecha: Guía + Correos Conectados */}
             <div className="space-y-6 lg:col-span-5">
-              {/* Lista de Correos Monitoreados */}
               <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5">
                 <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
                   Correos Activos Monitoreados ({mailboxes.length})
@@ -1604,76 +3119,97 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 {mailboxes.length === 0 ? (
                   <p className="mt-3 text-xs text-slate-400">
-                    Todavía no hay ningún correo conectado. Completa el
-                    formulario de la izquierda para empezar a leer correos de
-                    Citibank y TD Bank automáticamente.
+                    Todavía no hay ningún buzón IMAP conectado.
                   </p>
                 ) : (
                   <div className="mt-4 space-y-3">
-                    {mailboxes.map((mb) => (
-                      <div
-                        key={mb.id}
-                        className="flex items-start justify-between rounded-lg border border-slate-800 bg-slate-950 p-3.5"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                            <span className="font-semibold text-white">
-                              {mb.email_address}
-                            </span>
-                          </div>
-                          <p className="mt-0.5 text-xs text-slate-400">
-                            {mb.alias} · {mb.imap_host}:{mb.imap_port} (
-                            {mb.mailbox_folder})
-                          </p>
-                          <p className="mt-1 text-[11px] text-emerald-400">
-                            Estado: {mb.last_sync_status ?? 'Listo'} · Última
-                            vez: {formatDateTime(mb.last_sync_at)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteMailbox(mb.id)}
-                          className="rounded p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
-                          title="Eliminar buzón"
+                    {mailboxes.map((mb) => {
+                      const plat = mb.plataforma ?? 'CITIBANK';
+                      const curr = mb.moneda ?? platformDefaultCurrency(plat);
+                      const dest = mb.cuenta_receptora || mb.email_address;
+                      const badge = getPlatformBadgeMeta(plat);
+
+                      return (
+                        <div
+                          key={mb.id}
+                          className="flex items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950 p-3.5"
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                              <span className="font-semibold text-white">
+                                {mb.email_address}
+                              </span>
+                              <span
+                                className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
+                              >
+                                {badge.label}
+                              </span>
+                              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                                {curr}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-sky-300">
+                              Enviar a:{' '}
+                              <span className="font-mono font-semibold text-white">
+                                {dest}
+                              </span>
+                            </p>
+                            <p className="mt-0.5 text-xs text-slate-400">
+                              {mb.alias} · {mb.imap_host}:{mb.imap_port} (
+                              {mb.mailbox_folder})
+                            </p>
+                            <p className="mt-1 text-[11px] text-emerald-400">
+                              Estado: {mb.last_sync_status ?? 'Listo'} · Última
+                              vez: {formatDateTime(mb.last_sync_at)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openEditMailbox(mb)}
+                              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
+                              title="Editar Cuenta / Moneda"
+                            >
+                              <Pencil className="h-3 w-3 text-sky-400" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteMailbox(mb.id)}
+                              className="rounded p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                              title="Eliminar buzón"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* Guía rápida explicativa */}
               <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-5">
                 <div className="flex items-center gap-2 text-sky-300">
                   <HelpCircle className="h-5 w-5" />
                   <h3 className="text-sm font-bold">
-                    ¿Cómo sé cuál correo voy a monitorear?
+                    Idempotencia Cruzada (Binance API + Email)
                   </h3>
                 </div>
                 <ol className="mt-3 list-decimal space-y-2.5 pl-4 text-xs leading-relaxed text-slate-300">
                   <li>
-                    <strong>Es el correo donde tu banco envía los avisos:</strong>{' '}
-                    Entra a tu banca en línea de <strong>Citibank</strong> y/o{' '}
-                    <strong>TD Bank</strong> &rarr; sección{' '}
-                    <em>Profile / Alerts &amp; Notifications / Zelle® Settings</em>.
-                    El email que tengas afiliado ahí para recibir alertas de
-                    depósito es el que debes poner aquí.
+                    <strong>Correos Oficiales Soportados:</strong> Citibank (`@citibank.com`), TD Bank (`@tdbank.com` / `@td.com`) y Binance (`@binance.com`, `@directmail.binance.com`).
                   </li>
                   <li>
-                    <strong>Recomendación FinTech:</strong> Puedes usar ese mismo
-                    correo o crear una regla de reenvío automático en tu correo
-                    hacia una bandeja dedicada (por ejemplo, un Gmail exclusivo
-                    para alertas bancarias).
+                    <strong>Binance API Oficial:</strong> Configura{' '}
+                    <code>BINANCE_API_KEY</code> y{' '}
+                    <code>BINANCE_API_SECRET</code> en <code>.env</code> para consultar Pay, P2P y Depósitos On-Chain en paralelo.
                   </li>
                   <li>
-                    <strong>Si el correo es Gmail:</strong> En tu cuenta de
-                    Google ve a{' '}
-                    <em>Seguridad &rarr; Verificación en 2 pasos &rarr; Contraseñas de aplicaciones</em>,
-                    crea una clave de 16 letras y pégala en el campo{' '}
-                    <strong>Contraseña IMAP</strong>.
+                    <strong>Cero Duplicados:</strong> Ambos canales generan la misma llave{' '}
+                    <code>dedup_key</code> (<code>PLATAFORMA:REFERENCIA:MONTO</code>) con{' '}
+                    <code>ON CONFLICT DO NOTHING</code>.
                   </li>
                 </ol>
               </div>
@@ -1682,23 +3218,620 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         )}
 
         {/* =====================================================================
-            MODAL RADIX UI: CREAR NUEVA CUENTA DE CLIENTE (TITULAR)
+            PESTAÑA 4: USUARIOS Y CUENTAS PARA DISTINTOS NEGOCIOS
+           ===================================================================== */}
+        {activeTab === 'BUSINESS_USERS' &&
+          currentBusinessUser.rol === 'SUPER_ADMIN' && (
+            <div className="space-y-6">
+              <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
+                <div>
+                  <h2 className="text-lg font-bold text-white">
+                    Cuentas de Acceso para Distintos Negocios
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Crea usuarios independientes para cada negocio o comercio. Cada negocio inicia sesión en el panel con sus propios buzones IMAP, clientes y movimientos aislados.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openCreateBusinessUserModal}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+                >
+                  <Plus className="h-4 w-4" />
+                  + Nueva Cuenta de Negocio
+                </button>
+              </div>
+
+              {lastBusinessCredentials && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200">
+                  <div>
+                    <strong>
+                      Última cuenta creada ({lastBusinessCredentials.negocio}):
+                    </strong>{' '}
+                    Correo <code className="text-white">{lastBusinessCredentials.email}</code>
+                    {lastBusinessCredentials.password && (
+                      <>
+                        {' '}
+                        · Contraseña{' '}
+                        <code className="text-white">
+                          {lastBusinessCredentials.password}
+                        </code>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleCopyBusinessCredentials(lastBusinessCredentials)
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-200 hover:bg-emerald-500/25"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copiar Acceso del Negocio
+                  </button>
+                </div>
+              )}
+
+              <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
+                <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+                    Negocios Registrados ({businessUsers.length})
+                  </h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-3">Negocio / Empresa</th>
+                        <th className="px-4 py-3">Usuario &amp; Correo Login</th>
+                        <th className="px-4 py-3">Rol</th>
+                        <th className="px-4 py-3">Entorno Aislado</th>
+                        <th className="px-4 py-3">Último Ingreso</th>
+                        <th className="px-4 py-3 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {businessUsers.map((biz) => {
+                        const isActiveScope = activeNegocioId === biz.id;
+                        return (
+                          <tr key={biz.id} className="hover:bg-slate-800/40">
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center gap-2 font-semibold text-white">
+                                <Briefcase className="h-4 w-4 text-violet-400" />
+                                {biz.nombre_negocio}
+                                {isActiveScope && (
+                                  <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                                    Viendo ahora
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                              <div className="font-medium text-white">
+                                {biz.nombre_usuario}
+                              </div>
+                              <div className="font-mono text-[11px] text-sky-300">
+                                {biz.email}
+                              </div>
+                              {biz.telefono && (
+                                <div className="text-[11px] text-slate-400">
+                                  {biz.telefono}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <span
+                                className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                                  biz.rol === 'SUPER_ADMIN'
+                                    ? 'border-violet-500/40 bg-violet-500/15 text-violet-300'
+                                    : 'border-sky-500/40 bg-sky-500/15 text-sky-300'
+                                }`}
+                              >
+                                {biz.rol === 'SUPER_ADMIN'
+                                  ? 'SUPER ADMIN'
+                                  : 'NEGOCIO'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                              {biz.mailboxes_count ?? 0} correo(s) ·{' '}
+                              {biz.clients_count ?? 0} cliente(s) ·{' '}
+                              {biz.transactions_count ?? 0} mov.
+                            </td>
+                            <td className="px-4 py-3.5 text-xs text-slate-400">
+                              {biz.last_login_at
+                                ? formatDateTime(biz.last_login_at)
+                                : 'Sin ingresos aún'}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {!isActiveScope && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleSwitchBusinessScope(biz.id);
+                                      setActiveTab('ALERTS');
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-500/40 bg-violet-500/15 px-2.5 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-500/25"
+                                  >
+                                    Ver Panel
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => openEditBusinessUserModal(biz)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                                >
+                                  <KeyRound className="h-3 w-3 text-emerald-400" />
+                                  Editar / Clave
+                                </button>
+                                {biz.rol !== 'SUPER_ADMIN' && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleDeleteBusinessUser(
+                                        biz.id,
+                                        biz.nombre_negocio
+                                      )
+                                    }
+                                    className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                                    title="Eliminar negocio"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Tarjeta de Configuración de Motor IA / Visión OCR Multi-Proveedor */}
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+                      <Bot className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">
+                        Motor de Inteligencia Artificial (Visión OCR de Comprobantes)
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Compatible con Google Gemini (Gratis), Groq Cloud (Gratis) u OpenAI. Lee capturas Zelle y Binance y rellena los campos automáticamente.
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    {aiSettings?.hasGeminiKey ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-300">
+                        <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
+                        Google Gemini Activo ({aiSettings.geminiModel ?? 'gemini-3.5-flash-lite'}) · {aiSettings.geminiKeyPreview}
+                      </span>
+                    ) : aiSettings?.hasGroqKey ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/40 bg-orange-500/10 px-3 py-1 text-xs font-semibold text-orange-300">
+                        <span className="h-2 w-2 rounded-full bg-orange-400 animate-pulse" />
+                        Groq Vision Activo ({aiSettings.groqModel ?? 'llama-3.2'}) · {aiSettings.groqKeyPreview}
+                      </span>
+                    ) : aiSettings?.hasOpenAiKey ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                        OpenAI Vision Activo ({aiSettings.openAiModel}) · {aiSettings.openAiKeyPreview}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Sin API Key configurada (Modo Manual / Vectorial)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <form
+                  onSubmit={(e) => void handleSaveAiConfig(e)}
+                  className="space-y-3"
+                >
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                    <div className="sm:col-span-4">
+                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                        Proveedor de Inteligencia Artificial
+                      </label>
+                      <select
+                        value={selectedAiProvider}
+                        onChange={(e) =>
+                          setSelectedAiProvider(
+                            e.target.value as 'gemini' | 'openai' | 'groq'
+                          )
+                        }
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none"
+                      >
+                        <option value="gemini">
+                          ⭐ Google Gemini (100% Gratis - Recomendado)
+                        </option>
+                        <option value="groq">
+                          ⚡ Groq Cloud (Llama 3.2 Vision - Gratuito)
+                        </option>
+                        <option value="openai">
+                          🤖 OpenAI (gpt-4o-mini - De Pago)
+                        </option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-5">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                          {selectedAiProvider === 'gemini'
+                            ? 'Clave de Google Gemini (AI Studio)'
+                            : selectedAiProvider === 'groq'
+                              ? 'Clave de Groq API (gsk_...)'
+                              : 'Clave de OpenAI API (sk-proj-...)'}
+                        </label>
+                        <span className="text-[10px] text-slate-400">
+                          {selectedAiProvider === 'gemini' ? 'Empieza por AQ. o AIzaSy...' : selectedAiProvider === 'groq' ? 'Empieza por gsk_...' : 'Empieza por sk-...'}
+                        </span>
+                      </div>
+                      <input
+                        type="password"
+                        value={openAiInputKey}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setOpenAiInputKey(val);
+                          setVerifyFeedback(null);
+                          const trimmed = val.trim();
+                          if (trimmed.startsWith('AIzaSy') || trimmed.startsWith('AQ.')) {
+                            setSelectedAiProvider('gemini');
+                          } else if (trimmed.startsWith('gsk_')) {
+                            setSelectedAiProvider('groq');
+                          } else if (trimmed.startsWith('sk-')) {
+                            setSelectedAiProvider('openai');
+                          }
+                        }}
+                        placeholder={
+                          selectedAiProvider === 'gemini'
+                            ? aiSettings?.hasGeminiKey
+                              ? `Actualizar clave Gemini (${aiSettings.geminiKeyPreview})`
+                              : 'Pega tu clave AQ... o AIzaSy...'
+                            : selectedAiProvider === 'groq'
+                              ? aiSettings?.hasGroqKey
+                                ? `Actualizar clave Groq (${aiSettings.groqKeyPreview})`
+                                : 'Pega tu clave gsk_...'
+                              : aiSettings?.hasOpenAiKey
+                                ? `Actualizar clave OpenAI (${aiSettings.openAiKeyPreview})`
+                                : 'Pega tu clave sk-proj-...'
+                        }
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-3 flex items-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleVerifyAiKey()}
+                        disabled={isVerifyingAiConfig || isSavingAiConfig || !openAiInputKey.trim()}
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-950/40 px-3 py-2.5 text-xs font-semibold text-sky-300 shadow-md shadow-sky-950/40 hover:bg-sky-900/50 disabled:opacity-50"
+                      >
+                        {isVerifyingAiConfig ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        )}
+                        Probar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSavingAiConfig || isVerifyingAiConfig || !openAiInputKey.trim()}
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-md shadow-emerald-950/40 hover:bg-emerald-500 disabled:opacity-50"
+                      >
+                        {isSavingAiConfig ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Guardar
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Feedback de verificación en vivo */}
+                  {verifyFeedback && (
+                    <div
+                      className={`rounded-lg border px-3.5 py-2 text-xs flex items-center gap-2 ${
+                        verifyFeedback.ok
+                          ? 'border-emerald-500/40 bg-emerald-950/40 text-emerald-200'
+                          : 'border-rose-500/40 bg-rose-950/40 text-rose-200'
+                      }`}
+                    >
+                      {verifyFeedback.ok ? (
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                      )}
+                      <span>{verifyFeedback.message}</span>
+                    </div>
+                  )}
+
+                  {/* Enlaces de ayuda para obtener API keys gratis */}
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] text-slate-400">
+                    <span className="font-semibold text-slate-300">¿No tienes clave?</span>
+                    {selectedAiProvider === 'gemini' && (
+                      <a
+                        href="https://aistudio.google.com/app/apikey"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-semibold text-sky-400 hover:text-sky-300 underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Obtener API Key GRATIS en Google AI Studio (sin tarjeta de crédito)
+                      </a>
+                    )}
+                    {selectedAiProvider === 'groq' && (
+                      <a
+                        href="https://console.groq.com/keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-semibold text-orange-400 hover:text-orange-300 underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Obtener API Key GRATIS en Groq Cloud (Llama 3.2 Vision)
+                      </a>
+                    )}
+                    {selectedAiProvider === 'openai' && (
+                      <a
+                        href="https://platform.openai.com/api-keys"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 font-semibold text-emerald-400 hover:text-emerald-300 underline"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Crear API Key en OpenAI Platform
+                      </a>
+                    )}
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+        {/* =====================================================================
+            MODAL LIGHTBOX: VISOR DE CAPTURA LADO A LADO CON DATOS EXTRAÍDOS
            ===================================================================== */}
         <Dialog.Root
-          open={isNewClientModalOpen}
-          onOpenChange={setIsNewClientModalOpen}
+          open={lightboxData !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setLightboxData(null);
+            }
+          }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[95vw] max-w-5xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
               <div className="flex items-start justify-between border-b border-slate-800 pb-4">
                 <div>
                   <Dialog.Title className="text-lg font-bold text-white">
-                    Crear Cuenta de Cliente / Titular
+                    {lightboxData?.title}
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs text-slate-400">
-                    Registra al cliente y los nombres de Zelle desde donde envía
-                    pagos para conciliación automática.
+                    Comparativa visual entre el comprobante subido por el cliente y los datos extraídos por el motor bancario / Binance API.
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {lightboxData && (
+                <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
+                  {/* Lado Izquierdo: Captura Subida */}
+                  <div className="space-y-3 lg:col-span-6">
+                    <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-sky-300">
+                      <span>Comprobante Subido en Portal</span>
+                      {lightboxData.order?.codigo_orden && (
+                        <span className="font-mono">
+                          {lightboxData.order.codigo_orden}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex min-h-[340px] items-center justify-center rounded-xl border border-slate-800 bg-slate-950 p-3">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={lightboxData.comprobanteBase64}
+                        alt="Captura del cliente"
+                        className="max-h-[480px] w-auto rounded-lg object-contain"
+                      />
+                    </div>
+                    {lightboxData.order?.datos_ocr_extraidos && (
+                      <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs">
+                        <div className="font-semibold text-slate-200">
+                          Validación OCR / Metadatos:
+                        </div>
+                        <div className="mt-1 text-slate-400">
+                          {lightboxData.order.datos_ocr_extraidos.observaciones ??
+                            `Detectado: ${lightboxData.order.datos_ocr_extraidos.monto_detectado ?? ''} ${lightboxData.order.datos_ocr_extraidos.moneda_detectada ?? ''} · Ref: ${lightboxData.order.datos_ocr_extraidos.referencia_detectada ?? 'N/A'}`}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Lado Derecho: Comparativa de Datos */}
+                  <div className="flex flex-col justify-between space-y-4 lg:col-span-6">
+                    <div className="space-y-4">
+                      {lightboxData.order && (
+                        <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-4">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-sky-300">
+                            Datos Reportados por el Cliente
+                          </h4>
+                          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <dt className="text-slate-400">Cliente Titular</dt>
+                              <dd className="mt-0.5 font-semibold text-white">
+                                {lightboxData.order.cliente_nombre}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Canal Esperado</dt>
+                              <dd className="mt-0.5 font-semibold text-white">
+                                {lightboxData.order.plataforma_esperada}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Monto Reportado</dt>
+                              <dd className="mt-0.5 font-mono font-bold text-emerald-400">
+                                {formatMoney(
+                                  lightboxData.order.monto_esperado,
+                                  lightboxData.order.moneda
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Referencia Reportada</dt>
+                              <dd className="mt-0.5 font-mono text-white">
+                                {lightboxData.order.referencia_reportada}
+                              </dd>
+                            </div>
+                            <div className="col-span-2">
+                              <dt className="text-slate-400">Remitente Reportado</dt>
+                              <dd className="mt-0.5 font-semibold text-amber-300">
+                                {lightboxData.order.remitente_reportado ||
+                                  lightboxData.order.nombre_remitente_reportado}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                      )}
+
+                      {lightboxData.tx ? (
+                        <div className="rounded-xl border border-emerald-500/30 bg-slate-950 p-4">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                            Datos Extraídos del Canal ({lightboxData.tx.origen_deteccion})
+                          </h4>
+                          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <dt className="text-slate-400">Plataforma Real</dt>
+                              <dd className="mt-0.5 font-semibold text-white">
+                                {lightboxData.tx.plataforma}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Estado Actual</dt>
+                              <dd className="mt-0.5 font-semibold text-amber-300">
+                                {lightboxData.tx.estado}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Monto Bruto Real</dt>
+                              <dd className="mt-0.5 font-mono font-bold text-white">
+                                {formatMoney(
+                                  lightboxData.tx.monto_bruto,
+                                  lightboxData.tx.moneda
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-slate-400">Referencia Real</dt>
+                              <dd className="mt-0.5 font-mono text-emerald-300">
+                                {lightboxData.tx.referencia}
+                              </dd>
+                            </div>
+                            <div className="col-span-2">
+                              <dt className="text-slate-400">
+                                Remitente / Contraparte Real
+                              </dt>
+                              <dd className="mt-0.5 font-semibold text-white">
+                                {lightboxData.tx.remitente_o_contraparte}
+                              </dd>
+                            </div>
+                            <div className="col-span-2">
+                              <dt className="text-slate-400">Dedup Key</dt>
+                              <dd className="mt-0.5 break-all font-mono text-[11px] text-slate-400">
+                                {lightboxData.tx.dedup_key}
+                              </dd>
+                            </div>
+                          </dl>
+                          {lightboxData.tx.nota_auditoria && (
+                            <p className="mt-3 rounded-lg bg-slate-900 p-2.5 text-xs text-slate-300">
+                              {lightboxData.tx.nota_auditoria}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
+                          Aún no ha ingresado una transacción bancaria o de Binance que coincida con esta orden pendiente.
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                      <Dialog.Close asChild>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                        >
+                          Cerrar Visor
+                        </button>
+                      </Dialog.Close>
+                      {lightboxData.tx &&
+                        lightboxData.tx.estado !== 'CONCILIADO' &&
+                        lightboxData.tx.tipo_movimiento === 'RECIBIDO' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetTx = lightboxData.tx;
+                              const targetOrder = lightboxData.order;
+                              setLightboxData(null);
+                              if (targetTx) {
+                                openManualReconciliationModal(
+                                  targetTx,
+                                  targetOrder
+                                );
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                          >
+                            <UserCheck className="h-4 w-4" />
+                            Conciliar Manualmente
+                          </button>
+                        )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* =====================================================================
+            MODAL: CREAR / EDITAR CUENTA DE ACCESO DE CLIENTE
+           ===================================================================== */}
+        <Dialog.Root
+          open={isNewClientModalOpen}
+          onOpenChange={(open) => {
+            setIsNewClientModalOpen(open);
+            if (!open) {
+              setEditingClientId(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div>
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    {editingClientId
+                      ? 'Editar Cuenta y PIN de Acceso'
+                      : 'Crear Cuenta de Acceso al Portal'}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                    Define el correo, el PIN de ingreso en /portal, los porcentajes de comisión y las cuentas receptoras asignadas a este cliente.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -1717,7 +3850,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               >
                 <div>
                   <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Nombre del Cliente / Titular de Cuenta *
+                    Nombre del Cliente / Titular *
                   </label>
                   <input
                     type="text"
@@ -1732,10 +3865,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Correo del Cliente
+                      Correo de Acceso al Portal *
                     </label>
                     <input
                       type="email"
+                      required
                       value={newClientEmail}
                       onChange={(e) => setNewClientEmail(e.target.value)}
                       placeholder="cliente@correo.com"
@@ -1744,50 +3878,244 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Teléfono / WhatsApp
+                      WhatsApp / Teléfono
                     </label>
                     <input
                       type="text"
                       value={newClientPhone}
                       onChange={(e) => setNewClientPhone(e.target.value)}
-                      placeholder="+1 305 000 0000"
+                      placeholder="+1 305..."
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Nombres de Remitentes Zelle Asociados (Separados por coma)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      PIN de Acceso (4 a 6 dígitos) {editingClientId ? '(Opcional al editar)' : '*'}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGenerateRandomPin}
+                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+                    >
+                      Generar PIN aleatorio
+                    </button>
+                  </div>
                   <input
                     type="text"
-                    value={newClientZelleSenders}
-                    onChange={(e) => setNewClientZelleSenders(e.target.value)}
-                    placeholder="Ej. ALEJANDRO JOSE PEREZ, INVERSIONES PEREZ LLC"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    inputMode="numeric"
+                    pattern="\d{4,6}"
+                    maxLength={6}
+                    required={!editingClientId}
+                    value={newClientPin}
+                    onChange={(e) => setNewClientPin(e.target.value)}
+                    placeholder={
+                      editingClientId
+                        ? 'Dejar vacío para mantener PIN actual'
+                        : 'Ej. 4829'
+                    }
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm tracking-widest text-white"
                   />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    Si el banco reporta un Zelle de cualquiera de estos nombres,
-                    el sistema lo conciliará automáticamente a favor de este
-                    cliente.
-                  </p>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Porcentaje de Comisión de Manejo (%)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="100"
-                    required
-                    value={newClientFee}
-                    onChange={(e) => setNewClientFee(e.target.value)}
-                    className="mt-1.5 w-40 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
-                  />
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Comisión Zelle (%)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      required
+                      value={newClientFeeZelle}
+                      onChange={(e) => setNewClientFeeZelle(e.target.value)}
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Comisión Binance (%)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      required
+                      value={newClientFeeBinance}
+                      onChange={(e) => setNewClientFeeBinance(e.target.value)}
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Cuentas Receptoras Asignadas */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                        Cuentas Receptoras Asignadas (A qué cuenta envía y Moneda)
+                      </h4>
+                      <p className="mt-0.5 text-[11px] text-slate-400">
+                        El cliente verá únicamente estas cuentas en /portal para saber a dónde enviar y en qué moneda.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddCustomAssignedAccount}
+                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/25"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Agregar Cuenta
+                    </button>
+                  </div>
+
+                  {mailboxes.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {mailboxes
+                        .filter((mb) => mb.activo)
+                        .map((mb) => {
+                          const assigned = newClientAssignedAccounts.some(
+                            (acc) =>
+                              acc.mailbox_id === mb.id || acc.id === mb.id
+                          );
+                          const curr =
+                            mb.moneda ??
+                            platformDefaultCurrency(
+                              mb.plataforma ?? 'CITIBANK'
+                            );
+                          const dest = mb.cuenta_receptora || mb.email_address;
+                          return (
+                            <button
+                              key={mb.id}
+                              type="button"
+                              onClick={() => handleToggleMailboxAssignment(mb)}
+                              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
+                                assigned
+                                  ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-200'
+                                  : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500'
+                              }`}
+                            >
+                              <Check
+                                className={`h-3 w-3 ${
+                                  assigned ? 'opacity-100' : 'opacity-25'
+                                }`}
+                              />
+                              <span>
+                                {platformDefaultLabel(
+                                  mb.plataforma ?? 'CITIBANK'
+                                )}
+                                : {dest} ({curr})
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {newClientAssignedAccounts.length === 0 ? (
+                    <p className="mt-3 rounded-lg border border-dashed border-slate-800 px-3 py-2.5 text-center text-[11px] text-slate-400">
+                      No hay cuentas asignadas todavía. Selecciona un buzón de arriba o haz clic en &quot;Agregar Cuenta&quot;.
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-2.5">
+                      {newClientAssignedAccounts.map((acc, idx) => (
+                        <div
+                          key={acc.id}
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-800 bg-slate-900/90 p-2.5 sm:grid-cols-12 sm:items-end"
+                        >
+                          <div className="sm:col-span-3">
+                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                              Plataforma
+                            </label>
+                            <select
+                              value={acc.plataforma}
+                              onChange={(e) =>
+                                handleUpdateAssignedAccount(idx, {
+                                  plataforma: e.target
+                                    .value as ExpectedPlatformType,
+                                })
+                              }
+                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                            >
+                              <option value="CITIBANK">Citibank Zelle</option>
+                              <option value="TD_BANK">TD Bank Zelle</option>
+                              <option value="BINANCE_PAY">Binance Pay</option>
+                              <option value="BINANCE_P2P">Binance P2P</option>
+                              <option value="BINANCE_ONCHAIN">
+                                Red USDT
+                              </option>
+                            </select>
+                          </div>
+                          <div className="sm:col-span-4">
+                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                              Cuenta a enviar (Correo / Pay ID / Wallet)
+                            </label>
+                            <input
+                              type="text"
+                              required
+                              value={acc.cuenta_receptora}
+                              onChange={(e) =>
+                                handleUpdateAssignedAccount(idx, {
+                                  cuenta_receptora: e.target.value,
+                                })
+                              }
+                              placeholder="ej. pagos@correo.com"
+                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-white"
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                              Moneda
+                            </label>
+                            <select
+                              value={acc.moneda}
+                              onChange={(e) =>
+                                handleUpdateAssignedAccount(idx, {
+                                  moneda: e.target.value as CurrencyType,
+                                })
+                              }
+                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs text-white"
+                            >
+                              <option value="USD">USD</option>
+                              <option value="USDT">USDT</option>
+                              <option value="VES">VES</option>
+                            </select>
+                          </div>
+                          <div className="flex items-end gap-1.5 sm:col-span-3">
+                            <div className="flex-1">
+                              <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                                Etiqueta visible
+                              </label>
+                              <input
+                                type="text"
+                                value={acc.alias}
+                                onChange={(e) =>
+                                  handleUpdateAssignedAccount(idx, {
+                                    alias: e.target.value,
+                                  })
+                                }
+                                placeholder="Citibank Zelle"
+                                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAssignedAccount(idx)}
+                              className="rounded border border-slate-700 p-1.5 text-slate-400 hover:border-rose-500/50 hover:text-rose-300"
+                              title="Quitar cuenta"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
@@ -1809,7 +4137,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     ) : (
                       <UserPlus className="h-4 w-4" />
                     )}
-                    Guardar Cuenta de Cliente
+                    {editingClientId ? 'Actualizar Cuenta y PIN' : 'Crear Cuenta de Acceso'}
                   </button>
                 </div>
               </form>
@@ -1818,7 +4146,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         </Dialog.Root>
 
         {/* =====================================================================
-            MODAL RADIX UI: CREAR ORDEN / REPORTE DE PAGO ESPERADO
+            MODAL: CREAR ORDEN / REPORTE DE PAGO ESPERADO
            ===================================================================== */}
         <Dialog.Root
           open={isNewOrderModalOpen}
@@ -1830,11 +4158,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               <div className="flex items-start justify-between border-b border-slate-800 pb-4">
                 <div>
                   <Dialog.Title className="text-lg font-bold text-white">
-                    Registrar Orden / Reporte de Pago Esperado
+                    Registrar Orden de Pago Esperada
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs text-slate-400">
-                    Registra un pago reportado por un usuario para que se
-                    concilie automáticamente por monto y referencia/nombre.
+                    Registra una orden Zelle o Binance esperada para conciliación automática.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -1873,35 +4200,64 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div>
                   <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Nombre en la Cuenta Zelle que Envía el Pago
+                    Remitente Zelle o Nickname Binance
                   </label>
                   <input
                     type="text"
                     value={orderZelleSender}
                     onChange={(e) => setOrderZelleSender(e.target.value)}
-                    placeholder="Ej. ALEJANDRO JOSE PEREZ"
+                    placeholder="Ej. ALEJANDRO JOSE PEREZ o CarlosMendoza_Pay"
                     className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                   />
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Banco Destino
+                      Plataforma Destino
                     </label>
                     <select
                       value={orderBank}
-                      onChange={(e) => setOrderBank(e.target.value as BankName)}
+                      onChange={(e) => {
+                        const val = e.target.value as ExpectedPlatformType;
+                        setOrderBank(val);
+                        setOrderCurrency(
+                          val.startsWith('BINANCE') ? 'USDT' : 'USD'
+                        );
+                      }}
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
                     >
-                      <option value="CITIBANK">Citibank</option>
-                      <option value="TD_BANK">TD Bank</option>
+                      <option value="CITIBANK">Citibank Zelle</option>
+                      <option value="TD_BANK">TD Bank Zelle</option>
+                      <option value="BINANCE_PAY">Binance Pay</option>
+                      <option value="BINANCE_P2P">Binance P2P</option>
+                      <option value="BINANCE_ONCHAIN">
+                        Binance On-Chain (TRC20/BEP20)
+                      </option>
                     </select>
                   </div>
 
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Monto Exacto (USD) *
+                      Moneda
+                    </label>
+                    <select
+                      value={orderCurrency}
+                      onChange={(e) =>
+                        setOrderCurrency(e.target.value as CurrencyType)
+                      }
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                    >
+                      <option value="USD">USD</option>
+                      <option value="USDT">USDT</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Monto Exacto ({orderCurrency}) *
                     </label>
                     <input
                       type="number"
@@ -1917,13 +4273,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                   <div>
                     <label className="block text-xs font-semibold uppercase text-slate-300">
-                      Referencia (Opcional)
+                      Referencia / Order ID / TxID
                     </label>
                     <input
                       type="text"
                       value={orderReference}
                       onChange={(e) => setOrderReference(e.target.value)}
-                      placeholder="CITI992048112"
+                      placeholder="CITI992048112 o 293849201192"
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-white"
                     />
                   </div>
@@ -1957,7 +4313,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         </Dialog.Root>
 
         {/* =====================================================================
-            MODAL RADIX UI: CONCILIACIÓN MANUAL (ZELLE DE TERCERO -> CLIENTE)
+            MODAL: CONCILIACIÓN MANUAL
            ===================================================================== */}
         <Dialog.Root
           open={selectedAlertForMatch !== null}
@@ -1973,11 +4329,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               <div className="flex items-start justify-between border-b border-slate-800 pb-4">
                 <div>
                   <Dialog.Title className="text-lg font-bold text-white">
-                    Conciliación Manual de Pago Zelle
+                    Conciliación Manual Multi-Canal
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs text-slate-400">
-                    Asigna este depósito cuando el remitente Zelle difiere del
-                    nombre del titular registrado en la cuenta.
+                    Asigna este depósito Zelle o Binance a su orden pendiente o cliente titular.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -1999,25 +4354,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
                     <div className="flex items-center justify-between text-xs text-slate-400">
                       <span>
-                        Banco:{' '}
+                        Plataforma:{' '}
                         <strong className="text-white">
-                          {selectedAlertForMatch.banco}
+                          {selectedAlertForMatch.plataforma}
                         </strong>
                       </span>
                       <span>
                         Ref:{' '}
                         <strong className="font-mono text-white">
-                          {selectedAlertForMatch.referencia ?? 'N/A'}
+                          {selectedAlertForMatch.referencia || 'N/A'}
                         </strong>
                       </span>
                     </div>
                     <div className="mt-2 text-sm">
-                      <span className="text-slate-400">
-                        Remitente en Correo Zelle:{' '}
-                      </span>
+                      <span className="text-slate-400">Contraparte: </span>
                       <strong className="text-amber-300">
-                        {selectedAlertForMatch.remitente_o_destinatario ??
-                          'No especificado'}
+                        {selectedAlertForMatch.remitente_o_contraparte}
                       </strong>
                     </div>
                     <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-800 pt-3 text-center">
@@ -2026,7 +4378,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           Monto Bruto
                         </span>
                         <span className="font-mono text-sm font-bold text-white">
-                          {formatUsd(selectedAlertForMatch.monto_bruto)}
+                          {formatMoney(
+                            selectedAlertForMatch.monto_bruto,
+                            selectedAlertForMatch.moneda
+                          )}
                         </span>
                       </div>
                       <div>
@@ -2034,7 +4389,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           Comisión ({selectedAlertForMatch.porcentaje_comision}%)
                         </span>
                         <span className="font-mono text-sm font-semibold text-violet-300">
-                          -{formatUsd(selectedAlertForMatch.monto_comision)}
+                          -
+                          {formatMoney(
+                            selectedAlertForMatch.monto_comision,
+                            selectedAlertForMatch.moneda
+                          )}
                         </span>
                       </div>
                       <div>
@@ -2042,7 +4401,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           Neto a Acreditar
                         </span>
                         <span className="font-mono text-sm font-bold text-emerald-400">
-                          {formatUsd(selectedAlertForMatch.monto_neto)}
+                          {formatMoney(
+                            selectedAlertForMatch.monto_neto,
+                            selectedAlertForMatch.moneda
+                          )}
                         </span>
                       </div>
                     </div>
@@ -2053,7 +4415,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       htmlFor="select-pending-order"
                       className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
                     >
-                      1. Vincular con Orden de Pago Pendiente (Opcional)
+                      1. Vincular con Orden Pendiente (Opcional)
                     </label>
                     <select
                       id="select-pending-order"
@@ -2075,6 +4437,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       </option>
                       {pendingOrders.map((order) => {
                         const isExactAmount =
+                          order.moneda === selectedAlertForMatch.moneda &&
                           Math.abs(
                             order.monto_esperado -
                               selectedAlertForMatch.monto_bruto
@@ -2083,7 +4446,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           <option key={order.id} value={order.id}>
                             {isExactAmount ? '★ [MONTO EXACTO] ' : ''}
                             {order.codigo_orden} — {order.cliente_nombre} (
-                            {formatUsd(order.monto_esperado)})
+                            {formatMoney(order.monto_esperado, order.moneda)})
                           </option>
                         );
                       })}
@@ -2114,7 +4477,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       htmlFor="manual-audit-notes"
                       className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
                     >
-                      3. Justificación / Nota de Auditoría Bancaria
+                      3. Justificación / Nota de Auditoría
                     </label>
                     <textarea
                       id="manual-audit-notes"
@@ -2145,7 +4508,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         <CheckCircle2 className="h-4 w-4" />
                       )}
                       Confirmar Conciliación (
-                      {formatUsd(selectedAlertForMatch.monto_neto)} Neto)
+                      {formatMoney(
+                        selectedAlertForMatch.monto_neto,
+                        selectedAlertForMatch.moneda
+                      )}
+                      )
                     </button>
                   </div>
                 </form>
@@ -2155,7 +4522,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         </Dialog.Root>
 
         {/* =====================================================================
-            MODAL RADIX UI: INSPECTOR DE CORREO CRUDO
+            MODAL: INSPECTOR DE PAYLOAD / CORREO CRUDO
            ===================================================================== */}
         <Dialog.Root
           open={inspectedAlert !== null}
@@ -2170,7 +4537,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <Dialog.Title className="text-base font-bold text-white">
-                  Cuerpo Original de la Alerta Bancaria
+                  Payload Original &amp; Llave de Idempotencia
                 </Dialog.Title>
                 <Dialog.Close asChild>
                   <button
@@ -2183,12 +4550,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
               {inspectedAlert && (
                 <div className="mt-4 space-y-3 text-xs">
-                  <div className="rounded-lg bg-slate-950 p-3 font-mono text-slate-300">
-                    <div>Message-ID: {inspectedAlert.message_id}</div>
-                    <div>Método: {inspectedAlert.metodo_extraccion}</div>
+                  <div className="space-y-1 rounded-lg bg-slate-950 p-3 font-mono text-slate-300">
+                    <div>External ID: {inspectedAlert.external_unique_id}</div>
+                    <div className="text-emerald-400">
+                      Dedup Key: {inspectedAlert.dedup_key}
+                    </div>
+                    <div>Origen: {inspectedAlert.origen_deteccion}</div>
                   </div>
                   <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200">
-                    {inspectedAlert.raw_body ?? 'Sin contenido raw_body.'}
+                    {inspectedAlert.raw_body ??
+                      JSON.stringify(inspectedAlert.raw_payload, null, 2)}
                   </pre>
                 </div>
               )}
@@ -2197,7 +4568,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         </Dialog.Root>
 
         {/* =====================================================================
-            MODAL RADIX UI: SIMULADOR DEL MOTOR DE PARSEO HÍBRIDO
+            MODAL: SIMULADOR MULTICANAL (ZELLE + BINANCE)
            ===================================================================== */}
         <Dialog.Root open={isSimulatorOpen} onOpenChange={setIsSimulatorOpen}>
           <Dialog.Portal>
@@ -2206,13 +4577,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               <div className="flex items-start justify-between border-b border-slate-800 pb-4">
                 <div>
                   <Dialog.Title className="text-lg font-bold text-white">
-                    Simulador en Vivo del Motor Híbrido (Regex + AI Fallback)
+                    Simulador Multi-Canal (Zelle + Binance Pay / P2P / On-Chain)
                   </Dialog.Title>
                   <Dialog.Description className="mt-1 text-xs text-slate-400">
-                    Pega un correo HTML o texto de Citibank / TD Bank para
-                    ejecutar{' '}
+                    Prueba en vivo{' '}
                     <code className="text-sky-300">parseBankAlertEmail()</code>{' '}
-                    y calcular la comisión del 4%.
+                    e idempotencia cruzada por <code>dedup_key</code>.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
@@ -2241,7 +4611,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }}
                       className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs font-medium text-sky-300 hover:border-sky-500/50"
                     >
-                      Cargar: {tpl.label}
+                      {tpl.label}
                     </button>
                   ))}
                 </div>
@@ -2306,6 +4676,181 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <Cpu className="h-4 w-4" />
                     )}
                     Ejecutar Parseo e Insertar
+                  </button>
+                </div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* =====================================================================
+            MODAL: CREAR / EDITAR CUENTA DE NEGOCIO
+           ===================================================================== */}
+        <Dialog.Root
+          open={isBusinessUserModalOpen}
+          onOpenChange={(open) => {
+            setIsBusinessUserModalOpen(open);
+            if (!open) {
+              setEditingBusinessUserId(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div>
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    {editingBusinessUserId
+                      ? 'Editar Cuenta de Negocio y Clave'
+                      : 'Crear Cuenta Nueva para Negocio'}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                    Define el negocio, correo y contraseña para su acceso independiente al panel de conciliación.
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <form
+                onSubmit={(e) => void handleSaveBusinessUser(e)}
+                className="mt-4 space-y-4"
+              >
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                    Nombre del Negocio / Empresa *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={bizName}
+                    onChange={(e) => setBizName(e.target.value)}
+                    placeholder="Ej. Inversiones Caribe LLC"
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Nombre del Usuario Responsable *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bizOwnerName}
+                      onChange={(e) => setBizOwnerName(e.target.value)}
+                      placeholder="Ej. María González"
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Teléfono / WhatsApp
+                    </label>
+                    <input
+                      type="text"
+                      value={bizPhone}
+                      onChange={(e) => setBizPhone(e.target.value)}
+                      placeholder="+1 305..."
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Correo de Inicio de Sesión *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={bizEmail}
+                      onChange={(e) => setBizEmail(e.target.value)}
+                      placeholder="admin@negocio.com"
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Tipo de Cuenta
+                    </label>
+                    <select
+                      value={bizRole}
+                      disabled={
+                        editingBusinessUserId !== null && bizRole === 'SUPER_ADMIN'
+                      }
+                      onChange={(e) =>
+                        setBizRole(e.target.value as BusinessUserRole)
+                      }
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-60"
+                    >
+                      <option value="NEGOCIO">Negocio Independiente</option>
+                      <option value="SUPER_ADMIN">Super Admin</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                      Contraseña de Acceso{' '}
+                      {editingBusinessUserId ? '(Opcional al editar)' : '*'}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleGenerateRandomBizPassword}
+                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+                    >
+                      Generar clave aleatoria
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    required={!editingBusinessUserId}
+                    minLength={editingBusinessUserId && !bizPassword ? undefined : 4}
+                    value={bizPassword}
+                    onChange={(e) => setBizPassword(e.target.value)}
+                    placeholder={
+                      editingBusinessUserId
+                        ? 'Dejar vacío para mantener contraseña actual'
+                        : 'Mínimo 4 caracteres'
+                    }
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                  <Dialog.Close asChild>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                    >
+                      Cancelar
+                    </button>
+                  </Dialog.Close>
+                  <button
+                    type="submit"
+                    disabled={isSavingBusinessUser}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {isSavingBusinessUser ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Briefcase className="h-4 w-4" />
+                    )}
+                    {editingBusinessUserId
+                      ? 'Guardar Cambios'
+                      : 'Crear Cuenta de Negocio'}
                   </button>
                 </div>
               </form>
