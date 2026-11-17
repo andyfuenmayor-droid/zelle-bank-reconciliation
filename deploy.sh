@@ -47,4 +47,77 @@ docker exec "$PG_CONTAINER" psql -U "$PG_USER" -d "$PG_DB" -c "\dt public.bank_e
 echo "📦 Construyendo y levantando contenedor Docker zelle-bank-reconciliation en puerto $APP_PORT..."
 docker compose up -d --build
 
-echo "✅ Despliegue y creación de tablas en PostgreSQL completados con éxito."
+# 4. Configurar Nginx y SSL para conciliarcuenta.com y www.conciliarcuenta.com
+DOMAIN="conciliarcuenta.com"
+SITE_NAME="conciliarcuenta.com"
+CERT_DIR="/etc/letsencrypt/live/$DOMAIN"
+
+echo "⚙️ Configurando Nginx para $DOMAIN y www.$DOMAIN -> http://127.0.0.1:$APP_PORT ..."
+
+if [ -f "$CERT_DIR/fullchain.pem" ] && [ -f "$CERT_DIR/privkey.pem" ]; then
+  cat <<EOF > /etc/nginx/sites-available/$SITE_NAME
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN www.$DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name $DOMAIN www.$DOMAIN;
+    client_max_body_size 20M;
+
+    ssl_certificate $CERT_DIR/fullchain.pem;
+    ssl_certificate_key $CERT_DIR/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 120;
+    }
+}
+EOF
+else
+  cat <<EOF > /etc/nginx/sites-available/$SITE_NAME
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN www.$DOMAIN;
+    client_max_body_size 20M;
+
+    location / {
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 120;
+    }
+}
+EOF
+fi
+
+ln -sf /etc/nginx/sites-available/$SITE_NAME /etc/nginx/sites-enabled/$SITE_NAME
+nginx -t
+systemctl reload nginx
+
+# Intentar emitir certificado SSL gratuito con Certbot si aún no existe
+if [ ! -f "$CERT_DIR/fullchain.pem" ] && command -v certbot >/dev/null 2>&1; then
+  echo "🔒 Emitiendo certificado SSL Let's Encrypt para $DOMAIN y www.$DOMAIN..."
+  certbot --nginx -d "$DOMAIN" -d "www.$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || echo "⚠️ Certbot aún esperando propagación DNS; HTTP en http://$DOMAIN ya está activo."
+fi
+
+echo "✅ Despliegue, tablas en PostgreSQL y dominio $DOMAIN configurados con éxito."
