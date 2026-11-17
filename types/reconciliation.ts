@@ -65,6 +65,42 @@ export interface PendingPaymentOrder {
 }
 
 /**
+ * Cuenta de Cliente / Titular registrada en `clientes_titulares`
+ */
+export interface ClientAccountRecord {
+  id: string;
+  nombre_titular: string;
+  email_contacto: string | null;
+  telefono: string | null;
+  remitentes_zelle_habituales: string | null;
+  porcentaje_comision: number;
+  activo: boolean;
+  total_bruto_conciliado: number;
+  total_comision_retenida: number;
+  total_neto_disponible: number;
+  pagos_conciliados_count: number;
+  created_at: string;
+}
+
+/**
+ * Buzón de correo IMAP monitoreado para recibir alertas de Citibank / TD Bank
+ */
+export interface ImapMailboxRecord {
+  id: string;
+  alias: string;
+  email_address: string;
+  imap_host: string;
+  imap_port: number;
+  imap_secure: boolean;
+  mailbox_folder: string;
+  bancos_monitoreados: string;
+  activo: boolean;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  created_at: string;
+}
+
+/**
  * Resultado devuelto por la función PL/pgSQL `fn_conciliar_pago_zelle`
  */
 export interface AutoReconciliationResult {

@@ -10,7 +10,36 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS unaccent;
 
--- 2. Tabla de Órdenes de Pago Pendientes (Reportes de pago creados por usuarios/clientes)
+-- 2. Tabla de Clientes / Titulares de Cuenta (Cuentas de Usuarios y Remitentes Zelle Autorizados)
+CREATE TABLE IF NOT EXISTS clientes_titulares (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre_titular TEXT NOT NULL,
+    email_contacto VARCHAR(255),
+    telefono VARCHAR(64),
+    remitentes_zelle_habituales TEXT,
+    porcentaje_comision NUMERIC(5,2) NOT NULL DEFAULT 4.00 CHECK (porcentaje_comision >= 0 AND porcentaje_comision <= 100),
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 3. Tabla de Buzones de Correo IMAP Monitoreados (Citibank / TD Bank Alerts)
+CREATE TABLE IF NOT EXISTS imap_monitored_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alias VARCHAR(120) NOT NULL DEFAULT 'Bandeja Principal Zelle',
+    email_address VARCHAR(255) UNIQUE NOT NULL,
+    imap_host VARCHAR(255) NOT NULL DEFAULT 'imap.gmail.com',
+    imap_port INTEGER NOT NULL DEFAULT 993,
+    imap_secure BOOLEAN NOT NULL DEFAULT TRUE,
+    imap_password TEXT NOT NULL,
+    mailbox_folder VARCHAR(120) NOT NULL DEFAULT 'INBOX',
+    bancos_monitoreados VARCHAR(64) NOT NULL DEFAULT 'CITIBANK_Y_TD_BANK',
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    last_sync_at TIMESTAMPTZ,
+    last_sync_status TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 4. Tabla de Órdenes de Pago Pendientes (Reportes de pago creados por usuarios/clientes)
 CREATE TABLE IF NOT EXISTS ordenes_pago_pendientes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     codigo_orden VARCHAR(64) UNIQUE NOT NULL,
@@ -30,7 +59,7 @@ CREATE TABLE IF NOT EXISTS ordenes_pago_pendientes (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 3. Tabla Principal: Alertas de Correo Bancario (Idempotente por message_id)
+-- 5. Tabla Principal: Alertas de Correo Bancario (Idempotente por message_id)
 CREATE TABLE IF NOT EXISTS bank_email_alerts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id VARCHAR(512) UNIQUE NOT NULL,
@@ -57,7 +86,7 @@ CREATE TABLE IF NOT EXISTS bank_email_alerts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 4. Índices de Alto Rendimiento e Idempotencia
+-- 6. Índices de Alto Rendimiento e Idempotencia
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_alerts_message_id
     ON bank_email_alerts (message_id);
 
@@ -80,10 +109,18 @@ CREATE INDEX IF NOT EXISTS idx_ordenes_remitente_trgm
 CREATE INDEX IF NOT EXISTS idx_ordenes_cliente_trgm
     ON ordenes_pago_pendientes USING GIN (cliente_nombre gin_trgm_ops);
 
+CREATE INDEX IF NOT EXISTS idx_clientes_titulares_nombre_trgm
+    ON clientes_titulares USING GIN (nombre_titular gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_clientes_titulares_remitentes_trgm
+    ON clientes_titulares USING GIN (remitentes_zelle_habituales gin_trgm_ops);
+
 -- =============================================================================
--- 5. FUNCIÓN PL/pgSQL: fn_conciliar_pago_zelle
--- Intenta conciliar automáticamente una alerta bancaria entrante contra
--- ordenes_pago_pendientes por monto_bruto exacto + (referencia exacta O similitud pg_trgm).
+-- 7. FUNCIÓN PL/pgSQL: fn_conciliar_pago_zelle
+-- Intenta conciliar automáticamente una alerta bancaria entrante contra:
+--  1) ordenes_pago_pendientes por monto_bruto exacto + referencia
+--  2) ordenes_pago_pendientes por monto_bruto exacto + similitud pg_trgm
+--  3) clientes_titulares por coincidencia directa de remitente Zelle registrado
 -- =============================================================================
 CREATE OR REPLACE FUNCTION fn_conciliar_pago_zelle(p_alert_id UUID)
 RETURNS TABLE (
@@ -101,6 +138,7 @@ AS $$
 DECLARE
     v_alert bank_email_alerts%ROWTYPE;
     v_orden ordenes_pago_pendientes%ROWTYPE;
+    v_cliente clientes_titulares%ROWTYPE;
     v_candidate_count INTEGER := 0;
     v_best_score NUMERIC(5,4) := 0;
     v_norm_ref VARCHAR(128);
@@ -203,7 +241,6 @@ BEGIN
     -- PASO 2: Match difuso por Monto Bruto Exacto + Similitud de Nombre (pg_trgm)
     -- -------------------------------------------------------------------------
     IF LENGTH(v_norm_sender) >= 3 THEN
-        -- Contar cuántas órdenes pendientes tienen el mismo monto y superan el umbral mínimo (0.45)
         SELECT COUNT(*)
         INTO v_candidate_count
         FROM ordenes_pago_pendientes o
@@ -267,7 +304,6 @@ BEGIN
                 RETURN;
             END IF;
         ELSIF v_candidate_count > 1 THEN
-            -- Múltiples candidatos con el mismo monto y nombre similar: enviar a REVISION_MANUAL por seguridad financiera
             UPDATE bank_email_alerts
             SET estado = 'REVISION_MANUAL',
                 notas_conciliacion = FORMAT(
@@ -288,11 +324,55 @@ BEGIN
                 FORMAT('Múltiples candidatos (%s) para el monto $%s. Marcado para revisión manual.', v_candidate_count, v_alert.monto_bruto)::TEXT;
             RETURN;
         END IF;
+
+        -- ---------------------------------------------------------------------
+        -- PASO 2.5: Reconocimiento directo contra Directorio de Clientes (clientes_titulares)
+        -- Si el remitente Zelle está registrado como titular o remitente autorizado de un cliente
+        -- ---------------------------------------------------------------------
+        SELECT c.*
+        INTO v_cliente
+        FROM clientes_titulares c
+        WHERE c.activo = TRUE
+          AND (
+              similarity(UPPER(unaccent(c.nombre_titular)), v_norm_sender) >= 0.55
+              OR UPPER(unaccent(COALESCE(c.remitentes_zelle_habituales, ''))) LIKE '%' || v_norm_sender || '%'
+          )
+        ORDER BY similarity(UPPER(unaccent(c.nombre_titular)), v_norm_sender) DESC
+        LIMIT 1;
+
+        IF FOUND THEN
+            v_best_score := GREATEST(
+                similarity(UPPER(unaccent(v_cliente.nombre_titular)), v_norm_sender),
+                0.8500
+            )::NUMERIC(5,4);
+
+            UPDATE bank_email_alerts
+            SET estado = 'CONCILIADO',
+                porcentaje_comision = v_cliente.porcentaje_comision,
+                cliente_asignado_nombre = v_cliente.nombre_titular,
+                notas_conciliacion = FORMAT(
+                    'Conciliado automáticamente por reconocimiento de remitente Zelle registrado a favor de %s (Comisión %s%%).',
+                    v_cliente.nombre_titular,
+                    v_cliente.porcentaje_comision
+                ),
+                conciliado_at = NOW()
+            WHERE id = v_alert.id;
+
+            RETURN QUERY SELECT
+                TRUE,
+                'CONCILIADO'::VARCHAR(32),
+                NULL::UUID,
+                NULL::VARCHAR(64),
+                v_cliente.nombre_titular,
+                'AUTO_CLIENT_DIRECTORY'::VARCHAR(64),
+                v_best_score,
+                FORMAT('Conciliado automáticamente con cuenta de cliente %s', v_cliente.nombre_titular)::TEXT;
+            RETURN;
+        END IF;
     END IF;
 
     -- -------------------------------------------------------------------------
     -- PASO 3: Verificar si existe orden por el mismo monto pero de un tercero
-    -- (Nombre del remitente Zelle distinto al titular de la cuenta)
     -- -------------------------------------------------------------------------
     SELECT COUNT(*)
     INTO v_candidate_count
@@ -323,7 +403,6 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Si el correo tuvo que ser extraído con AI_FALLBACK o carece de remitente/referencia, pasar a REVISION_MANUAL
     IF v_alert.metodo_extraccion = 'AI_FALLBACK' OR v_alert.remitente_o_destinatario IS NULL THEN
         UPDATE bank_email_alerts
         SET estado = 'REVISION_MANUAL',
@@ -342,7 +421,6 @@ BEGIN
         RETURN;
     END IF;
 
-    -- Permanece en DETECTADO (o REVISION_MANUAL si se prefiere revisar todo ingreso sin orden previa)
     RETURN QUERY SELECT
         FALSE,
         v_alert.estado,
