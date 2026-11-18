@@ -3704,6 +3704,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   lightboxData.order.nombre_remitente_reportado}
                               </dd>
                             </div>
+                            {lightboxData.order.fecha_transferencia && (
+                              <div className="col-span-2">
+                                <dt className="text-slate-400">Fecha de Transferencia (Comprobante)</dt>
+                                <dd className="mt-0.5 font-mono font-semibold text-sky-300">
+                                  {lightboxData.order.fecha_transferencia}
+                                </dd>
+                              </div>
+                            )}
                           </dl>
                         </div>
                       )}

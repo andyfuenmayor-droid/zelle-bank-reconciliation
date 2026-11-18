@@ -62,6 +62,7 @@ export interface BusinessUserRecord {
 export interface OcrExtractionData {
   monto_detectado?: number | null;
   moneda_detectada?: string | null;
+  fecha_detectada?: string | null;
   referencia_detectada?: string | null;
   remitente_detectado?: string | null;
   plataforma_detectada?: string | null;
@@ -169,6 +170,7 @@ export interface PendingPaymentOrder {
   remitente_reportado: string;
   nombre_remitente_reportado: string;
   referencia_reportada: string | null;
+  fecha_transferencia?: string | null;
   comprobante_base64: string | null;
   comprobante_mime: string | null;
   datos_ocr_extraidos: OcrExtractionData | null;

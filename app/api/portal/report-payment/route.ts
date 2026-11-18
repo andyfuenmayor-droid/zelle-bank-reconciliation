@@ -36,6 +36,7 @@ interface ReportPaymentBody {
   plataforma_esperada?: string;
   moneda?: string;
   monto_esperado?: number;
+  fecha_transferencia?: string;
   remitente_reportado?: string;
   referencia_reportada?: string;
   comprobante_base64?: string;
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const rawPlatform = (body.plataforma_esperada ?? '').trim().toUpperCase();
     const rawCurrency = (body.moneda ?? '').trim().toUpperCase();
     const montoEsperado = Number(body.monto_esperado ?? 0);
+    const fechaTransferencia = (body.fecha_transferencia ?? '').trim() || null;
     const remitenteReportado = (body.remitente_reportado ?? '').trim();
     const referenciaReportada = (body.referencia_reportada ?? '').trim();
     const comprobanteBase64 = (body.comprobante_base64 ?? '').trim();
@@ -107,22 +109,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // En Binance el TxID u Order ID es obligatorio para validar depósitos en blockchain.
-    // Para Zelle / transferencias bancarias, muchas entidades (Chase, Capital One, Zelle app)
-    // no muestran código en la pantalla inicial de confirmación, por lo que es opcional.
-    if (plataforma.startsWith('BINANCE') && referenciaReportada.length < 3) {
+    if (referenciaReportada.length < 3) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            'Para depósitos en Binance, el número de confirmación, Order ID o TxID es obligatorio.',
+            'Ingresa el número de confirmación, Order ID o TxID del comprobante.',
         },
         { status: 400 }
       );
     }
-
-    const sanitizedReferencia =
-      referenciaReportada.length >= 3 ? referenciaReportada : null;
 
     if (!comprobanteBase64 || comprobanteBase64.length < 30) {
       return NextResponse.json(
@@ -184,9 +180,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         banco_destino: plataforma,
         moneda,
         monto_esperado: normalizedAmount,
+        fecha_transferencia: fechaTransferencia,
         remitente_reportado: remitenteReportado,
         nombre_remitente_reportado: remitenteReportado,
-        referencia_reportada: sanitizedReferencia,
+        referencia_reportada: referenciaReportada,
         comprobante_base64: comprobanteBase64,
         comprobante_mime: comprobanteMime,
         datos_ocr_extraidos: ocrData,
@@ -256,6 +253,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         clientRow.email_contacto ??
         'cliente@conciliarcuenta.com';
 
+      await client.query(`
+        ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS fecha_transferencia VARCHAR(50);
+      `);
+
       const insertOrderRes = await client.query<PendingPaymentOrder>(
         `
         INSERT INTO ordenes_pago_pendientes (
@@ -268,6 +269,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           banco_destino,
           moneda,
           monto_esperado,
+          fecha_transferencia,
           remitente_reportado,
           nombre_remitente_reportado,
           referencia_reportada,
@@ -277,7 +279,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           estado,
           notas_cliente
         )
-        VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, 'PENDIENTE', $16)
+        VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, 'PENDIENTE', $17)
         RETURNING *;
         `,
         [
@@ -290,9 +292,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           plataforma,
           moneda,
           normalizedAmount,
+          fechaTransferencia,
           remitenteReportado,
           remitenteReportado,
-          sanitizedReferencia,
+          referenciaReportada,
           comprobanteBase64,
           comprobanteMime,
           JSON.stringify(ocrResult),

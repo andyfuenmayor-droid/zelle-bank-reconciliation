@@ -175,6 +175,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   const [plataforma, setPlataforma] = useState<ExpectedPlatformType>('CITIBANK');
   const [moneda, setMoneda] = useState<CurrencyType>('USD');
   const [monto, setMonto] = useState<string>('');
+  const [fechaTransferencia, setFechaTransferencia] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
   const [remitente, setRemitente] = useState<string>('');
   const [referencia, setReferencia] = useState<string>('');
   const [notasCliente, setNotasCliente] = useState<string>('');
@@ -195,6 +198,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   } | null>(null);
   const [aiDetectedFields, setAiDetectedFields] = useState<{
     monto?: boolean;
+    fecha?: boolean;
     remitente?: boolean;
     referencia?: boolean;
     plataforma?: boolean;
@@ -415,6 +419,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           const d = result.data;
           const detectedMap: {
             monto?: boolean;
+            fecha?: boolean;
             remitente?: boolean;
             referencia?: boolean;
             plataforma?: boolean;
@@ -424,6 +429,13 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           if (d.monto !== null && d.monto !== undefined && d.monto > 0) {
             setMonto(d.monto.toFixed(2));
             detectedMap.monto = true;
+          }
+          if (d.fecha && d.fecha.trim().length > 0) {
+            const cleanDate = d.fecha.trim().slice(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+              setFechaTransferencia(cleanDate);
+              detectedMap.fecha = true;
+            }
           }
           if (d.moneda) {
             setMoneda(d.moneda);
@@ -576,6 +588,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           plataforma_esperada: plataforma,
           moneda,
           monto_esperado: Number.parseFloat(monto),
+          fecha_transferencia: fechaTransferencia,
           remitente_reportado: remitente,
           referencia_reportada: referencia,
           comprobante_base64: receiptBase64,
@@ -1328,9 +1341,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       )}
                     </div>
 
-                    {/* Monto y Moneda */}
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                      <div className="sm:col-span-2">
+                    {/* Monto, Moneda y Fecha */}
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
+                      <div className="sm:col-span-5">
                         <div className="flex items-center justify-between">
                           <label className="block text-xs font-semibold uppercase text-slate-300">
                             Monto Exacto ({moneda}) *
@@ -1357,7 +1370,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           }`}
                         />
                       </div>
-                      <div>
+                      <div className="sm:col-span-3">
                         <label className="block text-xs font-semibold uppercase text-slate-300">
                           Moneda
                         </label>
@@ -1371,6 +1384,30 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           <option value="USDT">USDT</option>
                           <option value="VES">VES</option>
                         </select>
+                      </div>
+                      <div className="sm:col-span-4">
+                        <div className="flex items-center justify-between">
+                          <label className="block text-xs font-semibold uppercase text-slate-300">
+                            Fecha Transferencia *
+                          </label>
+                          {aiDetectedFields.fecha && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
+                              <Sparkles className="h-3 w-3" />
+                              IA Detectado
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="date"
+                          required
+                          value={fechaTransferencia}
+                          onChange={(e) => setFechaTransferencia(e.target.value)}
+                          className={`mt-1.5 w-full rounded-xl border bg-slate-950 px-3 py-2.5 font-mono text-sm text-white transition focus:outline-none ${
+                            aiDetectedFields.fecha
+                              ? 'border-emerald-500/60 ring-1 ring-emerald-500/40 focus:border-emerald-400'
+                              : 'border-slate-700 focus:border-emerald-500'
+                          }`}
+                        />
                       </div>
                     </div>
 
@@ -1599,7 +1636,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             <span className="truncate">
                               De: {order.remitente_reportado}
                             </span>
-                            <span>{formatDateTime(order.created_at)}</span>
+                            <span>
+                              {order.fecha_transferencia
+                                ? `Fecha pago: ${order.fecha_transferencia}`
+                                : formatDateTime(order.created_at)}
+                            </span>
                           </div>
 
                           {order.comprobante_base64 && (
@@ -1734,6 +1775,15 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         )}
                       </span>
                     </div>
+
+                    {successOrderModal.order.fecha_transferencia && (
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                        <span className="font-semibold text-slate-400">Fecha Transferencia:</span>
+                        <span className="font-mono text-slate-200">
+                          {successOrderModal.order.fecha_transferencia}
+                        </span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                       <span className="font-semibold text-slate-400">Destino / Banco:</span>

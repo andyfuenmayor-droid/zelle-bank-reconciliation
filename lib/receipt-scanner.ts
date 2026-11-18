@@ -10,6 +10,7 @@ export interface ReceiptAiScanResult {
   monto: number | null;
   moneda: CurrencyType;
   plataforma: ExpectedPlatformType;
+  fecha?: string | null;
   remitente: string;
   referencia: string;
   cuenta_destino: string | null;
@@ -28,6 +29,7 @@ export interface ReceiptAiScanResult {
 interface RawVisionAiResponse {
   monto?: number | string | null;
   moneda?: string | null;
+  fecha?: string | null;
   plataforma?: string | null;
   remitente?: string | null;
   referencia?: string | null;
@@ -229,6 +231,12 @@ function tryExtractFromSvgDataUrl(dataUrl: string): ReceiptAiScanResult | null {
       plataforma = 'CITIBANK';
     }
 
+    // Fecha
+    const fechaMatch =
+      decoded.match(/(?:Fecha|Date):\s*([^<]+)/i) ||
+      decoded.match(/<text[^>]*>\s*(?:Fecha|Date):\s*([^<]+)<\/text>/i);
+    const fecha = fechaMatch?.[1]?.trim() || null;
+
     // Referencia
     const refMatch =
       decoded.match(/(?:Ref|Confirmaci[oó]n|TxID|Order ID):\s*([^<]+)/i) ||
@@ -239,6 +247,7 @@ function tryExtractFromSvgDataUrl(dataUrl: string): ReceiptAiScanResult | null {
       monto,
       moneda: normalizeDetectedCurrency(rawMoneda, plataforma),
       plataforma,
+      fecha,
       remitente: '', // Debe ser colocado obligatoriamente de forma manual
       referencia,
       cuenta_destino: null,
@@ -268,8 +277,9 @@ Analiza la captura de pantalla adjunta y extrae de forma obligatoria un objeto J
 - "monto": Número flotante con el monto transferido/recibido (ej. 10.00, 20.00, 650.00). Sin comas ni signos de dólar.
 - "moneda": "USD", "USDT" o "VES". Por defecto USD para Zelle y USDT para Binance.
 - "plataforma": "CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN".
-- "remitente": Nombre de la persona o entidad que envió el pago (o nickname de Binance). Si dice "You sent to X", identifica quién es el titular emisor o el nombre mostrado.
-- "referencia": Código de confirmación (ej. "o873zgxcu", "CITI992048112", "rjsnfkdk9", TxID o Order ID). Si la captura es una pantalla preliminar o de confirmación de Zelle sin código visible (ej. "Estamos enviando tu dinero ahora"), devuelve cadena vacía "".
+- "fecha": Fecha visible de la transacción en formato ISO YYYY-MM-DD (ej. "2026-11-15").
+- "remitente": "" (dejar siempre cadena vacía, el usuario lo introduce manualmente).
+- "referencia": Código de confirmación (ej. "o873zgxcu", "CITI992048112", "rjsnfkdk9", TxID o Order ID).
 - "cuenta_destino": Correo electrónico, teléfono o Pay ID donde se recibió el dinero si aparece visible en la imagen.
 - "confianza": Número entre 0.0 y 1.0 según la claridad de la imagen.
 - "observaciones": Breve resumen de una línea en español de lo detectado.`;
@@ -317,6 +327,7 @@ Analiza la captura de pantalla adjunta y extrae de forma obligatoria un objeto J
     monto,
     moneda,
     plataforma,
+    fecha: (parsed.fecha ?? '').trim() || null,
     remitente: '', // Debe ser colocado obligatoriamente de forma manual por el usuario
     referencia: (parsed.referencia ?? '').trim(),
     cuenta_destino: parsed.cuenta_destino?.trim() || null,
@@ -367,8 +378,9 @@ async function scanWithGeminiVision(
   "monto": 20.00,
   "moneda": "USD",
   "plataforma": "CITIBANK",
-  "remitente": "Nombre del emisor o titular",
-  "referencia": "Codigo de confirmacion o TxID (o cadena vacia si no aparece en el comprobante)",
+  "fecha": "2026-11-15",
+  "remitente": "",
+  "referencia": "Codigo de confirmacion o TxID",
   "cuenta_destino": "correo o telefono receptor",
   "confianza": 0.95,
   "observaciones": "Comprobante identificado con exito"
@@ -451,6 +463,7 @@ async function scanWithGeminiVision(
     monto,
     moneda,
     plataforma,
+    fecha: (parsed.fecha ?? '').trim() || null,
     remitente: '', // Debe ser colocado obligatoriamente de forma manual por el usuario
     referencia: (parsed.referencia ?? '').trim(),
     cuenta_destino: parsed.cuenta_destino?.trim() || null,
@@ -482,7 +495,7 @@ async function scanWithGroqVision(
     messages: [
       {
         role: 'system',
-        content: `Eres un auditor FinTech de comprobantes bancarios Zelle y Binance. Analiza la imagen y extrae un JSON con: monto (numero), moneda ("USD" o "USDT"), plataforma ("CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN"), remitente (string), referencia (string), cuenta_destino (string o null), confianza (numero de 0 a 1), observaciones (string).`,
+        content: `Eres un auditor FinTech de comprobantes bancarios Zelle y Binance. Analiza la imagen y extrae un JSON con: monto (numero), moneda ("USD" o "USDT"), plataforma ("CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN"), fecha (string YYYY-MM-DD), remitente (""), referencia (string), cuenta_destino (string o null), confianza (numero de 0 a 1), observaciones (string).`,
       },
       {
         role: 'user',
@@ -513,6 +526,7 @@ async function scanWithGroqVision(
     monto,
     moneda,
     plataforma,
+    fecha: (parsed.fecha ?? '').trim() || null,
     remitente: '', // Debe ser colocado obligatoriamente de forma manual por el usuario
     referencia: (parsed.referencia ?? '').trim(),
     cuenta_destino: parsed.cuenta_destino?.trim() || null,
