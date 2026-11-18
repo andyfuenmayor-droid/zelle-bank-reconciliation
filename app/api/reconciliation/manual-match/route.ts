@@ -187,19 +187,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const clientLookup = await client.query<{
             id: string;
             nombre_titular: string;
+            remitentes_autorizados: string[] | null;
           }>(
             `
-            SELECT id, nombre_titular
+            SELECT id, nombre_titular, remitentes_autorizados
             FROM clientes_titulares
             WHERE UPPER(TRIM(nombre_titular)) = UPPER(TRIM($1))
             LIMIT 1;
             `,
             [clienteNombreManual]
           );
-          if (clientLookup.rows[0]) {
-            resolvedClientId = clientLookup.rows[0].id;
-            resolvedClientName = clientLookup.rows[0].nombre_titular;
+          const foundClient = clientLookup.rows[0];
+          if (!foundClient) {
+            throw new Error(`El cliente titular "${clienteNombreManual}" no existe en el sistema.`);
           }
+
+          // Validación estricta de seguridad:
+          // Un pago no se puede conciliar a quien no lo haya enviado.
+          // Si no hay orden de pago vinculada, el remitente bancario debe coincidir con el cliente o estar autorizado.
+          const bankSender = (currentTx.remitente_o_contraparte || '').trim().toLowerCase();
+          const targetName = foundClient.nombre_titular.trim().toLowerCase();
+          const authList = (foundClient.remitentes_autorizados || []).map((s) => s.trim().toLowerCase());
+
+          const isAuthorized =
+            bankSender === targetName ||
+            bankSender.includes(targetName) ||
+            targetName.includes(bankSender) ||
+            authList.some((a) => a === bankSender || bankSender.includes(a) || a.includes(bankSender));
+
+          if (!isAuthorized) {
+            throw new Error(
+              `Bloqueo de seguridad: No se puede conciliar este pago a "${foundClient.nombre_titular}". El dinero fue enviado por "${currentTx.remitente_o_contraparte}" y no coincide con el cliente ni con sus remitentes autorizados. Para acreditarlo, el cliente debe primero reportar el pago con su comprobante en el portal.`
+            );
+          }
+
+          resolvedClientId = foundClient.id;
+          resolvedClientName = foundClient.nombre_titular;
         }
 
         let effectiveFee = currentTx.porcentaje_comision;

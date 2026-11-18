@@ -37,6 +37,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Server,
   ShieldCheck,
@@ -327,6 +328,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [manualClientName, setManualClientName] = useState<string>('');
   const [manualNotes, setManualNotes] = useState<string>('');
   const [isSubmittingMatch, setIsSubmittingMatch] = useState<boolean>(false);
+
+  // Modal Reversión / Deshacer Conciliación
+  const [alertToRevert, setAlertToRevert] =
+    useState<BankEmailAlertRecord | null>(null);
+  const [revertReason, setRevertReason] = useState<string>('');
+  const [isSubmittingRevert, setIsSubmittingRevert] = useState<boolean>(false);
 
   // Modal Inspector Crudo / Payload
   const [inspectedAlert, setInspectedAlert] =
@@ -1006,6 +1013,33 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       return;
     }
 
+    // Regla de seguridad: Un pago no se puede conciliar a quien no lo haya enviado.
+    // Si no hay orden de pago vinculada, verificar que el remitente bancario coincida con el cliente o sus autorizados.
+    if (!selectedOrderId) {
+      const bankSender = (selectedAlertForMatch.remitente_o_contraparte || '').toLowerCase().trim();
+      const targetName = targetClientName.toLowerCase().trim();
+      const isDirectMatch =
+        bankSender === targetName ||
+        bankSender.includes(targetName) ||
+        targetName.includes(bankSender);
+
+      if (!isDirectMatch) {
+        const found = clients.find((c) => c.nombre_titular.toLowerCase().trim() === targetName);
+        const authList = (found?.remitentes_autorizados || []).map((s) => s.toLowerCase().trim());
+        const isAuth = authList.some(
+          (a) => a === bankSender || bankSender.includes(a) || a.includes(bankSender)
+        );
+
+        if (!isAuth) {
+          setBannerMessage({
+            type: 'error',
+            text: `Bloqueo de seguridad: No se puede conciliar este pago a "${targetClientName}". El remitente bancario registrado es "${selectedAlertForMatch.remitente_o_contraparte}". El cliente debe ingresar al portal y reportar la orden con su comprobante para poder vincularlo.`,
+          });
+          return;
+        }
+      }
+    }
+
     setIsSubmittingMatch(true);
     try {
       const response = await fetch('/api/reconciliation/manual-match', {
@@ -1050,6 +1084,57 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       setBannerMessage({ type: 'error', text: msg });
     } finally {
       setIsSubmittingMatch(false);
+    }
+  };
+
+  const handleConfirmRevertReconciliation = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    if (!alertToRevert) {
+      return;
+    }
+
+    setIsSubmittingRevert(true);
+    try {
+      const response = await fetch('/api/reconciliation/revert', {
+        method: 'POST',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          alertId: alertToRevert.id,
+          motivo: revertReason.trim() || 'Reversión manual por el administrador',
+        }),
+      });
+
+      const result = (await response.json()) as {
+        ok: boolean;
+        alert?: BankEmailAlertRecord;
+        error?: string;
+      };
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error ?? 'Error al revertir la conciliación.');
+      }
+
+      await fetchAllData();
+
+      setBannerMessage({
+        type: 'success',
+        text: `Conciliación de ${formatMoney(
+          alertToRevert.monto_bruto,
+          alertToRevert.moneda
+        )} revertida exitosamente. El saldo del cliente ha sido recalculado.`,
+      });
+      setAlertToRevert(null);
+      setRevertReason('');
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al revertir conciliación.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setIsSubmittingRevert(false);
     }
   };
 
@@ -2579,6 +2664,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                       Conciliar
                                     </button>
                                   )}
+
+                                {alert.estado === 'CONCILIADO' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertToRevert(alert);
+                                      setRevertReason('');
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/30"
+                                    title="Deshacer o revertir conciliación por error"
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    Deshacer
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -3846,6 +3946,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             Conciliar Manualmente
                           </button>
                         )}
+
+                      {lightboxData.tx &&
+                        lightboxData.tx.estado === 'CONCILIADO' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const targetTx = lightboxData.tx;
+                              setLightboxData(null);
+                              if (targetTx) {
+                                setAlertToRevert(targetTx);
+                                setRevertReason('');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-4 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/30"
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Deshacer Conciliación
+                          </button>
+                        )}
                     </div>
                   </div>
                 </div>
@@ -4516,6 +4635,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       placeholder="Selecciona un cliente registrado o escribe su nombre"
                       className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                     />
+                    {!selectedOrderId && selectedAlertForMatch && (
+                      <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                        <strong>⚠️ Regla de Conciliación:</strong> Estás por asignar directamente sin una orden de pago reportada. Un pago solo puede conciliarse a quien realmente lo haya enviado. El remitente bancario (<strong>{selectedAlertForMatch.remitente_o_contraparte}</strong>) debe coincidir con el cliente o estar en su lista de remitentes autorizados. Si es un tercero nuevo, el cliente debe reportar el comprobante desde su portal.
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -4900,6 +5024,142 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </button>
                 </div>
               </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* Modal Reversión / Deshacer Conciliación */}
+        <Dialog.Root
+          open={alertToRevert !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setAlertToRevert(null);
+              setRevertReason('');
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2 text-rose-400">
+                  <RotateCcw className="h-5 w-5" />
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    Deshacer Conciliación
+                  </Dialog.Title>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {alertToRevert && (
+                <form
+                  onSubmit={handleConfirmRevertReconciliation}
+                  className="mt-4 space-y-4"
+                >
+                  <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 text-xs text-rose-200">
+                    <p className="font-semibold text-rose-300">
+                      ¿Estás seguro de que deseas revertir esta conciliación?
+                    </p>
+                    <p className="mt-1 text-slate-300">
+                      Esta acción devolverá la transacción al estado de{' '}
+                      <strong>REVISIÓN MANUAL</strong>, desvinculará la orden de
+                      pago (si existe), recalculará inmediatamente el saldo del
+                      cliente y eliminará el remitente aprendido si fue
+                      agregado por esta operación.
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs">
+                    <div className="grid grid-cols-2 gap-3 text-slate-300">
+                      <div>
+                        <span className="block text-slate-500">Canal / Banco:</span>
+                        <span className="font-medium text-white">
+                          {alertToRevert.plataforma}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">
+                          Referencia / TxID:
+                        </span>
+                        <span className="font-mono font-medium text-white">
+                          {alertToRevert.referencia || 'N/A'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">Remitente:</span>
+                        <span className="font-medium text-white">
+                          {alertToRevert.remitente_o_contraparte}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">
+                          Cliente Acreditado:
+                        </span>
+                        <span className="font-semibold text-amber-400">
+                          {alertToRevert.cliente_asignado_nombre || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="col-span-2 flex items-center justify-between border-t border-slate-800 pt-2 font-mono">
+                        <span className="text-slate-400">Monto Acreditado:</span>
+                        <span className="text-base font-bold text-emerald-400">
+                          {formatMoney(
+                            alertToRevert.monto_neto,
+                            alertToRevert.moneda
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="revert-reason"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    >
+                      Motivo de la Reversión *
+                    </label>
+                    <textarea
+                      id="revert-reason"
+                      required
+                      rows={2}
+                      value={revertReason}
+                      onChange={(e) => setRevertReason(e.target.value)}
+                      placeholder="Ej. Conciliado por error al cliente equivocado, comprobante duplicado, etc."
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                    <Dialog.Close asChild>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                      >
+                        Cancelar
+                      </button>
+                    </Dialog.Close>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingRevert}
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+                    >
+                      {isSubmittingRevert ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RotateCcw className="h-4 w-4" />
+                      )}
+                      Confirmar Reversión
+                    </button>
+                  </div>
+                </form>
+              )}
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
