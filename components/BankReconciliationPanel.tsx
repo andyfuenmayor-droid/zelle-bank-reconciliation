@@ -1501,10 +1501,38 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
-  const openLightboxForTx = (tx: BankEmailAlertRecord): void => {
+  const fetchCaptureBase64 = async (
+    orderId?: string | null,
+    txId?: string | null
+  ): Promise<string | null> => {
+    try {
+      const param = orderId
+        ? `orderId=${encodeURIComponent(orderId)}`
+        : `txId=${encodeURIComponent(txId ?? '')}`;
+      const res = await fetch(`/api/reconciliation/capture?${param}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data.comprobante_base64 ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const openLightboxForTx = async (tx: BankEmailAlertRecord): Promise<void> => {
     const linkedOrCandidateOrder = findAssociatedCaptureOrder(tx);
-    const captureBase64 =
+    let captureBase64 =
       tx.comprobante_base64 ?? linkedOrCandidateOrder?.comprobante_base64 ?? '';
+    if (!captureBase64) {
+      const orderIdToFetch = tx.orden_conciliada_id ?? linkedOrCandidateOrder?.id;
+      const fetched = await fetchCaptureBase64(orderIdToFetch, tx.id);
+      if (fetched) {
+        captureBase64 = fetched;
+        tx.comprobante_base64 = fetched;
+        if (linkedOrCandidateOrder) {
+          linkedOrCandidateOrder.comprobante_base64 = fetched;
+        }
+      }
+    }
     if (!captureBase64) {
       return;
     }
@@ -1516,8 +1544,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     });
   };
 
-  const openLightboxForOrder = (order: PendingPaymentOrder): void => {
-    if (!order.comprobante_base64) {
+  const openLightboxForOrder = async (order: PendingPaymentOrder): Promise<void> => {
+    let captureBase64 = order.comprobante_base64 ?? '';
+    if (!captureBase64) {
+      const fetched = await fetchCaptureBase64(order.id, null);
+      if (fetched) {
+        captureBase64 = fetched;
+        order.comprobante_base64 = fetched;
+      }
+    }
+    if (!captureBase64) {
       return;
     }
     const matchingTx =
@@ -1530,7 +1566,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
     setLightboxData({
       title: `Captura Subida en Portal · ${order.codigo_orden}`,
-      comprobanteBase64: order.comprobante_base64,
+      comprobanteBase64: captureBase64,
       order,
       tx: matchingTx,
     });
@@ -2391,8 +2427,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         const badge = getPlatformBadgeMeta(alert.plataforma);
                         const candidateOrder = findAssociatedCaptureOrder(alert);
                         const hasCapture = Boolean(
-                          alert.comprobante_base64 ??
-                            candidateOrder?.comprobante_base64
+                          alert.has_capture ||
+                          alert.comprobante_base64 ||
+                          candidateOrder?.has_capture ||
+                          candidateOrder?.comprobante_base64
                         );
 
                         return (
@@ -2795,10 +2833,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               {formatMoney(o.monto_esperado, o.moneda)}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              {o.comprobante_base64 ? (
+                              {o.has_capture || o.comprobante_base64 ? (
                                 <button
                                   type="button"
-                                  onClick={() => openLightboxForOrder(o)}
+                                  onClick={() => void openLightboxForOrder(o)}
                                   className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/25"
                                 >
                                   <Eye className="h-3.5 w-3.5" />

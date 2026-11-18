@@ -138,9 +138,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           id: string;
           plataforma: string;
           porcentaje_comision: number;
+          remitente_o_contraparte: string;
         }>(
           `
-          SELECT id, plataforma, porcentaje_comision
+          SELECT id, plataforma, porcentaje_comision, remitente_o_contraparte
           FROM financial_transactions_reconciliation
           WHERE id = $1::uuid
           FOR UPDATE;
@@ -264,6 +265,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             auditNote,
           ]
         );
+
+        // Auto-aprendizaje: si la contraparte bancaria es un nombre válido, añadirlo a los remitentes autorizados del cliente
+        if (
+          resolvedClientId &&
+          currentTx.remitente_o_contraparte &&
+          currentTx.remitente_o_contraparte.trim().length >= 3 &&
+          !/^(?:desconocido|unknown|sin remitente|compra tarjeta|tarjeta debito)/i.test(currentTx.remitente_o_contraparte)
+        ) {
+          const senderLearned = currentTx.remitente_o_contraparte.trim();
+          await client.query(
+            `
+            UPDATE clientes_titulares
+            SET remitentes_autorizados = ARRAY_APPEND(
+              COALESCE(remitentes_autorizados, ARRAY[]::text[]),
+              $1
+            )
+            WHERE id = $2::uuid
+              AND NOT ($1 = ANY(COALESCE(remitentes_autorizados, ARRAY[]::text[])));
+            `,
+            [senderLearned, resolvedClientId]
+          ).catch((e) => console.error('[ManualMatch] Error guardando remitente autorizado:', e));
+        }
 
         const row = txRes.rows[0];
         if (!row) {

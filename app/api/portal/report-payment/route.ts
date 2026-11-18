@@ -309,6 +309,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       // Buscar inmediatamente si este pago ya había entrado por IMAP o Binance API
+      const cleanRefQuery = (referenciaReportada ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      const cleanSenderQuery = (remitenteReportado ?? '').trim().toLowerCase();
+
       const candidateTxs = await client.query<{ id: string }>(
         clientRow.negocio_id
           ? `
@@ -319,8 +322,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               AND moneda = $1
               AND monto_bruto = $2
               AND (negocio_id = $3::uuid OR negocio_id IS NULL)
-            ORDER BY fecha_transaccion DESC
-            LIMIT 15;
+            ORDER BY
+              (CASE WHEN LENGTH($4) >= 4 AND UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $4 THEN 10 ELSE 0 END) DESC,
+              GREATEST(
+                similarity(LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))), $5),
+                CASE WHEN LENGTH($5) >= 3 AND LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))) ILIKE '%' || $5 || '%' THEN 0.85 ELSE 0 END
+              ) DESC,
+              fecha_transaccion DESC
+            LIMIT 50;
             `
           : `
             SELECT id
@@ -329,12 +338,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               AND tipo_movimiento = 'RECIBIDO'
               AND moneda = $1
               AND monto_bruto = $2
-            ORDER BY fecha_transaccion DESC
-            LIMIT 15;
+            ORDER BY
+              (CASE WHEN LENGTH($3) >= 4 AND UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $3 THEN 10 ELSE 0 END) DESC,
+              GREATEST(
+                similarity(LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))), $4),
+                CASE WHEN LENGTH($4) >= 3 AND LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))) ILIKE '%' || $4 || '%' THEN 0.85 ELSE 0 END
+              ) DESC,
+              fecha_transaccion DESC
+            LIMIT 50;
             `,
         clientRow.negocio_id
-          ? [moneda, normalizedAmount, clientRow.negocio_id]
-          : [moneda, normalizedAmount]
+          ? [moneda, normalizedAmount, clientRow.negocio_id, cleanRefQuery, cleanSenderQuery]
+          : [moneda, normalizedAmount, cleanRefQuery, cleanSenderQuery]
       );
 
       let reconciledTransaction: FinancialTransactionRecord | null = null;

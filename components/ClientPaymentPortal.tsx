@@ -1643,11 +1643,26 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             </span>
                           </div>
 
-                          {order.comprobante_base64 && (
+                          {(order.has_capture || order.comprobante_base64) && (
                             <div className="mt-2.5 flex items-center justify-end border-t border-slate-800/70 pt-2">
                               <button
                                 type="button"
-                                onClick={() => setPreviewOrder(order)}
+                                onClick={async () => {
+                                  if (!order.comprobante_base64) {
+                                    try {
+                                      const res = await fetch(`/api/reconciliation/capture?orderId=${encodeURIComponent(order.id)}`);
+                                      if (res.ok) {
+                                        const capData = await res.json();
+                                        if (capData.comprobante_base64) {
+                                          order.comprobante_base64 = capData.comprobante_base64;
+                                        }
+                                      }
+                                    } catch {
+                                      // Silently fail
+                                    }
+                                  }
+                                  setPreviewOrder({ ...order });
+                                }}
                                 className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
                               >
                                 <Eye className="h-3.5 w-3.5 text-sky-400" />

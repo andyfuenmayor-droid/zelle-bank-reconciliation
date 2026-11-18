@@ -138,6 +138,8 @@ export interface FinancialTransactionRecord {
   conciliado_at: string | null;
   created_at: string;
   // Datos enriquecidos de la orden vinculada (para visor de capturas en el dashboard)
+  has_capture?: boolean;
+  capture_order_id?: string | null;
   comprobante_base64?: string | null;
   comprobante_mime?: string | null;
   datos_ocr_extraidos?: OcrExtractionData | null;
@@ -171,8 +173,9 @@ export interface PendingPaymentOrder {
   nombre_remitente_reportado: string;
   referencia_reportada: string | null;
   fecha_transferencia?: string | null;
-  comprobante_base64: string | null;
-  comprobante_mime: string | null;
+  has_capture?: boolean;
+  comprobante_base64?: string | null;
+  comprobante_mime?: string | null;
   datos_ocr_extraidos: OcrExtractionData | null;
   estado: PendingOrderStatus;
   transaccion_conciliada_id: string | null;

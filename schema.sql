@@ -335,10 +335,14 @@ CREATE INDEX IF NOT EXISTS idx_clientes_titulares_remitentes_trgm
 
 CREATE INDEX IF NOT EXISTS idx_ftr_negocio_id
     ON financial_transactions_reconciliation (negocio_id);
+CREATE INDEX IF NOT EXISTS idx_ftr_negocio_fecha_created
+    ON financial_transactions_reconciliation (negocio_id, fecha_transaccion DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_clientes_negocio_id
     ON clientes_titulares (negocio_id);
 CREATE INDEX IF NOT EXISTS idx_ordenes_negocio_id
     ON ordenes_pago_pendientes (negocio_id);
+CREATE INDEX IF NOT EXISTS idx_ordenes_negocio_estado_created
+    ON ordenes_pago_pendientes (negocio_id, estado, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_imap_negocio_id
     ON imap_monitored_accounts (negocio_id);
 
@@ -373,6 +377,7 @@ DECLARE
     v_best_score NUMERIC(5,4) := 0;
     v_norm_ref VARCHAR(128);
     v_norm_sender TEXT;
+    v_norm_sender_clean TEXT;
     v_resolved_fee NUMERIC(5,2);
     v_resolved_client_name TEXT;
     v_resolved_client_id UUID;
@@ -419,6 +424,7 @@ BEGIN
 
     v_norm_ref := UPPER(REGEXP_REPLACE(COALESCE(v_tx.referencia, ''), '[^A-Z0-9]', '', 'g'));
     v_norm_sender := LOWER(unaccent(TRIM(COALESCE(v_tx.remitente_o_contraparte, ''))));
+    v_norm_sender_clean := REGEXP_REPLACE(REPLACE(REPLACE(v_norm_sender, '-', ' '), '.', ' '), '\s+', ' ', 'g');
 
     -- -------------------------------------------------------------------------
     -- PASO 1: Match exacto por Moneda + Monto Exacto + Referencia (completa o últimos 6 dígitos)
@@ -497,116 +503,121 @@ BEGIN
     END IF;
 
     -- -------------------------------------------------------------------------
-    -- PASO 2: Match difuso por Plataforma + Monto Exacto + Similitud de Nombre (pg_trgm >= 0.45)
+    -- PASO 2: Match inteligente por Plataforma + Monto Exacto + Similitud de Remitente/Tokens
     -- -------------------------------------------------------------------------
     IF LENGTH(v_norm_sender) >= 3
        AND v_norm_sender NOT IN ('desconocido', 'unknown', 'sin remitente', 'no especificado', 'anonymous') THEN
-        SELECT COUNT(*)
-        INTO v_candidate_count
+
+        SELECT o.*
+        INTO v_orden
         FROM ordenes_pago_pendientes o
         WHERE o.estado = 'PENDIENTE'
           AND (o.negocio_id IS NOT DISTINCT FROM v_tx.negocio_id OR o.negocio_id IS NULL OR v_tx.negocio_id IS NULL)
           AND (o.plataforma_esperada = v_tx.plataforma OR v_tx.plataforma = 'OTRO')
           AND o.moneda = v_tx.moneda
           AND o.monto_esperado = v_tx.monto_bruto
-          AND GREATEST(
-              similarity(LOWER(unaccent(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))), v_norm_sender),
-              similarity(LOWER(unaccent(COALESCE(o.cliente_nombre, ''))), v_norm_sender)
-          ) >= 0.45;
+          AND (
+              similarity(LOWER(unaccent(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))), v_norm_sender) >= 0.40
+              OR similarity(LOWER(unaccent(COALESCE(o.cliente_nombre, ''))), v_norm_sender) >= 0.40
+              OR (
+                  LENGTH(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))) >= 3
+                  AND (
+                      v_norm_sender_clean ILIKE '%' || LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))) || '%'
+                      OR LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))) ILIKE '%' || v_norm_sender_clean || '%'
+                  )
+              )
+          )
+        ORDER BY
+            GREATEST(
+                similarity(LOWER(unaccent(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))), v_norm_sender),
+                similarity(LOWER(unaccent(COALESCE(o.cliente_nombre, ''))), v_norm_sender),
+                CASE
+                    WHEN LENGTH(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))) >= 3
+                         AND (
+                             v_norm_sender_clean ILIKE '%' || LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))) || '%'
+                             OR LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))) ILIKE '%' || v_norm_sender_clean || '%'
+                         )
+                    THEN 0.8500
+                    ELSE 0.0000
+                END
+            ) DESC,
+            o.created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED;
 
-        IF v_candidate_count = 1 THEN
-            SELECT o.*
-            INTO v_orden
-            FROM ordenes_pago_pendientes o
-            WHERE o.estado = 'PENDIENTE'
-              AND (o.negocio_id IS NOT DISTINCT FROM v_tx.negocio_id OR o.negocio_id IS NULL OR v_tx.negocio_id IS NULL)
-              AND (o.plataforma_esperada = v_tx.plataforma OR v_tx.plataforma = 'OTRO')
-              AND o.moneda = v_tx.moneda
-              AND o.monto_esperado = v_tx.monto_bruto
-              AND GREATEST(
-                  similarity(LOWER(unaccent(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))), v_norm_sender),
-                  similarity(LOWER(unaccent(COALESCE(o.cliente_nombre, ''))), v_norm_sender)
-              ) >= 0.45
-            LIMIT 1
-            FOR UPDATE SKIP LOCKED;
+        IF FOUND THEN
+            v_best_score := GREATEST(
+                similarity(LOWER(unaccent(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, ''))), v_norm_sender),
+                similarity(LOWER(unaccent(COALESCE(v_orden.cliente_nombre, ''))), v_norm_sender),
+                CASE
+                    WHEN LENGTH(TRIM(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, ''))) >= 3
+                         AND (
+                             v_norm_sender_clean ILIKE '%' || LOWER(unaccent(TRIM(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, '')))) || '%'
+                             OR LOWER(unaccent(TRIM(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, '')))) ILIKE '%' || v_norm_sender_clean || '%'
+                         )
+                    THEN 0.8500
+                    ELSE 0.0000
+                END
+            )::NUMERIC(5,4);
 
-            IF FOUND THEN
-                v_best_score := GREATEST(
-                    similarity(LOWER(unaccent(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, ''))), v_norm_sender),
-                    similarity(LOWER(unaccent(COALESCE(v_orden.cliente_nombre, ''))), v_norm_sender)
-                )::NUMERIC(5,4);
+            SELECT * INTO v_cliente FROM clientes_titulares WHERE id = v_orden.cliente_id;
+            v_resolved_client_id := COALESCE(v_cliente.id, v_orden.cliente_id);
+            v_resolved_client_name := COALESCE(v_cliente.nombre_titular, v_orden.cliente_nombre);
 
-                SELECT * INTO v_cliente FROM clientes_titulares WHERE id = v_orden.cliente_id;
-                v_resolved_client_id := COALESCE(v_cliente.id, v_orden.cliente_id);
-                v_resolved_client_name := COALESCE(v_cliente.nombre_titular, v_orden.cliente_nombre);
-
-                IF v_tx.plataforma LIKE 'BINANCE%' THEN
-                    v_resolved_fee := COALESCE(v_cliente.porcentaje_comision_binance, v_tx.porcentaje_comision, 1.50);
-                ELSE
-                    v_resolved_fee := COALESCE(v_cliente.porcentaje_comision_zelle, v_cliente.porcentaje_comision, v_tx.porcentaje_comision, 4.00);
-                END IF;
-
-                UPDATE ordenes_pago_pendientes
-                SET estado = 'CONCILIADO',
-                    transaccion_conciliada_id = v_tx.id,
-                    alerta_conciliada_id = v_tx.id,
-                    conciliado_por = 'AUTO_TRGM_NAME',
-                    score_similitud = v_best_score,
-                    conciliado_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = v_orden.id;
-
-                UPDATE financial_transactions_reconciliation
-                SET estado = 'CONCILIADO',
-                    porcentaje_comision = v_resolved_fee,
-                    cliente_id = v_resolved_client_id,
-                    cliente_asignado_nombre = v_resolved_client_name,
-                    orden_conciliada_id = v_orden.id,
-                    nota_auditoria = FORMAT(
-                        'Conciliación automática por %s (%s %s) y similitud de contraparte (%s%%) con orden %s.',
-                        v_tx.plataforma,
-                        v_tx.monto_bruto,
-                        v_tx.moneda,
-                        ROUND(v_best_score * 100, 1),
-                        v_orden.codigo_orden
-                    ),
-                    conciliado_at = NOW()
-                WHERE id = v_tx.id;
-
-                RETURN QUERY SELECT
-                    TRUE,
-                    'CONCILIADO'::VARCHAR(32),
-                    v_orden.id,
-                    v_orden.codigo_orden,
-                    v_resolved_client_id,
-                    v_resolved_client_name,
-                    'AUTO_TRGM_NAME'::VARCHAR(64),
-                    v_best_score,
-                    FORMAT('Conciliado por similitud de nombre (%s%%) con orden %s', ROUND(v_best_score * 100, 1), v_orden.codigo_orden)::TEXT;
-                RETURN;
+            IF v_tx.plataforma LIKE 'BINANCE%' THEN
+                v_resolved_fee := COALESCE(v_cliente.porcentaje_comision_binance, v_tx.porcentaje_comision, 1.50);
+            ELSE
+                v_resolved_fee := COALESCE(v_cliente.porcentaje_comision_zelle, v_cliente.porcentaje_comision, v_tx.porcentaje_comision, 4.00);
             END IF;
-        ELSIF v_candidate_count > 1 THEN
+
+            UPDATE ordenes_pago_pendientes
+            SET estado = 'CONCILIADO',
+                transaccion_conciliada_id = v_tx.id,
+                alerta_conciliada_id = v_tx.id,
+                conciliado_por = 'AUTO_TRGM_NAME',
+                score_similitud = v_best_score,
+                conciliado_at = NOW(),
+                updated_at = NOW()
+            WHERE id = v_orden.id;
+
             UPDATE financial_transactions_reconciliation
-            SET estado = 'REVISION_MANUAL',
+            SET estado = 'CONCILIADO',
+                porcentaje_comision = v_resolved_fee,
+                cliente_id = v_resolved_client_id,
+                cliente_asignado_nombre = v_resolved_client_name,
+                orden_conciliada_id = v_orden.id,
                 nota_auditoria = FORMAT(
-                    'Ambigüedad detectada: existen %s órdenes pendientes en %s por %s %s con similitud de nombre. Requiere asignación manual.',
-                    v_candidate_count,
+                    'Conciliación automática por %s (%s %s) y coincidencia de contraparte (%s%%) con orden %s.',
                     v_tx.plataforma,
                     v_tx.monto_bruto,
-                    v_tx.moneda
-                )
+                    v_tx.moneda,
+                    ROUND(v_best_score * 100, 1),
+                    v_orden.codigo_orden
+                ),
+                conciliado_at = NOW()
             WHERE id = v_tx.id;
 
+            -- Auto-aprendizaje: registrar contraparte bancaria en remitentes autorizados del cliente
+            IF v_resolved_client_id IS NOT NULL AND LENGTH(TRIM(v_tx.remitente_o_contraparte)) >= 3 THEN
+                UPDATE clientes_titulares
+                SET remitentes_autorizados = ARRAY_APPEND(
+                    COALESCE(remitentes_autorizados, ARRAY[]::TEXT[]),
+                    TRIM(v_tx.remitente_o_contraparte)
+                )
+                WHERE id = v_resolved_client_id
+                  AND NOT (TRIM(v_tx.remitente_o_contraparte) = ANY(COALESCE(remitentes_autorizados, ARRAY[]::TEXT[])));
+            END IF;
+
             RETURN QUERY SELECT
-                FALSE,
-                'REVISION_MANUAL'::VARCHAR(32),
-                NULL::UUID,
-                NULL::VARCHAR(64),
-                NULL::UUID,
-                NULL::TEXT,
-                'AMBIGUOUS_CANDIDATES'::VARCHAR(64),
-                0.0000::NUMERIC(5,4),
-                FORMAT('Múltiples candidatos (%s) para %s %s. Marcado para revisión manual.', v_candidate_count, v_tx.monto_bruto, v_tx.moneda)::TEXT;
+                TRUE,
+                'CONCILIADO'::VARCHAR(32),
+                v_orden.id,
+                v_orden.codigo_orden,
+                v_resolved_client_id,
+                v_resolved_client_name,
+                'AUTO_TRGM_NAME'::VARCHAR(64),
+                v_best_score,
+                FORMAT('Conciliado por coincidencia de remitente (%s%%) con orden %s', ROUND(v_best_score * 100, 1), v_orden.codigo_orden)::TEXT;
             RETURN;
         END IF;
 
