@@ -17,7 +17,6 @@ import {
 } from '@/lib/mock-seed-data';
 import {
   AssignedReceivingAccount,
-  AutoReconciliationResult,
   ClientAccountRecord,
   CurrencyType,
   ExpectedPlatformType,
@@ -860,43 +859,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           ]
         );
 
-        const pendingTxs = await client.query<{ id: string }>(
-          scope.negocioId
-            ? `
-              SELECT id
-              FROM financial_transactions_reconciliation
-              WHERE estado <> 'CONCILIADO'
-                AND tipo_movimiento = 'RECIBIDO'
-                AND moneda = $1
-                AND monto_bruto = $2
-                AND (negocio_id = $3::uuid OR negocio_id IS NULL);
-              `
-            : `
-              SELECT id
-              FROM financial_transactions_reconciliation
-              WHERE estado <> 'CONCILIADO'
-                AND tipo_movimiento = 'RECIBIDO'
-                AND moneda = $1
-                AND monto_bruto = $2;
-              `,
-          scope.negocioId
-            ? [moneda, Math.round(montoEsperado * 100) / 100, scope.negocioId]
-            : [moneda, Math.round(montoEsperado * 100) / 100]
-        );
-
         let autoReconciledCount = 0;
-        for (const row of pendingTxs.rows) {
-          const rec = await client.query<AutoReconciliationResult>(
-            'SELECT * FROM fn_auto_conciliar_transaccion($1::uuid);',
-            [row.id]
+        const newOrder = orderRes.rows[0];
+        if (newOrder) {
+          const matchRes = await client.query<{ conciliado: boolean }>(
+            'SELECT * FROM fn_conciliar_orden_cliente($1::uuid);',
+            [newOrder.id]
           );
-          if (rec.rows[0]?.conciliado) {
-            autoReconciledCount += 1;
+          if (matchRes.rows[0]?.conciliado) {
+            autoReconciledCount = 1;
           }
         }
 
         return {
-          order: orderRes.rows[0],
+          order: newOrder,
           autoReconciledCount,
         };
       });

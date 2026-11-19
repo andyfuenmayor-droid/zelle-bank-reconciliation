@@ -777,9 +777,26 @@ export async function executeUnifiedMultiChannelSync(
   }
 
   // Sincronización Retroactiva Inteligente:
-  // Re-evaluar todas las transacciones históricas no conciliadas acumuladas desde octubre/noviembre
-  // contra las órdenes de pago pendientes (incluyendo las reportadas tarde en el portal)
+  // Re-evaluar todas las órdenes de pago pendientes del portal contra la base de correos bancarios acumulada
   try {
+    const pendingOrders = await dbQuery<{ id: string }>(
+      `
+      SELECT id
+      FROM ordenes_pago_pendientes
+      WHERE estado = 'PENDIENTE'
+      ORDER BY created_at ASC;
+      `
+    );
+    for (const order of pendingOrders.rows) {
+      const rec = await dbQuery<{ conciliado: boolean }>(
+        'SELECT * FROM fn_conciliar_orden_cliente($1::uuid);',
+        [order.id]
+      );
+      if (rec.rows[0]?.conciliado) {
+        reconciledCount += 1;
+      }
+    }
+
     const unmatchedRows = await dbQuery<{ id: string }>(
       `
       SELECT id

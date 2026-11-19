@@ -9,7 +9,6 @@ import {
   runDemoAutoReconcileForOrder,
 } from '@/lib/mock-seed-data';
 import {
-  AutoReconciliationResult,
   ClientPortalWalletSummary,
   CurrencyType,
   ExpectedPlatformType,
@@ -308,87 +307,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         throw new Error('No se pudo crear la orden de pago.');
       }
 
-      // Buscar inmediatamente si este pago ya había entrado por IMAP o Binance API
-      const cleanRefQuery = (referenciaReportada ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-      const cleanSenderQuery = (remitenteReportado ?? '').trim().toLowerCase();
-
-      const candidateTxs = await client.query<{ id: string }>(
-        clientRow.negocio_id
-          ? `
-            SELECT id
-            FROM financial_transactions_reconciliation
-            WHERE estado <> 'CONCILIADO'
-              AND tipo_movimiento = 'RECIBIDO'
-              AND moneda = $1
-              AND monto_bruto = $2
-              AND (negocio_id = $3::uuid OR negocio_id IS NULL)
-            ORDER BY
-              (CASE WHEN LENGTH($4) >= 4 AND UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $4 THEN 10 ELSE 0 END) DESC,
-              GREATEST(
-                similarity(LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))), $5),
-                CASE WHEN LENGTH($5) >= 3 AND LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))) ILIKE '%' || $5 || '%' THEN 0.85 ELSE 0 END
-              ) DESC,
-              fecha_transaccion DESC
-            LIMIT 50;
-            `
-          : `
-            SELECT id
-            FROM financial_transactions_reconciliation
-            WHERE estado <> 'CONCILIADO'
-              AND tipo_movimiento = 'RECIBIDO'
-              AND moneda = $1
-              AND monto_bruto = $2
-            ORDER BY
-              (CASE WHEN LENGTH($3) >= 4 AND UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $3 THEN 10 ELSE 0 END) DESC,
-              GREATEST(
-                similarity(LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))), $4),
-                CASE WHEN LENGTH($4) >= 3 AND LOWER(unaccent(COALESCE(remitente_o_contraparte, ''))) ILIKE '%' || $4 || '%' THEN 0.85 ELSE 0 END
-              ) DESC,
-              fecha_transaccion DESC
-            LIMIT 50;
-            `,
-        clientRow.negocio_id
-          ? [moneda, normalizedAmount, clientRow.negocio_id, cleanRefQuery, cleanSenderQuery]
-          : [moneda, normalizedAmount, cleanRefQuery, cleanSenderQuery]
+      // Cotejar directamente la orden contra la base de correos bancarios usando la función PL/pgSQL
+      const matchRes = await client.query<{
+        conciliado: boolean;
+        nuevo_estado: string;
+        transaccion_id: string | null;
+        referencia_tx: string | null;
+        cliente_id: string;
+        cliente_nombre: string;
+        metodo_match: string;
+        score_similitud: number;
+        mensaje: string;
+      }>(
+        'SELECT * FROM fn_conciliar_orden_cliente($1::uuid);',
+        [orderRow.id]
       );
+      const match = matchRes.rows[0];
 
       let reconciledTransaction: FinancialTransactionRecord | null = null;
       let instantReconciled = false;
 
-      for (const candidate of candidateTxs.rows) {
-        const recRes = await client.query<AutoReconciliationResult>(
-          'SELECT * FROM fn_auto_conciliar_transaccion($1::uuid);',
-          [candidate.id]
+      if (match?.conciliado && match.transaccion_id) {
+        instantReconciled = true;
+        const txFetch = await client.query<FinancialTransactionRecord>(
+          `
+          SELECT
+            *,
+            external_unique_id AS message_id,
+            plataforma AS banco,
+            remitente_o_contraparte AS remitente_o_destinatario,
+            COALESCE(raw_payload->>'raw_body', raw_payload::text) AS raw_body,
+            origen_deteccion AS metodo_extraccion,
+            orden_conciliada_id AS orden_pago_id,
+            nota_auditoria AS notas_conciliacion
+          FROM financial_transactions_reconciliation
+          WHERE id = $1::uuid;
+          `,
+          [match.transaccion_id]
         );
-        const match = recRes.rows[0];
-        if (match?.conciliado && match.orden_pago_id === orderRow.id) {
-          instantReconciled = true;
-          const txFetch = await client.query<FinancialTransactionRecord>(
-            `
-            SELECT
-              *,
-              external_unique_id AS message_id,
-              plataforma AS banco,
-              remitente_o_contraparte AS remitente_o_destinatario,
-              COALESCE(raw_payload->>'raw_body', raw_payload::text) AS raw_body,
-              origen_deteccion AS metodo_extraccion,
-              orden_conciliada_id AS orden_pago_id,
-              nota_auditoria AS notas_conciliacion
-            FROM financial_transactions_reconciliation
-            WHERE id = $1::uuid;
-            `,
-            [candidate.id]
-          );
-          reconciledTransaction = txFetch.rows[0] ?? null;
+        reconciledTransaction = txFetch.rows[0] ?? null;
 
-          const refreshedOrder = await client.query<PendingPaymentOrder>(
-            'SELECT * FROM ordenes_pago_pendientes WHERE id = $1::uuid;',
-            [orderRow.id]
-          );
-          if (refreshedOrder.rows[0]) {
-            orderRow = refreshedOrder.rows[0];
-          }
-          break;
+        const refreshedOrder = await client.query<PendingPaymentOrder>(
+          'SELECT * FROM ordenes_pago_pendientes WHERE id = $1::uuid;',
+          [orderRow.id]
+        );
+        if (refreshedOrder.rows[0]) {
+          orderRow = refreshedOrder.rows[0];
         }
       }
 
