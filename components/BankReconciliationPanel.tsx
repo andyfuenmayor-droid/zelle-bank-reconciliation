@@ -2253,7 +2253,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1920px] px-2 py-6 sm:px-4 lg:px-6">
         {/* Encabezado Principal */}
         <header className="mb-6 flex flex-col gap-4 border-b border-slate-800/80 pb-6 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -3023,11 +3023,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             )}
 
             <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-sm">
+              <div className="overflow-x-auto xl:overflow-x-visible">
+                <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="w-10 px-3 py-3.5 text-center">
+                      <th className="w-10 px-2.5 py-3 text-center">
                         <input
                           type="checkbox"
                           checked={
@@ -3041,17 +3041,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
                         />
                       </th>
-                      <th className="px-4 py-3.5">Canal &amp; Fecha</th>
-                      <th className="px-4 py-3.5">Flujo</th>
-                      <th className="px-4 py-3.5">
+                      <th className="px-3 py-3">Canal &amp; Fecha</th>
+                      <th className="px-2.5 py-3">Flujo</th>
+                      <th className="px-3 py-3">
                         Contraparte / Titular Asignado
                       </th>
-                      <th className="px-4 py-3.5">Referencia &amp; Origen</th>
-                      <th className="px-4 py-3.5 text-right">Monto Bruto</th>
-                      <th className="px-4 py-3.5 text-right">Comisión</th>
-                      <th className="px-4 py-3.5 text-right">Monto Neto</th>
-                      <th className="px-4 py-3.5">Estado</th>
-                      <th className="px-4 py-3.5 text-right">
+                      <th className="px-3 py-3">Referencia &amp; Origen</th>
+                      <th className="px-3 py-3 text-right">Monto Bruto</th>
+                      <th className="px-3 py-3 text-right">Comisión</th>
+                      <th className="px-3 py-3 text-right">Monto Neto</th>
+                      <th className="px-2.5 py-3">Estado</th>
+                      <th className="px-3 py-3 text-right">
                         Captura &amp; Acciones
                       </th>
                     </tr>
@@ -3086,7 +3086,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               isSelected ? 'bg-emerald-950/25' : ''
                             }`}
                           >
-                            <td className="w-10 px-3 py-4 text-center">
+                            <td className="w-10 px-2.5 py-3 text-center">
                               {alert.estado !== 'CONCILIADO' &&
                               alert.tipo_movimiento === 'RECIBIDO' ? (
                                 <input
@@ -3099,7 +3099,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <span className="inline-block h-4 w-4 text-slate-700">-</span>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-3 py-3">
                               <span
                                 className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
                               >
@@ -3110,7 +3110,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               </p>
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-2.5 py-3">
                               {alert.tipo_movimiento === 'RECIBIDO' ? (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
                                   <ArrowDownLeft className="h-3.5 w-3.5" />
@@ -3124,8 +3124,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               )}
                             </td>
 
-                            <td className="max-w-xs px-4 py-4">
-                              <div className="font-semibold text-white">
+                            <td className="px-3 py-3 max-w-[220px] 2xl:max-w-xs">
+                              <div className="font-semibold text-white truncate">
                                 {alert.remitente_o_contraparte || (
                                   <span className="italic text-amber-400">
                                     Remitente no identificado
@@ -3147,7 +3147,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-3 py-3">
                               <div className="font-mono text-xs font-medium text-slate-200">
                                 {alert.referencia || 'SIN-REF'}
                               </div>
@@ -3165,11 +3165,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               </span>
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-semibold text-slate-100">
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono font-semibold text-slate-100">
                               {formatMoney(alert.monto_bruto, alert.moneda)}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-xs">
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs">
                               {alert.estado === 'CONCILIADO' ? (
                                 <span className="text-violet-300">
                                   {alert.monto_comision > 0
@@ -3186,7 +3186,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-bold">
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono font-bold">
                               {alert.estado === 'CONCILIADO' ? (
                                 <span className="text-emerald-400">
                                   {formatMoney(alert.monto_neto, alert.moneda)}
@@ -3201,7 +3201,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-2.5 py-3">
                               {alert.estado === 'CONCILIADO' && (
                                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
                                   <CheckCircle2 className="h-3.5 w-3.5" />
@@ -3222,16 +3222,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right">
+                            <td className="whitespace-nowrap px-3 py-3 text-right">
                               <div className="flex items-center justify-end gap-1.5">
                                 {hasCapture && (
                                   <button
                                     type="button"
                                     onClick={() => openLightboxForTx(alert)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1.5 text-xs font-semibold text-sky-300 transition hover:bg-sky-500/25"
+                                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2 py-1 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/25 cursor-pointer"
                                     title="Ver Captura subida por el cliente lado a lado"
                                   >
-                                    <ImageIcon className="h-3.5 w-3.5" />
+                                    <ImageIcon className="h-3 w-3" />
                                     Ver Captura
                                   </button>
                                 )}
@@ -3239,9 +3239,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => setInspectedAlert(alert)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+                                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-slate-700 cursor-pointer"
                                 >
-                                  <FileText className="h-3.5 w-3.5" />
+                                  <FileText className="h-3 w-3" />
                                   Payload
                                 </button>
 
@@ -3255,9 +3255,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                           candidateOrder
                                         )
                                       }
-                                      className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-amber-400"
+                                      className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-400 cursor-pointer"
                                     >
-                                      <UserCheck className="h-3.5 w-3.5" />
+                                      <UserCheck className="h-3 w-3" />
                                       Conciliar
                                     </button>
                                   )}
@@ -3269,10 +3269,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                       setAlertToRevert(alert);
                                       setRevertReason('');
                                     }}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 py-1.5 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/30"
+                                    className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 cursor-pointer"
                                     title="Deshacer o revertir conciliación por error"
                                   >
-                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    <RotateCcw className="h-3 w-3" />
                                     Deshacer
                                   </button>
                                 )}
@@ -3357,16 +3357,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
             {/* Tabla de Egresos */}
             <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-sm">
+              <div className="overflow-x-auto xl:overflow-x-visible">
+                <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="px-4 py-3.5">Fecha &amp; Canal</th>
-                      <th className="px-4 py-3.5">Tipo de Salida</th>
-                      <th className="px-4 py-3.5">Destinatario / Comercio / Tarjeta</th>
-                      <th className="px-4 py-3.5">Referencia / TxID</th>
-                      <th className="px-4 py-3.5 text-right">Monto Gastado</th>
-                      <th className="px-4 py-3.5 text-right">Detalles</th>
+                      <th className="px-3 py-3">Fecha &amp; Canal</th>
+                      <th className="px-2.5 py-3">Tipo de Salida</th>
+                      <th className="px-3 py-3">Destinatario / Comercio / Tarjeta</th>
+                      <th className="px-3 py-3">Referencia / TxID</th>
+                      <th className="px-3 py-3 text-right">Monto Gastado</th>
+                      <th className="px-3 py-3 text-right">Detalles</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
@@ -3381,7 +3381,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         const badge = getPlatformBadgeMeta(expense.plataforma);
                         return (
                           <tr key={expense.id} className="transition hover:bg-slate-800/40">
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-3 py-3">
                               <span
                                 className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
                               >
@@ -3391,13 +3391,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 {formatDateTime(expense.fecha_transaccion)}
                               </p>
                             </td>
-                            <td className="whitespace-nowrap px-4 py-4">
+                            <td className="whitespace-nowrap px-2.5 py-3">
                               <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-300">
                                 <ArrowUpRight className="h-3 w-3" />
                                 ENVIADO / SALIDA
                               </span>
                             </td>
-                            <td className="px-4 py-4">
+                            <td className="px-3 py-3">
                               <p className="font-semibold text-white">
                                 {expense.remitente_o_contraparte || 'No especificado'}
                               </p>
@@ -3407,17 +3407,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 </p>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-4 font-mono text-xs text-slate-300">
+                            <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-300">
                               {expense.referencia || 'SIN-REF'}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-base font-bold text-rose-300">
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-base font-bold text-rose-300">
                               -{formatMoney(expense.monto_bruto, expense.moneda)}
                             </td>
-                            <td className="whitespace-nowrap px-4 py-4 text-right">
+                            <td className="whitespace-nowrap px-3 py-3 text-right">
                               <button
                                 type="button"
                                 onClick={() => setInspectedAlert(expense)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:bg-slate-700 cursor-pointer"
                               >
                                 <FileText className="h-3.5 w-3.5" />
                                 Payload
@@ -3497,8 +3497,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   Cuentas de Clientes Registrados ({clients.length})
                 </h3>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-sm">
+              <div className="overflow-x-auto xl:overflow-x-visible">
+                <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
                       <th className="px-4 py-3">Cliente / Titular</th>
@@ -3624,8 +3624,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   Órdenes / Reportes de Pago Pendientes ({pendingOrders.length})
                 </h3>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-sm">
+              <div className="overflow-x-auto xl:overflow-x-visible">
+                <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
                       <th className="px-4 py-3">Código Orden</th>
@@ -4158,8 +4158,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     Negocios Registrados ({businessUsers.length})
                   </h3>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-left text-sm">
+                <div className="overflow-x-auto xl:overflow-x-visible">
+                  <table className="w-full border-collapse text-left text-sm table-auto">
                     <thead>
                       <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
                         <th className="px-4 py-3">Negocio / Empresa</th>
