@@ -17,6 +17,7 @@ import {
   Coins,
   Copy,
   Cpu,
+  CreditCard,
   DollarSign,
   ExternalLink,
   Eye,
@@ -69,7 +70,12 @@ import {
 const STORAGE_BUSINESS_USER_KEY = 'fintech_business_user_id';
 const STORAGE_ACTIVE_NEGOCIO_KEY = 'fintech_active_negocio_id';
 
-type ActiveTab = 'ALERTS' | 'CLIENTS' | 'MAILBOXES' | 'BUSINESS_USERS';
+type ActiveTab =
+  | 'ALERTS'
+  | 'EXPENSES'
+  | 'CLIENTS'
+  | 'MAILBOXES'
+  | 'BUSINESS_USERS';
 
 interface LightboxContext {
   title: string;
@@ -305,12 +311,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     'TODOS'
   );
   const [movementFilter, setMovementFilter] = useState<'TODOS' | MovementType>(
-    'TODOS'
+    'RECIBIDO'
   );
   const [statusFilter, setStatusFilter] = useState<'TODOS' | AlertStatus>(
     'TODOS'
   );
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Selección por Lotes (Bulk Actions)
+  const [selectedAlertIds, setSelectedAlertIds] = useState<string[]>([]);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState<boolean>(false);
+  const [batchTargetClient, setBatchTargetClient] = useState<string>('');
+  const [batchNotes, setBatchNotes] = useState<string>('');
+  const [isSubmittingBatch, setIsSubmittingBatch] = useState<boolean>(false);
 
   // Estados UI / Feedback
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -866,6 +879,72 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     });
   }, [alerts, platformFilter, movementFilter, statusFilter, searchQuery]);
 
+  const receivedAlertsCount = useMemo(
+    () => alerts.filter((a) => a.tipo_movimiento === 'RECIBIDO').length,
+    [alerts]
+  );
+
+  const sentAlertsCount = useMemo(
+    () => alerts.filter((a) => a.tipo_movimiento === 'ENVIADO').length,
+    [alerts]
+  );
+
+  const totalExpensesUsd = useMemo(
+    () =>
+      alerts
+        .filter((a) => a.tipo_movimiento === 'ENVIADO' && a.moneda === 'USD')
+        .reduce((sum, a) => sum + a.monto_bruto, 0),
+    [alerts]
+  );
+
+  const expensesAlerts = useMemo<BankEmailAlertRecord[]>(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    return alerts.filter((item) => {
+      if (item.tipo_movimiento !== 'ENVIADO') {
+        return false;
+      }
+      if (normalizedQuery.length > 0) {
+        const sender = (item.remitente_o_contraparte ?? '').toLowerCase();
+        const ref = (item.referencia ?? '').toLowerCase();
+        const client = (item.cliente_asignado_nombre ?? '').toLowerCase();
+        return (
+          sender.includes(normalizedQuery) ||
+          ref.includes(normalizedQuery) ||
+          client.includes(normalizedQuery)
+        );
+      }
+      return true;
+    });
+  }, [alerts, searchQuery]);
+
+  const eligibleAlertsForBatch = useMemo(
+    () =>
+      filteredAlerts.filter(
+        (a) => a.estado !== 'CONCILIADO' && a.tipo_movimiento === 'RECIBIDO'
+      ),
+    [filteredAlerts]
+  );
+
+  const toggleSelectAlert = (id: string): void => {
+    setSelectedAlertIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllEligible = (): void => {
+    const eligibleIds = eligibleAlertsForBatch.map((a) => a.id);
+    const allSelected =
+      eligibleIds.length > 0 &&
+      eligibleIds.every((id) => selectedAlertIds.includes(id));
+    if (allSelected) {
+      setSelectedAlertIds((prev) =>
+        prev.filter((id) => !eligibleIds.includes(id))
+      );
+    } else {
+      setSelectedAlertIds((prev) => Array.from(new Set([...prev, ...eligibleIds])));
+    }
+  };
+
   // Busca orden pendiente candidata (con captura) asociada a una transacción en REVISION_MANUAL
   const findAssociatedCaptureOrder = useCallback(
     (tx: BankEmailAlertRecord): PendingPaymentOrder | null => {
@@ -1135,6 +1214,71 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       setBannerMessage({ type: 'error', text: msg });
     } finally {
       setIsSubmittingRevert(false);
+    }
+  };
+
+  const handleConfirmBatchReconciliation = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    if (selectedAlertIds.length === 0) {
+      setBannerMessage({
+        type: 'error',
+        text: 'Selecciona al menos una transacción para conciliar por lote.',
+      });
+      return;
+    }
+
+    if (!batchTargetClient.trim()) {
+      setBannerMessage({
+        type: 'error',
+        text: 'Selecciona un cliente titular para asignar las transacciones.',
+      });
+      return;
+    }
+
+    setIsSubmittingBatch(true);
+    try {
+      const response = await fetch('/api/reconciliation/batch-match', {
+        method: 'POST',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          alertIds: selectedAlertIds,
+          clienteNombreManual: batchTargetClient.trim(),
+          notasConciliacion: batchNotes.trim(),
+        }),
+      });
+
+      const result = (await response.json()) as {
+        ok: boolean;
+        matchedCount?: number;
+        totalNeto?: number;
+        error?: string;
+      };
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error ?? 'Error al conciliar transacciones por lote.');
+      }
+
+      await fetchAllData();
+
+      setBannerMessage({
+        type: 'success',
+        text: `Asignación por lote exitosa: ${result.matchedCount ?? selectedAlertIds.length} pagos asignados a favor de "${batchTargetClient}". Saldo acreditado: $${(result.totalNeto ?? 0).toFixed(2)} USD.`,
+      });
+
+      setSelectedAlertIds([]);
+      setIsBatchModalOpen(false);
+      setBatchTargetClient('');
+      setBatchNotes('');
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al conciliar por lote.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setIsSubmittingBatch(false);
     }
   };
 
@@ -2167,7 +2311,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         <div className="mb-6 flex flex-wrap gap-2 border-b border-slate-800 pb-3">
           <button
             type="button"
-            onClick={() => setActiveTab('ALERTS')}
+            onClick={() => {
+              setActiveTab('ALERTS');
+              setMovementFilter('RECIBIDO');
+            }}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               activeTab === 'ALERTS'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
@@ -2175,7 +2322,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <DollarSign className="h-4 w-4" />
-            1. Transacciones y Conciliación ({alerts.length})
+            1. Transacciones y Conciliación ({receivedAlertsCount})
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('EXPENSES')}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab === 'EXPENSES'
+                ? 'bg-rose-600 text-white shadow-md shadow-rose-950/50'
+                : 'bg-slate-900 text-rose-300/80 hover:bg-slate-800'
+            }`}
+          >
+            <CreditCard className="h-4 w-4 text-rose-400" />
+            2. Egresos / Gastos Personales y Salidas ({sentAlertsCount})
           </button>
 
           <button
@@ -2188,7 +2348,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <Users className="h-4 w-4" />
-            2. Clientes, Saldos y Órdenes ({clients.length} / {pendingOrders.length})
+            3. Clientes, Saldos y Órdenes ({clients.length} / {pendingOrders.length})
           </button>
 
           <button
@@ -2201,7 +2361,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <Inbox className="h-4 w-4" />
-            3. Correos IMAP Monitoreados ({mailboxes.length})
+            4. Correos IMAP Monitoreados ({mailboxes.length})
           </button>
 
           {currentBusinessUser.rol === 'SUPER_ADMIN' && (
@@ -2215,7 +2375,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               }`}
             >
               <Briefcase className="h-4 w-4" />
-              4. Usuarios y Negocios ({businessUsers.length})
+              5. Usuarios y Negocios ({businessUsers.length})
             </button>
           )}
         </div>
@@ -2376,24 +2536,84 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           </div>
         </section>
 
-        {/* Barra de Estado de Conciliación */}
+        {/* Barra de Estado de Conciliación con Filtros Rápidos Clickeables */}
         <div className="mb-6 flex flex-wrap items-center gap-3 text-xs">
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 font-semibold text-emerald-300">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ALERTS');
+              setStatusFilter((prev) =>
+                prev === 'CONCILIADO' ? 'TODOS' : 'CONCILIADO'
+              );
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+              statusFilter === 'CONCILIADO' && activeTab === 'ALERTS'
+                ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 ring-2 ring-emerald-500/40 shadow-lg'
+                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+            }`}
+            title="Clic para filtrar únicamente pagos conciliados"
+          >
             <CheckCircle2 className="h-3.5 w-3.5" />
             Conciliados: {financialMetrics.pagosConciliadosCount}
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 font-semibold text-amber-300">
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ALERTS');
+              setStatusFilter((prev) =>
+                prev === 'REVISION_MANUAL' ? 'TODOS' : 'REVISION_MANUAL'
+              );
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+              statusFilter === 'REVISION_MANUAL' && activeTab === 'ALERTS'
+                ? 'border-amber-400 bg-amber-500/25 text-amber-100 ring-2 ring-amber-500/40 shadow-lg'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+            }`}
+            title="Clic para filtrar únicamente pagos en revisión manual"
+          >
             <AlertTriangle className="h-3.5 w-3.5" />
             Revisión Manual: {financialMetrics.pagosRevisionManualCount}
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 px-3 py-1.5 font-semibold text-sky-300">
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ALERTS');
+              setStatusFilter((prev) =>
+                prev === 'DETECTADO' ? 'TODOS' : 'DETECTADO'
+              );
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+              statusFilter === 'DETECTADO' && activeTab === 'ALERTS'
+                ? 'border-sky-400 bg-sky-500/25 text-sky-100 ring-2 ring-sky-500/40 shadow-lg'
+                : 'border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20'
+            }`}
+            title="Clic para filtrar pagos detectados sin orden vinculada"
+          >
             <Clock className="h-3.5 w-3.5" />
             Detectados (Sin Orden): {financialMetrics.pagosDetectadosCount}
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300">
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('CLIENTS')}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300 transition hover:bg-slate-800 cursor-pointer"
+            title="Clic para ir a la pestaña de clientes y órdenes pendientes"
+          >
             <Wallet className="h-3.5 w-3.5 text-slate-400" />
             Órdenes Pendientes en Portal: {pendingOrders.length}
-          </span>
+          </button>
+
+          {statusFilter !== 'TODOS' && (
+            <button
+              type="button"
+              onClick={() => setStatusFilter('TODOS')}
+              className="text-[11px] font-medium text-slate-400 underline hover:text-white"
+            >
+              (Mostrar Todos)
+            </button>
+          )}
         </div>
 
         {/* =====================================================================
@@ -2476,11 +2696,73 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
             </section>
 
+            {/* Barra de Acciones Masivas por Lote (Bulk Actions) */}
+            {selectedAlertIds.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/80 p-4 shadow-xl shadow-emerald-950/50">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 font-mono text-sm font-bold text-emerald-300 ring-1 ring-emerald-500/30">
+                    {selectedAlertIds.length}
+                  </span>
+                  <div>
+                    <p className="text-sm font-bold text-white">
+                      {selectedAlertIds.length} pagos seleccionados para asignación en lote
+                    </p>
+                    <p className="text-xs text-emerald-300">
+                      Monto total bruto:{' '}
+                      <strong className="font-mono text-white">
+                        $
+                        {alerts
+                          .filter((a) => selectedAlertIds.includes(a.id))
+                          .reduce((sum, a) => sum + a.monto_bruto, 0)
+                          .toFixed(2)}{' '}
+                        USD
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBatchTargetClient('');
+                      setBatchNotes('Asignación masiva por lote (auditoría)');
+                      setIsBatchModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:bg-emerald-400"
+                  >
+                    <UserCheck className="h-4 w-4" />
+                    Asignar pagos seleccionados al cliente...
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAlertIds([])}
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                  >
+                    Deseleccionar todos
+                  </button>
+                </div>
+              </div>
+            )}
+
             <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm">
                   <thead>
                     <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      <th className="w-10 px-3 py-3.5 text-center">
+                        <input
+                          type="checkbox"
+                          checked={
+                            eligibleAlertsForBatch.length > 0 &&
+                            eligibleAlertsForBatch.every((a) =>
+                              selectedAlertIds.includes(a.id)
+                            )
+                          }
+                          onChange={toggleSelectAllEligible}
+                          className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                          title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
+                        />
+                      </th>
                       <th className="px-4 py-3.5">Canal &amp; Fecha</th>
                       <th className="px-4 py-3.5">Flujo</th>
                       <th className="px-4 py-3.5">
@@ -2500,7 +2782,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     {filteredAlerts.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={10}
                           className="px-6 py-12 text-center text-slate-400"
                         >
                           No se encontraron transacciones con los filtros
@@ -2517,12 +2799,28 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           candidateOrder?.has_capture ||
                           candidateOrder?.comprobante_base64
                         );
+                        const isSelected = selectedAlertIds.includes(alert.id);
 
                         return (
                           <tr
                             key={alert.id}
-                            className="transition hover:bg-slate-800/40"
+                            className={`transition hover:bg-slate-800/40 ${
+                              isSelected ? 'bg-emerald-950/25' : ''
+                            }`}
                           >
+                            <td className="w-10 px-3 py-4 text-center">
+                              {alert.estado !== 'CONCILIADO' &&
+                              alert.tipo_movimiento === 'RECIBIDO' ? (
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelectAlert(alert.id)}
+                                  className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                                />
+                              ) : (
+                                <span className="inline-block h-4 w-4 text-slate-700">-</span>
+                              )}
+                            </td>
                             <td className="whitespace-nowrap px-4 py-4">
                               <span
                                 className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
@@ -2690,6 +2988,151 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
             </section>
           </>
+        )}
+
+        {/* =====================================================================
+            PESTAÑA: EGRESOS / GASTOS PERSONALES Y SALIDAS (TIPO_MOVIMIENTO = ENVIADO)
+           ===================================================================== */}
+        {activeTab === 'EXPENSES' && (
+          <div className="space-y-6">
+            {/* Encabezado y Métricas de Egresos */}
+            <div className="rounded-2xl border border-rose-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-rose-950/25 p-5 shadow-lg">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-rose-500/15 p-3 text-rose-400">
+                    <CreditCard className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white">
+                      Egresos, Gastos Personales y Salidas Operativas
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Compras con tarjeta de débito (*0545), transferencias salientes y gastos del operador. Separados para mantener 100% limpia la conciliación de clientes.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-right font-mono">
+                    <span className="block text-[10px] uppercase tracking-wider text-slate-400">
+                      Total Salidas USD
+                    </span>
+                    <span className="text-lg font-bold text-rose-300">
+                      -{formatMoney(totalExpensesUsd, 'USD')}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-right font-mono">
+                    <span className="block text-[10px] uppercase tracking-wider text-slate-400">
+                      Cantidad de Operaciones
+                    </span>
+                    <span className="text-lg font-bold text-white">
+                      {sentAlertsCount}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Buscador de Egresos */}
+            <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+              <div className="relative flex-1">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar gasto por comercio, tarjeta, TxID o destinatario..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                />
+              </div>
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  Limpiar búsqueda
+                </button>
+              )}
+            </div>
+
+            {/* Tabla de Egresos */}
+            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      <th className="px-4 py-3.5">Fecha &amp; Canal</th>
+                      <th className="px-4 py-3.5">Tipo de Salida</th>
+                      <th className="px-4 py-3.5">Destinatario / Comercio / Tarjeta</th>
+                      <th className="px-4 py-3.5">Referencia / TxID</th>
+                      <th className="px-4 py-3.5 text-right">Monto Gastado</th>
+                      <th className="px-4 py-3.5 text-right">Detalles</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {expensesAlerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                          No se registraron egresos o gastos que coincidan con la búsqueda.
+                        </td>
+                      </tr>
+                    ) : (
+                      expensesAlerts.map((expense) => {
+                        const badge = getPlatformBadgeMeta(expense.plataforma);
+                        return (
+                          <tr key={expense.id} className="transition hover:bg-slate-800/40">
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <span
+                                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
+                              >
+                                {badge.label}
+                              </span>
+                              <p className="mt-1 text-xs text-slate-400">
+                                {formatDateTime(expense.fecha_transaccion)}
+                              </p>
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4">
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-300">
+                                <ArrowUpRight className="h-3 w-3" />
+                                ENVIADO / SALIDA
+                              </span>
+                            </td>
+                            <td className="px-4 py-4">
+                              <p className="font-semibold text-white">
+                                {expense.remitente_o_contraparte || 'No especificado'}
+                              </p>
+                              {expense.nota_auditoria && (
+                                <p className="mt-0.5 text-[11px] text-slate-400">
+                                  {expense.nota_auditoria}
+                                </p>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 font-mono text-xs text-slate-300">
+                              {expense.referencia || 'SIN-REF'}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-base font-bold text-rose-300">
+                              -{formatMoney(expense.monto_bruto, expense.moneda)}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-4 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setInspectedAlert(expense)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-700"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                Payload
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* =====================================================================
@@ -5160,6 +5603,124 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
                 </form>
               )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* Modal Conciliación Masiva por Lote */}
+        <Dialog.Root
+          open={isBatchModalOpen}
+          onOpenChange={(open) => {
+            setIsBatchModalOpen(open);
+            if (!open) {
+              setBatchTargetClient('');
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/30 bg-slate-900 p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2 text-emerald-400">
+                  <UserCheck className="h-5 w-5" />
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    Asignación Masiva por Lote
+                  </Dialog.Title>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <form
+                onSubmit={handleConfirmBatchReconciliation}
+                className="mt-4 space-y-4"
+              >
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-xs text-emerald-200">
+                  <p className="font-semibold text-emerald-300">
+                    Estás por adjudicar {selectedAlertIds.length} pagos seleccionados.
+                  </p>
+                  <p className="mt-1 text-slate-300">
+                    Monto total a conciliar:{' '}
+                    <strong className="font-mono text-emerald-400">
+                      $
+                      {alerts
+                        .filter((a) => selectedAlertIds.includes(a.id))
+                        .reduce((sum, a) => sum + a.monto_bruto, 0)
+                        .toFixed(2)}{' '}
+                      USD
+                    </strong>
+                    . El saldo del cliente seleccionado se actualizará automáticamente y los remitentes bancarios serán agregados a su lista autorizada.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="batch-client-select"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  >
+                    Cliente Titular a Acreditar *
+                  </label>
+                  <input
+                    id="batch-client-select"
+                    type="text"
+                    required
+                    list="registered-clients-list"
+                    value={batchTargetClient}
+                    onChange={(e) => setBatchTargetClient(e.target.value)}
+                    placeholder="Escribe o selecciona un cliente registrado"
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Selecciona de la lista de clientes registrados o escribe el nombre exacto.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="batch-notes"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  >
+                    Motivo / Nota de Auditoría
+                  </label>
+                  <textarea
+                    id="batch-notes"
+                    rows={2}
+                    value={batchNotes}
+                    onChange={(e) => setBatchNotes(e.target.value)}
+                    placeholder="Ej. Asignación masiva autorizada por comprobantes históricos"
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                  <Dialog.Close asChild>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                    >
+                      Cancelar
+                    </button>
+                  </Dialog.Close>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingBatch}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {isSubmittingBatch ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    Confirmar Asignación ({selectedAlertIds.length} Pagos)
+                  </button>
+                </div>
+              </form>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

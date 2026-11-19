@@ -778,16 +778,19 @@ export async function executeUnifiedMultiChannelSync(
     }
   }
 
-  // Re-evaluar transacciones DETECTADO que pudieran coincidir con órdenes recién reportadas
+  // Sincronización Retroactiva Inteligente:
+  // Re-evaluar todas las transacciones históricas no conciliadas acumuladas desde octubre/noviembre
+  // contra las órdenes de pago pendientes (incluyendo las reportadas tarde en el portal)
   try {
     const unmatchedRows = await dbQuery<{ id: string }>(
       `
       SELECT id
       FROM financial_transactions_reconciliation
-      WHERE estado = 'DETECTADO'
+      WHERE estado IN ('DETECTADO', 'REVISION_MANUAL')
+        AND cliente_id IS NULL
+        AND orden_conciliada_id IS NULL
         AND tipo_movimiento = 'RECIBIDO'
-      ORDER BY fecha_transaccion DESC
-      LIMIT 40;
+      ORDER BY fecha_transaccion DESC;
       `
     );
     for (const row of unmatchedRows.rows) {
@@ -799,8 +802,8 @@ export async function executeUnifiedMultiChannelSync(
         reconciledCount += 1;
       }
     }
-  } catch {
-    // Ignorar si no existen registros
+  } catch (recheckErr) {
+    console.error('[IMAP Sync] Error en sincronización retroactiva:', recheckErr);
   }
 
   if (mailboxes.length === 0 && !binanceApiConfigured) {
