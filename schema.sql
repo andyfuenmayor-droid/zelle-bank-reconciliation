@@ -770,4 +770,41 @@ BEGIN
 END;
 $$;
 
+
+-- =============================================================================
+-- TABLA: liquidaciones_clientes
+-- Registra las liquidaciones/pagos de fondos a clientes o a sus destinatarios
+-- (ej. Ramoncito tiene $2,310 y se le liquidan $2,000 a equis persona,
+-- quedando con saldo de $310 y cerrando el ciclo de capturas activas).
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS liquidaciones_clientes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    codigo_liquidacion VARCHAR(64) UNIQUE NOT NULL,
+    negocio_id UUID REFERENCES usuarios_negocios(id) ON DELETE CASCADE,
+    cliente_id UUID NOT NULL REFERENCES clientes_titulares(id) ON DELETE CASCADE,
+    cliente_nombre TEXT NOT NULL,
+    monto_liquidado NUMERIC(12,2) NOT NULL CHECK (monto_liquidado > 0),
+    moneda VARCHAR(10) NOT NULL DEFAULT 'USD' CHECK (moneda IN ('USD', 'USDT', 'VES')),
+    destinatario_beneficiario TEXT NOT NULL,
+    motivo_concepto TEXT NOT NULL,
+    metodo_pago_salida VARCHAR(50) NOT NULL DEFAULT 'ZELLE' CHECK (metodo_pago_salida IN ('ZELLE', 'BINANCE_USDT', 'PAGO_MOVIL', 'TRANSFERENCIA_BANCARIA', 'EFECTIVO', 'OTRO')),
+    referencia_salida VARCHAR(120),
+    comprobante_salida_base64 TEXT,
+    saldo_anterior NUMERIC(12,2) NOT NULL,
+    saldo_restante NUMERIC(12,2) NOT NULL,
+    liquidado_por VARCHAR(100) NOT NULL DEFAULT 'ADMINISTRADOR',
+    notas_operador TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_liq_cliente_fecha ON liquidaciones_clientes (cliente_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_liq_negocio_fecha ON liquidaciones_clientes (negocio_id, created_at DESC);
+
+-- Columnas de vinculación en órdenes y transacciones para archivar ciclos liquidados
+ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS liquidacion_id UUID REFERENCES liquidaciones_clientes(id) ON DELETE SET NULL;
+ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS liquidado_at TIMESTAMPTZ;
+
+ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS liquidacion_id UUID REFERENCES liquidaciones_clientes(id) ON DELETE SET NULL;
+ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS liquidado_at TIMESTAMPTZ;
+
 COMMIT;

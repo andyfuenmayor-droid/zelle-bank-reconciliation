@@ -33,8 +33,17 @@ export type AlertStatus = 'DETECTADO' | 'CONCILIADO' | 'REVISION_MANUAL';
 export type PendingOrderStatus =
   | 'PENDIENTE'
   | 'CONCILIADO'
+  | 'LIQUIDADO'
   | 'EXPIRADO'
   | 'CANCELADO';
+
+export type LiquidationPaymentMethod =
+  | 'ZELLE'
+  | 'BINANCE_USDT'
+  | 'PAGO_MOVIL'
+  | 'TRANSFERENCIA_BANCARIA'
+  | 'EFECTIVO'
+  | 'OTRO';
 
 export type BusinessUserRole = 'SUPER_ADMIN' | 'NEGOCIO';
 
@@ -179,6 +188,8 @@ export interface PendingPaymentOrder {
   datos_ocr_extraidos: OcrExtractionData | null;
   estado: PendingOrderStatus;
   transaccion_conciliada_id: string | null;
+  liquidacion_id?: string | null;
+  liquidado_at?: string | null;
   negocio_id?: string | null;
   notas_cliente: string | null;
   created_at: string;
@@ -224,6 +235,11 @@ export interface ClientAccountRecord {
   total_bruto_conciliado: number;
   total_comision_retenida: number;
   total_neto_disponible: number;
+  total_liquidado_usd?: number;
+  total_liquidado_usdt?: number;
+  saldo_disponible_usd?: number;
+  saldo_disponible_usdt?: number;
+  liquidaciones_count?: number;
   pagos_conciliados_count: number;
   created_at: string;
 }
@@ -238,8 +254,35 @@ export interface ClientPortalWalletSummary {
   saldoNetoUsdt: number;
   totalBrutoUsdt: number;
   totalComisionUsdt: number;
+  totalLiquidadoUsd?: number;
+  totalLiquidadoUsdt?: number;
+  totalAcreditadoUsd?: number;
+  totalAcreditadoUsdt?: number;
   pagosConciliadosCount: number;
   pagosPendientesCount: number;
+}
+
+/**
+ * Registro de Liquidación / Pago a Cliente o a Tercero (con motivo y cuenta destino)
+ */
+export interface ClientLiquidationRecord {
+  id: string;
+  codigo_liquidacion: string;
+  negocio_id?: string | null;
+  cliente_id: string;
+  cliente_nombre: string;
+  monto_liquidado: number;
+  moneda: CurrencyType;
+  destinatario_beneficiario: string;
+  motivo_concepto: string;
+  metodo_pago_salida: LiquidationPaymentMethod;
+  referencia_salida?: string | null;
+  comprobante_salida_base64?: string | null;
+  saldo_anterior: number;
+  saldo_restante: number;
+  liquidado_por: string;
+  notas_operador?: string | null;
+  created_at: string;
 }
 
 /**

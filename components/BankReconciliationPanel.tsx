@@ -58,10 +58,12 @@ import {
   BusinessUserRecord,
   BusinessUserRole,
   ClientAccountRecord,
+  ClientLiquidationRecord,
   CurrencyType,
   ExpectedPlatformType,
   FinancialSummaryMetrics,
   ImapMailboxRecord,
+  LiquidationPaymentMethod,
   MovementType,
   PendingPaymentOrder,
   PlatformType,
@@ -74,6 +76,7 @@ type ActiveTab =
   | 'ALERTS'
   | 'EXPENSES'
   | 'CLIENTS'
+  | 'LIQUIDATIONS'
   | 'MAILBOXES'
   | 'BUSINESS_USERS';
 
@@ -368,6 +371,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [alerts, setAlerts] = useState<BankEmailAlertRecord[]>([]);
   const [pendingOrders, setPendingOrders] = useState<PendingPaymentOrder[]>([]);
   const [clients, setClients] = useState<ClientAccountRecord[]>([]);
+  const [liquidations, setLiquidations] = useState<ClientLiquidationRecord[]>([]);
   const [mailboxes, setMailboxes] = useState<ImapMailboxRecord[]>([]);
   const [dataSourceMode, setDataSourceMode] = useState<
     'POSTGRESQL_LIVE' | 'DEMO_FALLBACK'
@@ -385,6 +389,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('TODOS');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [liqSearch, setLiqSearch] = useState<string>('');
+  const [liqMethodFilter, setLiqMethodFilter] = useState<string>('TODOS');
 
   // Selección por Lotes (Bulk Actions)
   const [selectedAlertIds, setSelectedAlertIds] = useState<string[]>([]);
@@ -457,6 +463,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     nombre: string;
     email: string;
     pin: string;
+  } | null>(null);
+
+  // Modal y Gestión de Liquidaciones de Clientes
+  const [isLiquidationModalOpen, setIsLiquidationModalOpen] = useState<boolean>(false);
+  const [selectedClientForLiq, setSelectedClientForLiq] = useState<ClientAccountRecord | null>(null);
+  const [liqMonto, setLiqMonto] = useState<string>('');
+  const [liqMoneda, setLiqMoneda] = useState<CurrencyType>('USD');
+  const [liqDestinatario, setLiqDestinatario] = useState<string>('');
+  const [liqMotivo, setLiqMotivo] = useState<string>('');
+  const [liqMetodo, setLiqMetodo] = useState<LiquidationPaymentMethod>('ZELLE');
+  const [liqReferencia, setLiqReferencia] = useState<string>('');
+  const [liqNotas, setLiqNotas] = useState<string>('');
+  const [liqArchivar, setLiqArchivar] = useState<boolean>(true);
+  const [isSubmittingLiquidation, setIsSubmittingLiquidation] = useState<boolean>(false);
+  const [liquidationFeedback, setLiquidationFeedback] = useState<{
+    ok: boolean;
+    message: string;
   } | null>(null);
 
   // Modal Crear Orden Esperada
@@ -536,7 +559,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     setIsLoading(true);
     try {
       const reqHeaders = buildScopeHeaders(false);
-      const [alertsRes, clientsRes, mailboxesRes, authRes] = await Promise.all([
+      const [alertsRes, clientsRes, mailboxesRes, authRes, liqRes] = await Promise.all([
         fetch('/api/reconciliation/alerts', {
           cache: 'no-store',
           headers: reqHeaders,
@@ -553,6 +576,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           `/api/auth/business?userId=${encodeURIComponent(currentBusinessUser.id)}`,
           { cache: 'no-store' }
         ),
+        fetch('/api/reconciliation/liquidations', {
+          cache: 'no-store',
+          headers: reqHeaders,
+        }),
       ]);
 
       if (alertsRes.ok) {
@@ -604,6 +631,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           if (Array.isArray(aData.businessUsers)) {
             setBusinessUsers(aData.businessUsers);
           }
+        }
+      }
+
+      if (liqRes.ok) {
+        const lData = (await liqRes.json()) as {
+          ok: boolean;
+          liquidaciones?: ClientLiquidationRecord[];
+        };
+        if (lData.ok && Array.isArray(lData.liquidaciones)) {
+          setLiquidations(lData.liquidaciones);
         }
       }
     } catch {
@@ -1073,6 +1110,36 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     [filteredAlerts]
   );
 
+  const totalLiquidadoUsd = useMemo(() => {
+    return liquidations
+      .filter((l) => l.moneda !== 'USDT')
+      .reduce((sum, l) => sum + Number(l.monto_liquidado || 0), 0);
+  }, [liquidations]);
+
+  const totalLiquidadoUsdt = useMemo(() => {
+    return liquidations
+      .filter((l) => l.moneda === 'USDT')
+      .reduce((sum, l) => sum + Number(l.monto_liquidado || 0), 0);
+  }, [liquidations]);
+
+  const filteredLiquidations = useMemo(() => {
+    return liquidations.filter((l) => {
+      if (liqMethodFilter !== 'TODOS' && l.metodo_pago_salida !== liqMethodFilter) {
+        return false;
+      }
+      if (liqSearch.trim()) {
+        const q = liqSearch.trim().toLowerCase();
+        const matchCode = l.codigo_liquidacion.toLowerCase().includes(q);
+        const matchClient = l.cliente_nombre.toLowerCase().includes(q);
+        const matchDest = l.destinatario_beneficiario.toLowerCase().includes(q);
+        const matchMotivo = l.motivo_concepto.toLowerCase().includes(q);
+        const matchRef = (l.referencia_salida || '').toLowerCase().includes(q);
+        return matchCode || matchClient || matchDest || matchMotivo || matchRef;
+      }
+      return true;
+    });
+  }, [liquidations, liqMethodFilter, liqSearch]);
+
   const toggleSelectAlert = (id: string): void => {
     setSelectedAlertIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
@@ -1481,6 +1548,103 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         : mapMailboxesToAssignedAccounts(mailboxes);
     setNewClientAssignedAccounts(existingAssigned);
     setIsNewClientModalOpen(true);
+  };
+
+  const openLiquidationModal = (client?: ClientAccountRecord): void => {
+    const target = client ?? clients[0] ?? null;
+    setSelectedClientForLiq(target);
+    setLiqMonto('');
+    setLiqMoneda('USD');
+    setLiqDestinatario(target ? `A favor de ${target.nombre_titular}` : '');
+    setLiqMotivo('Liquidación solicitada por cliente');
+    setLiqMetodo('ZELLE');
+    setLiqReferencia('');
+    setLiqNotas('');
+    setLiqArchivar(true);
+    setLiquidationFeedback(null);
+    setIsLiquidationModalOpen(true);
+  };
+
+  const handleCreateLiquidation = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!selectedClientForLiq) {
+      setLiquidationFeedback({ ok: false, message: 'Debe seleccionar un cliente para liquidar.' });
+      return;
+    }
+
+    const amount = parseFloat(liqMonto);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setLiquidationFeedback({ ok: false, message: 'Ingresa un monto válido mayor a 0.' });
+      return;
+    }
+
+    const maxAvailable =
+      liqMoneda === 'USDT'
+        ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
+        : (selectedClientForLiq.saldo_disponible_usd ?? selectedClientForLiq.total_neto_usd);
+
+    if (amount > maxAvailable + 0.009) {
+      setLiquidationFeedback({
+        ok: false,
+        message: `Monto insuficiente: El monto a liquidar ($${amount.toFixed(2)}) supera el saldo disponible actual ($${maxAvailable.toFixed(2)} ${liqMoneda}).`,
+      });
+      return;
+    }
+
+    if (!liqDestinatario.trim()) {
+      setLiquidationFeedback({ ok: false, message: 'Ingresa el destinatario o beneficiario del pago.' });
+      return;
+    }
+
+    if (!liqMotivo.trim()) {
+      setLiquidationFeedback({ ok: false, message: 'Ingresa el motivo o concepto de la liquidación.' });
+      return;
+    }
+
+    setIsSubmittingLiquidation(true);
+    setLiquidationFeedback(null);
+
+    try {
+      const res = await fetch('/api/reconciliation/liquidations', {
+        method: 'POST',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          cliente_id: selectedClientForLiq.id,
+          monto_liquidado: amount,
+          moneda: liqMoneda,
+          destinatario_beneficiario: liqDestinatario.trim(),
+          motivo_concepto: liqMotivo.trim(),
+          metodo_pago_salida: liqMetodo,
+          referencia_salida: liqReferencia.trim() || null,
+          liquidado_por: currentBusinessUser?.nombre_usuario || currentBusinessUser?.nombre_negocio || 'ADMINISTRADOR',
+          notas_operador: liqNotas.trim() || null,
+          archivar_comprobantes: liqArchivar,
+        }),
+      });
+
+      const data = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        mensaje?: string;
+        liquidacion?: ClientLiquidationRecord;
+      };
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Error al procesar la liquidación.');
+      }
+
+      setBannerMessage({
+        type: 'success',
+        text: data.mensaje || `Liquidación ${data.liquidacion?.codigo_liquidacion} procesada con éxito.`,
+      });
+      setIsLiquidationModalOpen(false);
+      await fetchAllData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Error al procesar liquidación.';
+      setLiquidationFeedback({ ok: false, message: msg });
+    } finally {
+      setIsSubmittingLiquidation(false);
+    }
   };
 
   const handleToggleMailboxAssignment = (mb: ImapMailboxRecord): void => {
@@ -2531,6 +2695,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
           <button
             type="button"
+            onClick={() => setActiveTab('LIQUIDATIONS')}
+            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
+              activeTab === 'LIQUIDATIONS'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
+                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            <Coins className="h-4 w-4 text-emerald-400" />
+            4. Liquidaciones ({liquidations.length})
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('MAILBOXES')}
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
               activeTab === 'MAILBOXES'
@@ -2539,7 +2716,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             }`}
           >
             <Inbox className="h-4 w-4" />
-            4. Correos IMAP Monitoreados ({mailboxes.length})
+            5. Correos IMAP Monitoreados ({mailboxes.length})
           </button>
 
           {currentBusinessUser.rol === 'SUPER_ADMIN' && (
@@ -2553,7 +2730,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               }`}
             >
               <Briefcase className="h-4 w-4" />
-              5. Usuarios y Negocios ({businessUsers.length})
+              6. Usuarios y Negocios ({businessUsers.length})
             </button>
           )}
         </div>
@@ -3602,8 +3779,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <th className="px-4 py-3">Correo &amp; Acceso Portal</th>
                       <th className="px-4 py-3">Cuentas Asignadas (Destino &amp; Moneda)</th>
                       <th className="px-4 py-3 text-center">Fees (Zelle / Bin.)</th>
-                      <th className="px-4 py-3 text-right">Saldo Neto USD</th>
-                      <th className="px-4 py-3 text-right">Saldo Neto USDT</th>
+                      <th className="px-4 py-3 text-right">Total Acreditado</th>
+                      <th className="px-4 py-3 text-right">Total Liquidado</th>
+                      <th className="px-4 py-3 text-right">Saldo Disponible</th>
                       <th className="px-4 py-3 text-right">Acciones</th>
                     </tr>
                   </thead>
@@ -3611,103 +3789,135 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     {clients.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={7}
+                          colSpan={8}
                           className="px-6 py-10 text-center text-slate-400"
                         >
                           Aún no hay cuentas de clientes registradas. Haz clic en &quot;+ Nueva Cuenta de Acceso&quot; para crear un usuario y asignarle su PIN del portal.
                         </td>
                       </tr>
                     ) : (
-                      clients.map((c) => (
-                        <tr key={c.id} className="hover:bg-slate-800/40">
-                          <td className="px-4 py-3.5 font-semibold text-white">
-                            {c.nombre_titular}
-                            <div className="text-xs font-normal text-slate-400">
-                              {c.pagos_conciliados_count} pago(s) conciliado(s)
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5 text-xs text-slate-300">
-                            <div>{c.email ?? c.email_contacto ?? 'Sin email'}</div>
-                            <div className="mt-1 flex items-center gap-2">
-                              {c.tiene_pin_configurado ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                                  <KeyRound className="h-2.5 w-2.5" />
-                                  PIN Activo
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
-                                  Sin PIN
-                                </span>
-                              )}
-                              {c.telefono && (
-                                <span className="text-slate-400">{c.telefono}</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3.5 text-xs text-slate-300">
-                            {c.cuentas_asignadas && c.cuentas_asignadas.length > 0 ? (
-                              <div className="space-y-1.5">
-                                {c.cuentas_asignadas.map((acc) => {
-                                  const badge = getPlatformBadgeMeta(acc.plataforma);
-                                  return (
-                                    <div
-                                      key={acc.id}
-                                      className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/90 px-2.5 py-1.5"
-                                    >
-                                      <span
-                                        className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
-                                      >
-                                        {badge.label}
-                                      </span>
-                                      <span className="font-mono text-[11px] font-semibold text-white">
-                                        {acc.cuenta_receptora}
-                                      </span>
-                                      <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
-                                        {acc.moneda}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
+                      clients.map((c) => {
+                        const dispUsd = c.saldo_disponible_usd ?? Math.max(0, c.total_neto_usd - (c.total_liquidado_usd ?? 0));
+                        const dispUsdt = c.saldo_disponible_usdt ?? Math.max(0, c.total_neto_usdt - (c.total_liquidado_usdt ?? 0));
+                        return (
+                          <tr key={c.id} className="hover:bg-slate-800/40">
+                            <td className="px-4 py-3.5 font-semibold text-white">
+                              {c.nombre_titular}
+                              <div className="text-xs font-normal text-slate-400">
+                                {c.pagos_conciliados_count} pago(s) conciliado(s)
                               </div>
-                            ) : (
-                              <span className="text-[11px] text-amber-300">
-                                Sin cuentas asignadas (usa Editar)
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3.5 text-center font-mono text-xs text-violet-300">
-                            {c.porcentaje_comision_zelle}% / {c.porcentaje_comision_binance}%
-                          </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-bold text-emerald-400">
-                            {formatMoney(c.total_neto_usd, 'USD')}
-                          </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-bold text-amber-300">
-                            {formatMoney(c.total_neto_usdt, 'USDT')}
-                          </td>
-                          <td className="whitespace-nowrap px-4 py-3.5 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => openEditClientModal(c)}
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
-                              >
-                                <KeyRound className="h-3 w-3 text-emerald-400" />
-                                Editar / PIN
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void handleDeleteClient(c.id, c.nombre_titular)
-                                }
-                                className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
-                                title="Eliminar cliente"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
+                            </td>
+                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                              <div>{c.email ?? c.email_contacto ?? 'Sin email'}</div>
+                              <div className="mt-1 flex items-center gap-2">
+                                {c.tiene_pin_configurado ? (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                    <KeyRound className="h-2.5 w-2.5" />
+                                    PIN Activo
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                                    Sin PIN
+                                  </span>
+                                )}
+                                {c.telefono && (
+                                  <span className="text-slate-400">{c.telefono}</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                              {c.cuentas_asignadas && c.cuentas_asignadas.length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {c.cuentas_asignadas.map((acc) => {
+                                    const badge = getPlatformBadgeMeta(acc.plataforma);
+                                    return (
+                                      <div
+                                        key={acc.id}
+                                        className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/90 px-2.5 py-1.5"
+                                      >
+                                        <span
+                                          className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
+                                        >
+                                          {badge.label}
+                                        </span>
+                                        <span className="font-mono text-[11px] font-semibold text-white">
+                                          {acc.cuenta_receptora}
+                                        </span>
+                                        <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                                          {acc.moneda}
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-amber-300">
+                                  Sin cuentas asignadas (usa Editar)
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3.5 text-center font-mono text-xs text-violet-300">
+                              {c.porcentaje_comision_zelle}% / {c.porcentaje_comision_binance}%
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-mono text-xs text-slate-200">
+                              <div>{formatMoney(c.total_neto_usd, 'USD')}</div>
+                              {c.total_neto_usdt > 0 && (
+                                <div className="text-amber-300">{formatMoney(c.total_neto_usdt, 'USDT')}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-mono text-xs text-rose-300">
+                              <div>{formatMoney(c.total_liquidado_usd ?? 0, 'USD')}</div>
+                              {(c.total_liquidado_usdt ?? 0) > 0 && (
+                                <div className="text-rose-400">{formatMoney(c.total_liquidado_usdt ?? 0, 'USDT')}</div>
+                              )}
+                              <div className="text-[10px] text-slate-400 font-normal">
+                                {c.liquidaciones_count ?? 0} liquidación(es)
+                              </div>
+                            </td>
+                            <td className="px-4 py-3.5 text-right font-mono font-bold">
+                              <div className="text-sm text-emerald-400">
+                                {formatMoney(dispUsd, 'USD')}
+                              </div>
+                              {c.total_neto_usdt > 0 && (
+                                <div className="text-xs text-amber-300">
+                                  {formatMoney(dispUsdt, 'USDT')}
+                                </div>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-4 py-3.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openLiquidationModal(c)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-600/30 px-2.5 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-600 hover:text-white transition shadow-sm"
+                                  title="Liquidar saldo a favor del cliente o de un tercero"
+                                >
+                                  <Coins className="h-3.5 w-3.5 text-emerald-400" />
+                                  Liquidar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditClientModal(c)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                                >
+                                  <KeyRound className="h-3 w-3 text-emerald-400" />
+                                  Editar / PIN
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void handleDeleteClient(c.id, c.nombre_titular)
+                                  }
+                                  className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                                  title="Eliminar cliente"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -3799,7 +4009,195 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         )}
 
         {/* =====================================================================
-            PESTAÑA 3: CORREOS IMAP MONITOREADOS
+            PESTAÑA 4: GESTIÓN DE LIQUIDACIONES Y PAGOS A CLIENTES O TERCEROS
+           ===================================================================== */}
+        {activeTab === 'LIQUIDATIONS' && (
+          <div className="space-y-6">
+            {/* Cabecera y Métricas de Liquidación */}
+            <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
+              <div>
+                <div className="flex items-center gap-2 text-emerald-400">
+                  <Coins className="h-5 w-5" />
+                  <h2 className="text-lg font-bold text-white">
+                    Liquidaciones y Pagos Realizados
+                  </h2>
+                </div>
+                <p className="mt-1 text-xs text-slate-400">
+                  Registra liquidaciones parciales o totales de saldos acreditados a clientes o a las cuentas de terceros que indiquen, con motivos y deducción automática.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => openLiquidationModal()}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-950/60 hover:bg-emerald-500"
+              >
+                <Plus className="h-4 w-4" />
+                + Registrar Liquidación
+              </button>
+            </div>
+
+            {/* Tarjetas de Métricas de Liquidación */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Total Liquidado USD
+                </span>
+                <p className="mt-2 font-mono text-2xl font-bold text-emerald-400">
+                  {formatMoney(totalLiquidadoUsd, 'USD')}
+                </p>
+                <span className="text-[11px] text-slate-400">
+                  Salidas pagadas en Zelle / Bancario / Efectivo
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Total Liquidado USDT
+                </span>
+                <p className="mt-2 font-mono text-2xl font-bold text-amber-300">
+                  {formatMoney(totalLiquidadoUsdt, 'USDT')}
+                </p>
+                <span className="text-[11px] text-slate-400">
+                  Salidas Binance Pay / P2P / On-Chain
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Operaciones de Liquidación
+                </span>
+                <p className="mt-2 font-mono text-2xl font-bold text-sky-400">
+                  {liquidations.length}
+                </p>
+                <span className="text-[11px] text-slate-400">
+                  Liquidaciones registradas con deducción de saldo
+                </span>
+              </div>
+            </div>
+
+            {/* Barra de Filtros */}
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+              <div className="relative min-w-[240px] flex-1">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+                <input
+                  type="text"
+                  value={liqSearch}
+                  onChange={(e) => setLiqSearch(e.target.value)}
+                  placeholder="Buscar por código, cliente, destinatario o motivo..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-4 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400">Método:</span>
+                <select
+                  value={liqMethodFilter}
+                  onChange={(e) => setLiqMethodFilter(e.target.value)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+                >
+                  <option value="TODOS">Todos los Métodos</option>
+                  <option value="ZELLE">Zelle</option>
+                  <option value="PAGO_MOVIL">Pago Móvil</option>
+                  <option value="BINANCE_USDT">Binance USDT</option>
+                  <option value="TRANSFERENCIA_BANCARIA">Transferencia Bancaria</option>
+                  <option value="EFECTIVO">Efectivo</option>
+                  <option value="OTRO">Otro</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Tabla de Liquidaciones */}
+            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
+              <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+                  Historial de Liquidaciones ({filteredLiquidations.length})
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-sm table-auto">
+                  <thead>
+                    <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      <th className="px-4 py-3">Código &amp; Fecha</th>
+                      <th className="px-4 py-3">Cliente Titular</th>
+                      <th className="px-4 py-3">Destinatario / Beneficiario</th>
+                      <th className="px-4 py-3">Motivo / Concepto</th>
+                      <th className="px-4 py-3">Método &amp; Referencia</th>
+                      <th className="px-4 py-3 text-right">Monto Liquidado</th>
+                      <th className="px-4 py-3 text-right">Saldo Antes → Después</th>
+                      <th className="px-4 py-3 text-center">Operador</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70">
+                    {filteredLiquidations.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={8}
+                          className="px-6 py-12 text-center text-slate-400"
+                        >
+                          No se encontraron liquidaciones registradas. Haz clic en &quot;+ Registrar Liquidación&quot; para liquidar el saldo de un cliente.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredLiquidations.map((liq) => (
+                        <tr key={liq.id} className="hover:bg-slate-800/40">
+                          <td className="px-4 py-3.5 font-mono text-xs">
+                            <span className="font-bold text-emerald-400">
+                              {liq.codigo_liquidacion}
+                            </span>
+                            <div className="text-[11px] text-slate-400 font-sans">
+                              {new Date(liq.created_at).toLocaleString('es-ES', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3.5 font-semibold text-white">
+                            {liq.cliente_nombre}
+                          </td>
+                          <td className="px-4 py-3.5 text-xs text-slate-200">
+                            <div className="font-medium text-sky-300">{liq.destinatario_beneficiario}</div>
+                          </td>
+                          <td className="px-4 py-3.5 text-xs text-slate-300 max-w-xs truncate" title={liq.motivo_concepto}>
+                            {liq.motivo_concepto}
+                          </td>
+                          <td className="px-4 py-3.5 text-xs">
+                            <span className="inline-flex rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-200">
+                              {liq.metodo_pago_salida}
+                            </span>
+                            {liq.referencia_salida && (
+                              <div className="mt-1 font-mono text-[11px] text-slate-400">
+                                Ref: {liq.referencia_salida}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-400 text-sm">
+                            -{formatMoney(liq.monto_liquidado, liq.moneda)}
+                          </td>
+                          <td className="px-4 py-3.5 text-right font-mono text-xs">
+                            <span className="text-slate-400">
+                              {formatMoney(liq.saldo_anterior, liq.moneda)}
+                            </span>{' '}
+                            <span className="text-slate-500">→</span>{' '}
+                            <span className="font-bold text-emerald-400">
+                              {formatMoney(liq.saldo_restante, liq.moneda)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3.5 text-center text-xs text-slate-400">
+                            {liq.liquidado_por || 'ADMIN'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* =====================================================================
+            PESTAÑA 5: CORREOS IMAP MONITOREADOS
            ===================================================================== */}
         {activeTab === 'MAILBOXES' && (
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
@@ -6211,6 +6609,311 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <CheckCircle2 className="h-4 w-4" />
                     )}
                     Confirmar Asignación ({selectedAlertIds.length} Pagos)
+                  </button>
+                </div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+        {/* Modal Registrar Liquidación de Fondos a Cliente o Tercero */}
+        <Dialog.Root
+          open={isLiquidationModalOpen}
+          onOpenChange={(open) => {
+            setIsLiquidationModalOpen(open);
+            if (!open) {
+              setLiquidationFeedback(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2 text-emerald-400">
+                  <Coins className="h-5 w-5" />
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    Registrar Liquidación de Fondos
+                  </Dialog.Title>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {liquidationFeedback && (
+                <div
+                  className={`mt-4 rounded-xl border p-3.5 text-xs ${
+                    liquidationFeedback.ok
+                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                      : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                  }`}
+                >
+                  {liquidationFeedback.message}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateLiquidation} className="mt-4 space-y-4">
+                {/* Selector de Cliente */}
+                <div>
+                  <label
+                    htmlFor="liq-client-select"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  >
+                    Cliente Titular *
+                  </label>
+                  <select
+                    id="liq-client-select"
+                    required
+                    value={selectedClientForLiq?.id ?? ''}
+                    onChange={(e) => {
+                      const found = clients.find((c) => c.id === e.target.value) ?? null;
+                      setSelectedClientForLiq(found);
+                      if (found) {
+                        setLiqDestinatario(`A favor de ${found.nombre_titular}`);
+                      }
+                    }}
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                  >
+                    {clients.map((c) => {
+                      const disp = c.saldo_disponible_usd ?? Math.max(0, c.total_neto_usd - (c.total_liquidado_usd ?? 0));
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.nombre_titular} — Saldo Disponible: ${disp.toFixed(2)} USD
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+
+                {/* Tarjeta de Cálculo Dinámico en Vivo */}
+                {selectedClientForLiq && (() => {
+                  const maxAvail =
+                    liqMoneda === 'USDT'
+                      ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
+                      : (selectedClientForLiq.saldo_disponible_usd ?? Math.max(0, selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)));
+                  const numInput = parseFloat(liqMonto) || 0;
+                  const remaining = Math.max(0, Math.round((maxAvail - numInput) * 100) / 100);
+                  const isOver = numInput > maxAvail + 0.009;
+
+                  return (
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5 text-xs space-y-2">
+                      <div className="flex justify-between items-center text-slate-400">
+                        <span>Saldo Disponible Actual:</span>
+                        <span className="font-mono font-bold text-white text-sm">
+                          ${maxAvail.toFixed(2)} {liqMoneda}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-slate-400">
+                        <span>Monto a Liquidar:</span>
+                        <span className="font-mono font-bold text-rose-400 text-sm">
+                          -${numInput.toFixed(2)} {liqMoneda}
+                        </span>
+                      </div>
+                      <div className="border-t border-slate-800 pt-1.5 flex justify-between items-center">
+                        <span className="font-semibold text-slate-300">Saldo Restante Resultante:</span>
+                        <span className={`font-mono font-bold text-base ${isOver ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          ${remaining.toFixed(2)} {liqMoneda}
+                        </span>
+                      </div>
+                      {isOver && (
+                        <p className="text-[11px] font-semibold text-rose-400">
+                          ⚠️ El monto a liquidar supera el saldo disponible actual.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Fila Monto y Moneda */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <div className="flex items-center justify-between">
+                      <label
+                        htmlFor="liq-amount"
+                        className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      >
+                        Monto a Liquidar *
+                      </label>
+                      {selectedClientForLiq && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const maxAvail =
+                              liqMoneda === 'USDT'
+                                ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
+                                : (selectedClientForLiq.saldo_disponible_usd ?? Math.max(0, selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)));
+                            setLiqMonto(maxAvail.toFixed(2));
+                          }}
+                          className="text-[10px] text-emerald-400 hover:underline font-semibold"
+                        >
+                          Liquidar Todo
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative mt-1.5">
+                      <span className="absolute left-3 top-2 text-slate-400 font-mono text-sm">$</span>
+                      <input
+                        id="liq-amount"
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        value={liqMonto}
+                        onChange={(e) => setLiqMonto(e.target.value)}
+                        placeholder="Ej. 2000.00"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-7 pr-3 font-mono text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="liq-currency"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    >
+                      Moneda
+                    </label>
+                    <select
+                      id="liq-currency"
+                      value={liqMoneda}
+                      onChange={(e) => setLiqMoneda(e.target.value as CurrencyType)}
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="USD">USD</option>
+                      <option value="USDT">USDT</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Destinatario / A favor de */}
+                <div>
+                  <label
+                    htmlFor="liq-dest"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  >
+                    Destinatario / Beneficiario del Pago *
+                  </label>
+                  <input
+                    id="liq-dest"
+                    type="text"
+                    required
+                    value={liqDestinatario}
+                    onChange={(e) => setLiqDestinatario(e.target.value)}
+                    placeholder="Ej. A equis persona / Carlos Perez (0414-1234567)"
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-400">
+                    Nombre o cuenta de la persona que recibe el dinero.
+                  </p>
+                </div>
+
+                {/* Motivo o Concepto */}
+                <div>
+                  <label
+                    htmlFor="liq-motivo"
+                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                  >
+                    Motivo / Concepto de Liquidación *
+                  </label>
+                  <input
+                    id="liq-motivo"
+                    type="text"
+                    required
+                    value={liqMotivo}
+                    onChange={(e) => setLiqMotivo(e.target.value)}
+                    placeholder="Ej. Liquidación solicitada por WhatsApp / Pago a proveedor"
+                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                  />
+                </div>
+
+                {/* Método y Referencia de Salida */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label
+                      htmlFor="liq-metodo"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    >
+                      Método de Salida
+                    </label>
+                    <select
+                      id="liq-metodo"
+                      value={liqMetodo}
+                      onChange={(e) => setLiqMetodo(e.target.value as LiquidationPaymentMethod)}
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    >
+                      <option value="ZELLE">Zelle</option>
+                      <option value="PAGO_MOVIL">Pago Móvil</option>
+                      <option value="BINANCE_USDT">Binance USDT</option>
+                      <option value="TRANSFERENCIA_BANCARIA">Transferencia Bancaria</option>
+                      <option value="EFECTIVO">Efectivo</option>
+                      <option value="OTRO">Otro</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="liq-ref"
+                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    >
+                      Referencia de Salida
+                    </label>
+                    <input
+                      id="liq-ref"
+                      type="text"
+                      value={liqReferencia}
+                      onChange={(e) => setLiqReferencia(e.target.value)}
+                      placeholder="Ej. 6475855297 / TxID"
+                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-mono text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Checkbox Archivar ciclo actual */}
+                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                  <label className="flex items-start gap-2.5 cursor-pointer text-xs text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={liqArchivar}
+                      onChange={(e) => setLiqArchivar(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="font-semibold text-white">
+                        Archivar comprobantes del ciclo actual
+                      </span>
+                      <p className="mt-0.5 text-[11px] text-slate-400">
+                        Cierra las capturas conciliadas previas para que el portal del cliente quede con cero historial de capturas activas en el nuevo ciclo.
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Botones de acción */}
+                <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                  <Dialog.Close asChild>
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                    >
+                      Cancelar
+                    </button>
+                  </Dialog.Close>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingLiquidation}
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                  >
+                    {isSubmittingLiquidation ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4" />
+                    )}
+                    Confirmar Liquidación
                   </button>
                 </div>
               </form>

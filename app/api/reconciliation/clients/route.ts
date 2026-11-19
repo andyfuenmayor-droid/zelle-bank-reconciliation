@@ -95,14 +95,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         COALESCE(SUM(t.monto_neto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO' AND t.moneda = 'USDT'), 0)::numeric(12,2) AS total_neto_usdt,
         COALESCE(SUM(t.monto_bruto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO'), 0)::numeric(12,2) AS total_bruto_conciliado,
         COALESCE(SUM(t.monto_comision) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO'), 0)::numeric(12,2) AS total_comision_retenida,
-        COALESCE(SUM(t.monto_neto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO'), 0)::numeric(12,2) AS total_neto_disponible,
-        COUNT(t.id) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO')::int AS pagos_conciliados_count
+        COUNT(t.id) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO')::int AS pagos_conciliados_count,
+        COALESCE(liq.total_liquidado_usd, 0)::numeric(12,2) AS total_liquidado_usd,
+        COALESCE(liq.total_liquidado_usdt, 0)::numeric(12,2) AS total_liquidado_usdt,
+        (COALESCE(SUM(t.monto_neto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO' AND t.moneda <> 'USDT'), 0) - COALESCE(liq.total_liquidado_usd, 0))::numeric(12,2) AS saldo_disponible_usd,
+        (COALESCE(SUM(t.monto_neto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO' AND t.moneda = 'USDT'), 0) - COALESCE(liq.total_liquidado_usdt, 0))::numeric(12,2) AS saldo_disponible_usdt,
+        (COALESCE(SUM(t.monto_neto) FILTER (WHERE t.estado = 'CONCILIADO' AND t.tipo_movimiento = 'RECIBIDO'), 0) - (COALESCE(liq.total_liquidado_usd, 0) + COALESCE(liq.total_liquidado_usdt, 0)))::numeric(12,2) AS total_neto_disponible,
+        COALESCE(liq.liquidaciones_count, 0)::int AS liquidaciones_count
       FROM clientes_titulares c
       LEFT JOIN financial_transactions_reconciliation t
         ON (t.cliente_id = c.id OR UPPER(TRIM(COALESCE(t.cliente_asignado_nombre, ''))) = UPPER(TRIM(c.nombre_titular)))
         AND (t.negocio_id IS NOT DISTINCT FROM c.negocio_id OR t.negocio_id IS NULL OR c.negocio_id IS NULL)
+      LEFT JOIN (
+        SELECT
+          cliente_id,
+          COALESCE(SUM(monto_liquidado) FILTER (WHERE moneda <> 'USDT'), 0)::numeric(12,2) AS total_liquidado_usd,
+          COALESCE(SUM(monto_liquidado) FILTER (WHERE moneda = 'USDT'), 0)::numeric(12,2) AS total_liquidado_usdt,
+          COUNT(*)::int AS liquidaciones_count
+        FROM liquidaciones_clientes
+        GROUP BY cliente_id
+      ) liq ON liq.cliente_id = c.id
       ${clientWhere}
-      GROUP BY c.id
+      GROUP BY c.id, liq.total_liquidado_usd, liq.total_liquidado_usdt, liq.liquidaciones_count
       ORDER BY c.created_at DESC;
     `;
 
@@ -126,6 +140,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         datos_ocr_extraidos,
         estado,
         COALESCE(transaccion_conciliada_id, alerta_conciliada_id) AS transaccion_conciliada_id,
+        liquidacion_id,
+        liquidado_at,
         notas_cliente,
         created_at,
         updated_at

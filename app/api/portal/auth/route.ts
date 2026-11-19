@@ -14,6 +14,7 @@ import {
 import {
   AssignedReceivingAccount,
   ClientAccountRecord,
+  ClientLiquidationRecord,
   ClientPortalWalletSummary,
   PendingPaymentOrder,
 } from '@/types/reconciliation';
@@ -97,8 +98,9 @@ async function loadPostgresPortalSession(
   client: ClientAccountRecord;
   wallet: ClientPortalWalletSummary;
   orders: PendingPaymentOrder[];
+  liquidaciones: ClientLiquidationRecord[];
 }> {
-  const [aggRes, ordersRes, activeMailboxAccounts] = await Promise.all([
+  const [aggRes, liqAggRes, ordersRes, liqListRes, activeMailboxAccounts] = await Promise.all([
     dbQuery<WalletAggRow>(
       `
       SELECT
@@ -117,6 +119,18 @@ async function loadPostgresPortalSession(
       GROUP BY moneda;
       `,
       [clientRow.id, clientRow.nombre_titular]
+    ),
+    dbQuery<{ moneda: string; total_liquidado: number; liq_count: number }>(
+      `
+      SELECT
+        moneda,
+        COALESCE(SUM(monto_liquidado), 0)::numeric(12,2) AS total_liquidado,
+        COUNT(*)::int AS liq_count
+      FROM liquidaciones_clientes
+      WHERE cliente_id = $1::uuid
+      GROUP BY moneda;
+      `,
+      [clientRow.id]
     ),
     dbQuery<PendingPaymentOrder>(
       `
@@ -139,10 +153,37 @@ async function loadPostgresPortalSession(
         datos_ocr_extraidos,
         estado,
         COALESCE(transaccion_conciliada_id, alerta_conciliada_id) AS transaccion_conciliada_id,
+        liquidacion_id,
+        liquidado_at,
         notas_cliente,
         created_at,
         updated_at
       FROM ordenes_pago_pendientes
+      WHERE cliente_id = $1::uuid
+        AND liquidado_at IS NULL
+      ORDER BY created_at DESC
+      LIMIT 50;
+      `,
+      [clientRow.id]
+    ),
+    dbQuery<ClientLiquidationRecord>(
+      `
+      SELECT
+        id,
+        codigo_liquidacion,
+        cliente_id,
+        cliente_nombre,
+        monto_liquidado,
+        moneda,
+        destinatario_beneficiario,
+        motivo_concepto,
+        metodo_pago_salida,
+        referencia_salida,
+        saldo_anterior,
+        saldo_restante,
+        liquidado_por,
+        created_at
+      FROM liquidaciones_clientes
       WHERE cliente_id = $1::uuid
       ORDER BY created_at DESC
       LIMIT 50;
@@ -173,17 +214,40 @@ async function loadPostgresPortalSession(
     }
   }
 
+  let totalLiquidadoUsd = 0;
+  let totalLiquidadoUsdt = 0;
+  for (const liq of liqAggRes.rows) {
+    if (liq.moneda === 'USDT') {
+      totalLiquidadoUsdt += Number(liq.total_liquidado);
+    } else {
+      totalLiquidadoUsd += Number(liq.total_liquidado);
+    }
+  }
+
+  const saldoNetoUsdDisponible = Math.max(
+    0,
+    Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100
+  );
+  const saldoNetoUsdtDisponible = Math.max(
+    0,
+    Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100
+  );
+
   const pagosPendientesCount = ordersRes.rows.filter(
     (o) => o.estado === 'PENDIENTE'
   ).length;
 
   const wallet: ClientPortalWalletSummary = {
-    saldoNetoUsd: Math.round(saldoNetoUsd * 100) / 100,
+    saldoNetoUsd: saldoNetoUsdDisponible,
     totalBrutoUsd: Math.round(totalBrutoUsd * 100) / 100,
     totalComisionUsd: Math.round(totalComisionUsd * 100) / 100,
-    saldoNetoUsdt: Math.round(saldoNetoUsdt * 100) / 100,
+    saldoNetoUsdt: saldoNetoUsdtDisponible,
     totalBrutoUsdt: Math.round(totalBrutoUsdt * 100) / 100,
     totalComisionUsdt: Math.round(totalComisionUsdt * 100) / 100,
+    totalLiquidadoUsd: Math.round(totalLiquidadoUsd * 100) / 100,
+    totalLiquidadoUsdt: Math.round(totalLiquidadoUsdt * 100) / 100,
+    totalAcreditadoUsd: Math.round(saldoNetoUsd * 100) / 100,
+    totalAcreditadoUsdt: Math.round(saldoNetoUsdt * 100) / 100,
     pagosConciliadosCount,
     pagosPendientesCount,
   };
@@ -197,6 +261,7 @@ async function loadPostgresPortalSession(
     client: mapPortalClientRow(clientRow, wallet, assignedAccounts),
     wallet,
     orders: ordersRes.rows,
+    liquidaciones: liqListRes.rows,
   };
 }
 
@@ -204,6 +269,7 @@ function buildDemoSessionResponse(demoClient: DemoClientInternal): {
   client: ClientAccountRecord;
   wallet: ClientPortalWalletSummary;
   orders: PendingPaymentOrder[];
+  liquidaciones: ClientLiquidationRecord[];
 } {
   const store = getDemoStore();
   const wallet = computeClientWalletSummary(
@@ -250,7 +316,7 @@ function buildDemoSessionResponse(demoClient: DemoClientInternal): {
     created_at: demoClient.created_at,
   };
 
-  return { client: publicClient, wallet, orders };
+  return { client: publicClient, wallet, orders, liquidaciones: [] };
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

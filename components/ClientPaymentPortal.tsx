@@ -29,6 +29,7 @@ import { buildSampleReceiptBase64 } from '@/lib/mock-seed-data';
 import {
   AssignedReceivingAccount,
   ClientAccountRecord,
+  ClientLiquidationRecord,
   ClientPortalWalletSummary,
   CurrencyType,
   ExpectedPlatformType,
@@ -160,6 +161,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   const [client, setClient] = useState<ClientAccountRecord | null>(null);
   const [wallet, setWallet] = useState<ClientPortalWalletSummary | null>(null);
   const [orders, setOrders] = useState<PendingPaymentOrder[]>([]);
+  const [liquidations, setLiquidations] = useState<ClientLiquidationRecord[]>([]);
   const [sourceMode, setSourceMode] = useState<'POSTGRESQL_LIVE' | 'DEMO_FALLBACK'>('DEMO_FALLBACK');
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -266,11 +268,13 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           client?: ClientAccountRecord;
           wallet?: ClientPortalWalletSummary;
           orders?: PendingPaymentOrder[];
+          liquidaciones?: ClientLiquidationRecord[];
         };
         if (data.ok && data.client && data.wallet) {
           setClient(data.client);
           setWallet(data.wallet);
           setOrders(data.orders ?? []);
+          setLiquidations(data.liquidaciones ?? []);
           if (data.mode) {
             setSourceMode(data.mode);
           }
@@ -345,6 +349,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         client?: ClientAccountRecord;
         wallet?: ClientPortalWalletSummary;
         orders?: PendingPaymentOrder[];
+        liquidaciones?: ClientLiquidationRecord[];
         error?: string;
       };
       if (!response.ok || !data.ok || !data.client || !data.wallet) {
@@ -355,6 +360,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
       setClient(data.client);
       setWallet(data.wallet);
       setOrders(data.orders ?? []);
+      setLiquidations(data.liquidaciones ?? []);
       setRemitente('');
       const assigned = data.client.cuentas_asignadas ?? [];
       if (assigned[0]) {
@@ -857,7 +863,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 p-5 shadow-lg">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase tracking-wider text-emerald-300">
-                      Saldo Neto Acreditado en USD (Zelle -{client.porcentaje_comision_zelle}%)
+                      Saldo Disponible para Liquidar en USD
                     </span>
                     <span className="rounded-xl bg-emerald-500/20 p-2 text-emerald-400">
                       <DollarSign className="h-4 w-4" />
@@ -866,8 +872,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   <p className="mt-3 font-mono text-3xl font-bold text-emerald-400">
                     {formatAmount(wallet.saldoNetoUsd, 'USD')}
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
-                    <span>Bruto: {formatAmount(wallet.totalBrutoUsd, 'USD')}</span>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                    <span>Acreditado: <strong className="text-slate-200">{formatAmount(wallet.totalAcreditadoUsd ?? (wallet.saldoNetoUsd + (wallet.totalLiquidadoUsd ?? 0)), 'USD')}</strong></span>
+                    {(wallet.totalLiquidadoUsd ?? 0) > 0 && (
+                      <span className="text-rose-300">Liquidado: <strong>-{formatAmount(wallet.totalLiquidadoUsd ?? 0, 'USD')}</strong></span>
+                    )}
                     <span>Comisión: -{formatAmount(wallet.totalComisionUsd, 'USD')}</span>
                   </div>
                 </div>
@@ -877,7 +886,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-950/30 via-slate-900 to-slate-900 p-5 shadow-lg">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-semibold uppercase tracking-wider text-amber-300">
-                      Saldo Neto en USDT (Binance -{client.porcentaje_comision_binance}%)
+                      Saldo Disponible para Liquidar en USDT
                     </span>
                     <span className="rounded-xl bg-amber-500/20 p-2 text-amber-400">
                       <Coins className="h-4 w-4" />
@@ -886,8 +895,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   <p className="mt-3 font-mono text-3xl font-bold text-amber-300">
                     {formatAmount(wallet.saldoNetoUsdt, 'USDT')}
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-400">
-                    <span>Bruto: {formatAmount(wallet.totalBrutoUsdt, 'USDT')}</span>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                    <span>Acreditado: <strong className="text-slate-200">{formatAmount(wallet.totalAcreditadoUsdt ?? (wallet.saldoNetoUsdt + (wallet.totalLiquidadoUsdt ?? 0)), 'USDT')}</strong></span>
+                    {(wallet.totalLiquidadoUsdt ?? 0) > 0 && (
+                      <span className="text-rose-300">Liquidado: <strong>-{formatAmount(wallet.totalLiquidadoUsdt ?? 0, 'USDT')}</strong></span>
+                    )}
                     <span>Comisión: -{formatAmount(wallet.totalComisionUsdt, 'USDT')}</span>
                   </div>
                 </div>
@@ -1589,7 +1601,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
 
                 {orders.length === 0 ? (
                   <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-xs text-slate-400">
-                    Aún no has reportado pagos. Usa el formulario para subir tu primer comprobante.
+                    {liquidations.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="font-semibold text-emerald-400">¡Ciclo actual en cero comprobantes!</p>
+                        <p className="text-slate-400">
+                          Tus capturas anteriores fueron saldadas en tu liquidación más reciente. Los nuevos pagos que reportes iniciarán tu nuevo ciclo.
+                        </p>
+                      </div>
+                    ) : (
+                      'Aún no has reportado pagos en el ciclo actual. Usa el formulario para subir tu comprobante.'
+                    )}
                   </div>
                 ) : (
                   <div className="max-h-[640px] space-y-3 overflow-y-auto pr-1">
@@ -1677,6 +1698,80 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 )}
               </section>
             </div>
+
+            {/* Historial de Liquidaciones Recibidas por el Cliente */}
+            <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <Coins className="h-5 w-5 text-emerald-400" />
+                  <div>
+                    <h3 className="text-base font-bold text-white">
+                      Historial de Liquidaciones Recibidas ({liquidations.length})
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Registro de liquidaciones pagadas a tu favor o a terceros autorizados, con motivo y deducción de saldo.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {liquidations.length === 0 ? (
+                <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-xs text-slate-400">
+                  Aún no se han procesado liquidaciones para tu cuenta. Tu saldo acumulado está disponible para ser liquidado.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-sm table-auto">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-950/60 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                        <th className="px-4 py-2.5">Código &amp; Fecha</th>
+                        <th className="px-4 py-2.5">Destinatario / Beneficiario</th>
+                        <th className="px-4 py-2.5">Motivo / Concepto</th>
+                        <th className="px-4 py-2.5">Método &amp; Referencia</th>
+                        <th className="px-4 py-2.5 text-right">Monto Liquidado</th>
+                        <th className="px-4 py-2.5 text-right">Saldo Restante</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {liquidations.map((liq) => (
+                        <tr key={liq.id} className="hover:bg-slate-800/40">
+                          <td className="px-4 py-3 font-mono text-xs">
+                            <span className="font-bold text-emerald-400">
+                              {liq.codigo_liquidacion}
+                            </span>
+                            <div className="text-[11px] text-slate-400 font-sans">
+                              {formatDateTime(liq.created_at)}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-xs font-semibold text-sky-300">
+                            {liq.destinatario_beneficiario}
+                          </td>
+                          <td className="px-4 py-3 text-xs text-slate-300 max-w-xs truncate" title={liq.motivo_concepto}>
+                            {liq.motivo_concepto}
+                          </td>
+                          <td className="px-4 py-3 text-xs">
+                            <span className="inline-flex rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-200">
+                              {liq.metodo_pago_salida}
+                            </span>
+                            {liq.referencia_salida && (
+                              <div className="mt-0.5 font-mono text-[11px] text-slate-400">
+                                Ref: {liq.referencia_salida}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-rose-400 text-sm">
+                            -{formatAmount(liq.monto_liquidado, liq.moneda)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400 text-xs">
+                            {formatAmount(liq.saldo_restante, liq.moneda)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           </div>
         )}
 
