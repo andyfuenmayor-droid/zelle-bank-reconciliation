@@ -316,6 +316,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [statusFilter, setStatusFilter] = useState<'TODOS' | AlertStatus>(
     'TODOS'
   );
+  const [selectedClientFilter, setSelectedClientFilter] = useState<string>('TODOS');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Selección por Lotes (Bulk Actions)
@@ -863,6 +864,54 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     };
   }, [alerts]);
 
+  // Desglose vivo de Titulares / Clientes con Fondos Conciliados Reales
+  const clientsWithReconciledFunds = useMemo(() => {
+    return clients.map((c) => {
+      const clientAlerts = alerts.filter(
+        (a) =>
+          a.estado === 'CONCILIADO' &&
+          a.tipo_movimiento === 'RECIBIDO' &&
+          (a.cliente_id === c.id ||
+            (a.cliente_asignado_nombre &&
+              a.cliente_asignado_nombre.trim().toLowerCase() ===
+                c.nombre_titular.trim().toLowerCase()))
+      );
+
+      const brutoUsd = clientAlerts
+        .filter((a) => a.moneda !== 'USDT')
+        .reduce((sum, a) => sum + a.monto_bruto, 0);
+      const comisionUsd = clientAlerts
+        .filter((a) => a.moneda !== 'USDT')
+        .reduce((sum, a) => sum + a.monto_comision, 0);
+      const netoUsd = clientAlerts
+        .filter((a) => a.moneda !== 'USDT')
+        .reduce((sum, a) => sum + a.monto_neto, 0);
+
+      const brutoUsdt = clientAlerts
+        .filter((a) => a.moneda === 'USDT')
+        .reduce((sum, a) => sum + a.monto_bruto, 0);
+      const comisionUsdt = clientAlerts
+        .filter((a) => a.moneda === 'USDT')
+        .reduce((sum, a) => sum + a.monto_comision, 0);
+      const netoUsdt = clientAlerts
+        .filter((a) => a.moneda === 'USDT')
+        .reduce((sum, a) => sum + a.monto_neto, 0);
+
+      const count = clientAlerts.length;
+
+      return {
+        ...c,
+        total_bruto_usd: count > 0 ? Math.round(brutoUsd * 100) / 100 : c.total_bruto_usd,
+        total_comision_usd: count > 0 ? Math.round(comisionUsd * 100) / 100 : c.total_comision_usd,
+        total_neto_usd: count > 0 ? Math.round(netoUsd * 100) / 100 : c.total_neto_usd,
+        total_bruto_usdt: count > 0 ? Math.round(brutoUsdt * 100) / 100 : c.total_bruto_usdt,
+        total_comision_usdt: count > 0 ? Math.round(comisionUsdt * 100) / 100 : c.total_comision_usdt,
+        total_neto_usdt: count > 0 ? Math.round(netoUsdt * 100) / 100 : c.total_neto_usdt,
+        pagos_conciliados_count: count > 0 ? count : c.pagos_conciliados_count,
+      };
+    });
+  }, [clients, alerts]);
+
   const filteredAlerts = useMemo<BankEmailAlertRecord[]>(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -879,6 +928,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       if (statusFilter !== 'TODOS' && item.estado !== statusFilter) {
         return false;
       }
+      if (selectedClientFilter === 'SIN_ASIGNAR') {
+        if (item.estado === 'CONCILIADO' || item.cliente_id !== null) {
+          return false;
+        }
+      } else if (selectedClientFilter !== 'TODOS') {
+        const targetClient = clients.find((c) => c.id === selectedClientFilter);
+        const matchesClient =
+          item.cliente_id === selectedClientFilter ||
+          (item.cliente_asignado_nombre &&
+            targetClient &&
+            item.cliente_asignado_nombre.trim().toLowerCase() ===
+              targetClient.nombre_titular.trim().toLowerCase());
+        if (!matchesClient) {
+          return false;
+        }
+      }
       if (normalizedQuery.length > 0) {
         const sender = (item.remitente_o_contraparte ?? '').toLowerCase();
         const ref = (item.referencia ?? '').toLowerCase();
@@ -893,7 +958,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       }
       return true;
     });
-  }, [alerts, platformFilter, movementFilter, statusFilter, searchQuery]);
+  }, [alerts, platformFilter, movementFilter, statusFilter, searchQuery, selectedClientFilter, clients]);
 
   const receivedAlertsCount = useMemo(
     () => alerts.filter((a) => a.tipo_movimiento === 'RECIBIDO').length,
@@ -2490,6 +2555,73 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
             </div>
 
+            {/* Desglose de Titular(es) Beneficiarios del Saldo Acreditado */}
+            {clientsWithReconciledFunds.some((c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0) && (
+              <div className="mt-3.5 rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3.5">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
+                    <UserCheck className="h-4 w-4 text-emerald-400" />
+                    <span>¿De quién es este dinero? Titular(es) Acreditados:</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Click para filtrar movimientos
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {clientsWithReconciledFunds
+                    .filter((c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0)
+                    .map((client) => {
+                      const isSelected = selectedClientFilter === client.id;
+                      return (
+                        <div
+                          key={client.id}
+                          onClick={() =>
+                            setSelectedClientFilter(
+                              isSelected ? 'TODOS' : client.id
+                            )
+                          }
+                          className={`flex items-center justify-between rounded-lg p-2.5 transition-all cursor-pointer border ${
+                            isSelected
+                              ? 'border-emerald-400 bg-emerald-500/25 ring-1 ring-emerald-400 shadow-md'
+                              : 'border-slate-800 bg-slate-900/90 hover:border-emerald-500/50 hover:bg-slate-900'
+                          }`}
+                          title={`Click para filtrar solo las transacciones de ${client.nombre_titular}`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 font-mono text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/40">
+                              {client.nombre_titular.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-bold text-white">
+                                  {client.nombre_titular}
+                                </span>
+                                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.2 text-[10px] font-semibold text-emerald-300">
+                                  {client.pagos_conciliados_count} pagos conciliados
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-400">
+                                Bruto: <strong className="text-slate-200">{formatMoney(client.total_bruto_usd, 'USD')}</strong> · Com ({client.porcentaje_comision_zelle}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usd, 'USD')}</span>
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right pl-3">
+                            <div className="font-mono text-sm font-bold text-emerald-400">
+                              {formatMoney(client.total_neto_usd, 'USD')}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-medium">
+                              Neto Acreditable
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
             {financialMetrics.zellePorConciliarUsd > 0 && (
               <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-500/20 bg-sky-950/30 px-3.5 py-2 text-xs text-sky-200/90">
                 <div className="flex items-center gap-2">
@@ -2563,6 +2695,66 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </span>
               </div>
             </div>
+
+            {/* Desglose de Titular(es) en USDT */}
+            {clientsWithReconciledFunds.some((c) => c.total_neto_usdt > 0) && (
+              <div className="mt-3.5 rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                    <UserCheck className="h-4 w-4 text-amber-400" />
+                    <span>Titular(es) Acreditados en USDT:</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Click para filtrar por cliente
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {clientsWithReconciledFunds
+                    .filter((c) => c.total_neto_usdt > 0)
+                    .map((client) => {
+                      const isSelected = selectedClientFilter === client.id;
+                      return (
+                        <div
+                          key={client.id}
+                          onClick={() =>
+                            setSelectedClientFilter(
+                              isSelected ? 'TODOS' : client.id
+                            )
+                          }
+                          className={`flex items-center justify-between rounded-lg p-2.5 transition-all cursor-pointer border ${
+                            isSelected
+                              ? 'border-amber-400 bg-amber-500/25 ring-1 ring-amber-400 shadow-md'
+                              : 'border-slate-800 bg-slate-900/90 hover:border-amber-500/50 hover:bg-slate-900'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 font-mono text-xs font-bold text-amber-300 ring-1 ring-amber-500/40">
+                              {client.nombre_titular.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="text-xs font-bold text-white">
+                                {client.nombre_titular}
+                              </div>
+                              <p className="text-[11px] text-slate-400">
+                                Fee ({client.porcentaje_comision_binance}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usdt, 'USDT')}</span>
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right pl-3">
+                            <div className="font-mono text-sm font-bold text-amber-300">
+                              {formatMoney(client.total_neto_usdt, 'USDT')}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Neto USDT
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
 
             {financialMetrics.binancePorConciliarUsdt > 0 && (
               <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-950/30 px-3.5 py-2 text-xs text-amber-200/90">
@@ -2649,13 +2841,35 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             Órdenes Pendientes en Portal: {pendingOrders.length}
           </button>
 
+          {selectedClientFilter !== 'TODOS' && (
+            <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/20 px-3 py-1.5 font-semibold text-emerald-200 text-xs shadow-md">
+              <UserCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span>
+                Filtrando por:{' '}
+                <strong className="text-white">
+                  {selectedClientFilter === 'SIN_ASIGNAR'
+                    ? 'Sin Asignar (En Espera)'
+                    : clients.find((c) => c.id === selectedClientFilter)?.nombre_titular ?? selectedClientFilter}
+                </strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedClientFilter('TODOS')}
+                className="ml-1 rounded bg-emerald-500/30 px-1.5 py-0.5 text-[10px] text-white hover:bg-emerald-500/50 cursor-pointer"
+                title="Quitar filtro de cliente"
+              >
+                ✕ Limpiar
+              </button>
+            </div>
+          )}
+
           {statusFilter !== 'TODOS' && (
             <button
               type="button"
               onClick={() => setStatusFilter('TODOS')}
-              className="text-[11px] font-medium text-slate-400 underline hover:text-white"
+              className="text-[11px] font-medium text-slate-400 underline hover:text-white cursor-pointer"
             >
-              (Mostrar Todos)
+              (Mostrar Todos Estados)
             </button>
           )}
         </div>
@@ -2670,18 +2884,38 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               className="mb-6 rounded-xl border border-slate-800 bg-slate-900/70 p-4"
             >
               <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
-                <div className="relative md:col-span-5">
+                <div className="relative md:col-span-4">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar por remitente, nickname Binance, TxID, referencia o cliente..."
+                    placeholder="Buscar por remitente, TxID, referencia..."
                     className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
 
+                {/* Filtro por Cliente Titular */}
                 <div className="md:col-span-3">
+                  <div className="relative">
+                    <UserCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+                    <select
+                      value={selectedClientFilter}
+                      onChange={(e) => setSelectedClientFilter(e.target.value)}
+                      className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none font-medium"
+                    >
+                      <option value="TODOS">Todos los Titulares</option>
+                      <option value="SIN_ASIGNAR">⚠️ Sin Cliente (En Espera)</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          👤 {c.nombre_titular} ({formatMoney(c.total_neto_usd, 'USD')} neto)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="md:col-span-2">
                   <div className="relative">
                     <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     <select
@@ -2691,7 +2925,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }
                       className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
                     >
-                      <option value="TODOS">Todas las Plataformas</option>
+                      <option value="TODOS">Todas Plataformas</option>
                       <option value="CITIBANK">Citibank (Zelle)</option>
                       <option value="TD_BANK">TD Bank (Zelle)</option>
                       <option value="BINANCE_PAY">Binance Pay</option>
@@ -2704,7 +2938,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
                 </div>
 
-                <div className="md:col-span-2">
+                <div className="md:col-span-1">
                   <select
                     value={movementFilter}
                     onChange={(e) =>
@@ -2712,9 +2946,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         e.target.value as 'TODOS' | MovementType
                       )
                     }
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
                   >
-                    <option value="TODOS">Todos Flujos</option>
+                    <option value="TODOS">Flujos</option>
                     <option value="RECIBIDO">Recibido</option>
                     <option value="ENVIADO">Enviado</option>
                   </select>
@@ -2901,16 +3135,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               {alert.cliente_asignado_nombre ? (
                                 <div className="mt-1 flex items-center gap-1 text-xs text-emerald-400">
                                   <UserCheck className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="truncate">
+                                  <span className="truncate font-semibold">
                                     Titular: {alert.cliente_asignado_nombre}
                                   </span>
                                 </div>
                               ) : (
-                                (alert.nota_auditoria ?? alert.notas_conciliacion) && (
-                                  <p className="mt-1 line-clamp-2 text-xs text-slate-400">
-                                    {alert.nota_auditoria ?? alert.notas_conciliacion}
-                                  </p>
-                                )
+                                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+                                  <Clock className="h-3 w-3 shrink-0 text-slate-600" />
+                                  <span className="truncate">Sin cliente (En espera de orden)</span>
+                                </div>
                               )}
                             </td>
 
