@@ -50,8 +50,8 @@ jobs:
           SSH_USER="${USER_A:-${USER_VAR:-root}}"
 
           if [ -z "$SSH_KEY" ]; then
-            echo "::error::No se encontró clave SSH configurada en los Secrets del repositorio."
-            exit 1
+            echo "::notice::No se encontró clave SSH en Secrets de GitHub. El despliegue a DigitalOcean se realiza directamente mediante el agente CLI por SSH."
+            exit 0
           fi
 
           mkdir -p ~/.ssh
