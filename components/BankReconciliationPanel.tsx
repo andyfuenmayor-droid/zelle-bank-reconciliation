@@ -190,6 +190,73 @@ function mapMailboxesToAssignedAccounts(
     });
 }
 
+function normalizeCleanText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function calculateSenderSimilarity(a: string, b: string): number {
+  const normA = normalizeCleanText(a);
+  const normB = normalizeCleanText(b);
+  if (!normA || !normB) return 0;
+  if (normA === normB) return 1;
+  if (normA.includes(normB) || normB.includes(normA)) return 0.85;
+
+  const tokensA = normA.split(/\s+/).filter(Boolean);
+  const tokensB = normB.split(/\s+/).filter(Boolean);
+  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+
+  let sharedCount = 0;
+  for (const tA of tokensA) {
+    if (
+      tokensB.some(
+        (tB) =>
+          tB === tA ||
+          (tA.length >= 4 && (tB.startsWith(tA) || tA.startsWith(tB)))
+      )
+    ) {
+      sharedCount++;
+    }
+  }
+  return (2 * sharedCount) / (tokensA.length + tokensB.length);
+}
+
+function referencesMatch(
+  orderRef: string | null | undefined,
+  txRef: string | null | undefined
+): boolean {
+  if (!orderRef || !txRef) return false;
+  const cleanOrder = orderRef.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const cleanTx = txRef.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (cleanOrder.length < 4 || cleanTx.length < 4) return false;
+  const genericList = [
+    'SINREF',
+    'NOREF',
+    'NA',
+    'NONE',
+    'NULL',
+    'CITIBANK',
+    'ZELLE',
+    'PAGO',
+    'TRANSFERENCIA',
+  ];
+  if (genericList.includes(cleanOrder) || genericList.includes(cleanTx)) {
+    return false;
+  }
+
+  return (
+    cleanOrder === cleanTx ||
+    cleanTx.includes(cleanOrder) ||
+    cleanOrder.includes(cleanTx) ||
+    (cleanOrder.length >= 6 &&
+      cleanTx.length >= 6 &&
+      cleanTx.endsWith(cleanOrder.slice(-6)))
+  );
+}
+
 const SAMPLE_TEMPLATES: ReadonlyArray<{
   label: string;
   from: string;
@@ -1026,26 +1093,51 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
-  // Busca orden pendiente candidata (con captura) asociada a una transacción en REVISION_MANUAL
+  // Busca orden pendiente candidata (con captura) asociada legítimamente a una transacción
   const findAssociatedCaptureOrder = useCallback(
     (tx: BankEmailAlertRecord): PendingPaymentOrder | null => {
-      const exactMatch = pendingOrders.find(
-        (o) =>
-          o.id === tx.orden_conciliada_id ||
-          (o.moneda === tx.moneda &&
-            Math.abs(o.monto_esperado - tx.monto_bruto) < 0.01 &&
-            o.plataforma_esperada === tx.plataforma)
-      );
-      if (exactMatch) {
-        return exactMatch;
+      // 1. Si la transacción ya está vinculada a una orden
+      if (tx.orden_conciliada_id) {
+        const linked = pendingOrders.find((o) => o.id === tx.orden_conciliada_id);
+        if (linked) return linked;
       }
-      return (
-        pendingOrders.find(
-          (o) =>
-            o.moneda === tx.moneda &&
-            Math.abs(o.monto_esperado - tx.monto_bruto) < 0.01
-        ) ?? null
+
+      // 2. Filtrar órdenes del mismo monto y moneda
+      const sameAmountOrders = pendingOrders.filter(
+        (o) =>
+          o.moneda === tx.moneda &&
+          Math.abs(o.monto_esperado - tx.monto_bruto) < 0.01
       );
+      if (sameAmountOrders.length === 0) {
+        return null;
+      }
+
+      // 2a. Prioridad 1: Coincidencia de referencia bancaria exacta o substring
+      const refMatch = sameAmountOrders.find((o) =>
+        referencesMatch(o.referencia_reportada, tx.referencia)
+      );
+      if (refMatch) {
+        return refMatch;
+      }
+
+      // 2b. Prioridad 2: Coincidencia de remitente legítima (similitud >= 0.35)
+      const senderCandidates = sameAmountOrders
+        .map((o) => ({
+          order: o,
+          similarity: calculateSenderSimilarity(
+            o.remitente_reportado || o.nombre_remitente_reportado || '',
+            tx.remitente_o_contraparte || ''
+          ),
+        }))
+        .filter((c) => c.similarity >= 0.35)
+        .sort((a, b) => b.similarity - a.similarity);
+
+      if (senderCandidates.length > 0 && senderCandidates[0]) {
+        return senderCandidates[0].order;
+      }
+
+      // Jamás asociar una captura de un tercero no relacionado a ciegas
+      return null;
     },
     [pendingOrders]
   );
@@ -1871,7 +1963,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         (t) =>
           t.orden_conciliada_id === order.id ||
           (t.moneda === order.moneda &&
-            Math.abs(t.monto_bruto - order.monto_esperado) < 0.01)
+            Math.abs(t.monto_bruto - order.monto_esperado) < 0.01 &&
+            (referencesMatch(order.referencia_reportada, t.referencia) ||
+              calculateSenderSimilarity(
+                order.remitente_reportado || order.nombre_remitente_reportado || '',
+                t.remitente_o_contraparte || ''
+              ) >= 0.35))
       ) ?? null;
 
     setLightboxData({
@@ -4508,43 +4605,139 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </Dialog.Close>
               </div>
 
-              {lightboxData && (
-                <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
-                  {/* Lado Izquierdo: Captura Subida */}
-                  <div className="space-y-3 lg:col-span-6">
-                    <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-sky-300">
-                      <span>Comprobante Subido en Portal</span>
-                      {lightboxData.order?.codigo_orden && (
-                        <span className="font-mono">
-                          {lightboxData.order.codigo_orden}
-                        </span>
+              {lightboxData && (() => {
+                const reportedSenderName =
+                  lightboxData.order?.remitente_reportado ||
+                  lightboxData.order?.nombre_remitente_reportado ||
+                  '';
+                const channelSenderName =
+                  lightboxData.tx?.remitente_o_contraparte || '';
+                const orderReference =
+                  lightboxData.order?.referencia_reportada || '';
+                const channelReference =
+                  lightboxData.tx?.referencia || '';
+
+                const isReferenceMatched = referencesMatch(
+                  orderReference,
+                  channelReference
+                );
+                const senderSimilarityScore =
+                  reportedSenderName && channelSenderName
+                    ? calculateSenderSimilarity(
+                        reportedSenderName,
+                        channelSenderName
+                      )
+                    : 1;
+
+                const hasCriticalDisparity = Boolean(
+                  lightboxData.order &&
+                    lightboxData.tx &&
+                    !isReferenceMatched &&
+                    senderSimilarityScore < 0.4
+                );
+
+                const legitimateMatchingTx = hasCriticalDisparity
+                  ? alerts.find(
+                      (a) =>
+                        a.tipo_movimiento === 'RECIBIDO' &&
+                        a.id !== lightboxData.tx?.id &&
+                        Math.abs(
+                          a.monto_bruto -
+                            (lightboxData.order?.monto_esperado ?? 0)
+                        ) < 0.01 &&
+                        (referencesMatch(orderReference, a.referencia) ||
+                          calculateSenderSimilarity(
+                            reportedSenderName,
+                            a.remitente_o_contraparte || ''
+                          ) >= 0.38)
+                    ) ?? null
+                  : null;
+
+                return (
+                  <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
+                    {/* Lado Izquierdo: Captura Subida */}
+                    <div className="space-y-3 lg:col-span-6">
+                      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-sky-300">
+                        <span>Comprobante Subido en Portal</span>
+                        {lightboxData.order?.codigo_orden && (
+                          <span className="font-mono">
+                            {lightboxData.order.codigo_orden}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex min-h-[340px] items-center justify-center rounded-xl border border-slate-800 bg-slate-950 p-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={lightboxData.comprobanteBase64}
+                          alt="Captura del cliente"
+                          className="max-h-[480px] w-auto rounded-lg object-contain"
+                        />
+                      </div>
+                      {lightboxData.order?.datos_ocr_extraidos && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs">
+                          <div className="font-semibold text-slate-200">
+                            Validación OCR / Metadatos:
+                          </div>
+                          <div className="mt-1 text-slate-400">
+                            {lightboxData.order.datos_ocr_extraidos.observaciones ??
+                              `Detectado: ${lightboxData.order.datos_ocr_extraidos.monto_detectado ?? ''} ${lightboxData.order.datos_ocr_extraidos.moneda_detectada ?? ''} · Ref: ${lightboxData.order.datos_ocr_extraidos.referencia_detectada ?? 'N/A'}`}
+                          </div>
+                        </div>
                       )}
                     </div>
-                    <div className="flex min-h-[340px] items-center justify-center rounded-xl border border-slate-800 bg-slate-950 p-3">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={lightboxData.comprobanteBase64}
-                        alt="Captura del cliente"
-                        className="max-h-[480px] w-auto rounded-lg object-contain"
-                      />
-                    </div>
-                    {lightboxData.order?.datos_ocr_extraidos && (
-                      <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs">
-                        <div className="font-semibold text-slate-200">
-                          Validación OCR / Metadatos:
-                        </div>
-                        <div className="mt-1 text-slate-400">
-                          {lightboxData.order.datos_ocr_extraidos.observaciones ??
-                            `Detectado: ${lightboxData.order.datos_ocr_extraidos.monto_detectado ?? ''} ${lightboxData.order.datos_ocr_extraidos.moneda_detectada ?? ''} · Ref: ${lightboxData.order.datos_ocr_extraidos.referencia_detectada ?? 'N/A'}`}
-                        </div>
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Lado Derecho: Comparativa de Datos */}
-                  <div className="flex flex-col justify-between space-y-4 lg:col-span-6">
-                    <div className="space-y-4">
-                      {lightboxData.order && (
+                    {/* Lado Derecho: Comparativa de Datos */}
+                    <div className="flex flex-col justify-between space-y-4 lg:col-span-6">
+                      <div className="space-y-4">
+                        {hasCriticalDisparity && (
+                          <div className="rounded-xl border border-rose-500/60 bg-rose-950/40 p-4 text-xs">
+                            <div className="flex items-start gap-3">
+                              <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400 mt-0.5" />
+                              <div className="space-y-1.5">
+                                <p className="font-bold text-rose-200">
+                                  ⚠️ ALERTA DE DISPARIDAD CRÍTICA DE REMITENTE (Similitud: {Math.round(senderSimilarityScore * 100)}%)
+                                </p>
+                                <p className="text-slate-300">
+                                  El nombre reportado por el cliente en el comprobante (<strong className="text-amber-300">&quot;{reportedSenderName}&quot;</strong>) 
+                                  no coincide con el remitente extraído del correo bancario (<strong className="text-white">&quot;{channelSenderName}&quot;</strong>), 
+                                  y las referencias (<span className="font-mono text-amber-200">{orderReference || 'SIN-REF'}</span> vs <span className="font-mono text-emerald-200">{channelReference}</span>) no concuerdan.
+                                </p>
+                                <p className="text-rose-300/90 font-medium">
+                                  Precaución: No concilie esta fila a ciegas para evitar cruces indebidos de dinero entre personas distintas.
+                                </p>
+
+                                {legitimateMatchingTx && (
+                                  <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-950/60 p-3">
+                                    <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+                                      <div>
+                                        <p className="font-bold text-emerald-300">
+                                          Transacción Bancaria Legítima Encontrada:
+                                        </p>
+                                        <p className="mt-0.5 text-slate-200">
+                                          <strong>{legitimateMatchingTx.remitente_o_contraparte}</strong> ·{' '}
+                                          <span className="font-mono text-emerald-400 font-semibold">{formatMoney(legitimateMatchingTx.monto_bruto, legitimateMatchingTx.moneda)}</span> ·{' '}
+                                          <span className="font-mono text-slate-400">Ref: {legitimateMatchingTx.referencia}</span> ({legitimateMatchingTx.estado})
+                                        </p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setLightboxData((prev) => (prev ? { ...prev, tx: legitimateMatchingTx } : null));
+                                        }}
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 cursor-pointer shadow-md"
+                                      >
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        Ver Este Pago Coincidente
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {lightboxData.order && (
                         <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-4">
                           <h4 className="text-xs font-bold uppercase tracking-wider text-sky-300">
                             Datos Reportados por el Cliente
@@ -4710,7 +4903,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>

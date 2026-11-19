@@ -383,6 +383,7 @@ DECLARE
     v_clean_order_sender TEXT;
     v_resolved_fee NUMERIC(5,2);
     v_is_order_ref_generic BOOLEAN := FALSE;
+    v_is_order_ref_numeric_conf BOOLEAN := FALSE;
 BEGIN
     SELECT * INTO v_orden FROM ordenes_pago_pendientes WHERE id = p_orden_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -406,6 +407,12 @@ BEGIN
             'BANKOFAMERICA', 'CHASE', 'CITIBANK', 'WELLSFARGO', 'TD', 'TDBANK',
             'PAGO', 'ZELLE', 'TRANSFERENCIA', 'DEPOSITO', 'COMPROBANTE', 'DEBITO'
         )
+    );
+
+    -- Códigos de confirmación de apps móviles (ej. Wells Fargo o Chase de 8 a 14 dígitos numéricos)
+    -- Estos códigos no coinciden textualmente con la referencia de compensación que entrega Citibank (WFCT... / BAC...)
+    v_is_order_ref_numeric_conf := (
+        v_clean_order_ref ~ '^[0-9]{8,14}$'
     );
 
     -- -------------------------------------------------------------------------
@@ -468,8 +475,8 @@ BEGIN
     END IF;
 
     -- -------------------------------------------------------------------------
-    -- PASO 2: Cotejo por Remitente Estricto (similarity >= 0.60)
-    -- Solo si la orden o el banco no tienen referencia (SIN-REF) y sin contradecirse
+    -- PASO 2: Cotejo por Remitente Estricto y Tolerante a Variaciones Fonéticas (similarity >= 0.38)
+    -- Aplica si la orden o banco no tienen ref (SIN-REF) o si la ref es código móvil app
     -- -------------------------------------------------------------------------
     IF LENGTH(v_clean_order_sender) >= 3 THEN
         SELECT t.*
@@ -480,16 +487,24 @@ BEGIN
           AND t.moneda = v_orden.moneda
           AND t.monto_bruto = v_orden.monto_esperado
           AND (t.negocio_id IS NOT DISTINCT FROM v_orden.negocio_id OR t.negocio_id IS NULL OR v_orden.negocio_id IS NULL)
-          -- REGLA CRUCIAL: No emparejar si ambos tienen referencias incompatibles reales
+          -- Compatibilidad de referencias
           AND (
               v_is_order_ref_generic
+              OR v_is_order_ref_numeric_conf
               OR t.referencia IS NULL
               OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
               OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
               OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
+              OR NOT (
+                  -- Solo bloquear si ambos tienen identificadores bancarios alfanuméricos incompatibles del mismo formato
+                  v_clean_order_ref ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
+                  AND UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
+                  AND SUBSTRING(v_clean_order_ref FROM 1 FOR 3) = SUBSTRING(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) FROM 1 FOR 3)
+              )
           )
           AND (
-              similarity(LOWER(unaccent(TRIM(COALESCE(t.remitente_o_contraparte, '')))), v_clean_order_sender) >= 0.60
+              similarity(LOWER(unaccent(TRIM(COALESCE(t.remitente_o_contraparte, '')))), v_clean_order_sender) >= 0.38
+              OR word_similarity(v_clean_order_sender, LOWER(unaccent(TRIM(COALESCE(t.remitente_o_contraparte, ''))))) >= 0.50
               OR (
                   LENGTH(v_clean_order_sender) >= 4
                   AND (
@@ -655,7 +670,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- PASO 2: Buscar si un cliente ya reportó una orden con este remitente (similarity >= 0.60)
+    -- PASO 2: Buscar si un cliente ya reportó una orden con este remitente (similarity >= 0.38)
     IF LENGTH(v_norm_sender) >= 3 THEN
         SELECT o.*
         INTO v_orden
@@ -664,16 +679,23 @@ BEGIN
           AND o.moneda = v_tx.moneda
           AND o.monto_esperado = v_tx.monto_bruto
           AND (o.negocio_id IS NOT DISTINCT FROM v_tx.negocio_id OR o.negocio_id IS NULL OR v_tx.negocio_id IS NULL)
-          -- Sin referencias contradictorias
+          -- Sin referencias bancarias contradictorias
           AND (
               v_is_ref_generic
               OR o.referencia_reportada IS NULL
               OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) ~ '^[0-9]{8,14}$'
               OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) || '%'
               OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
+              OR NOT (
+                  v_norm_ref ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
+                  AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
+                  AND SUBSTRING(v_norm_ref FROM 1 FOR 3) = SUBSTRING(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) FROM 1 FOR 3)
+              )
           )
           AND (
-              similarity(LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))), v_norm_sender) >= 0.60
+              similarity(LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, '')))), v_norm_sender) >= 0.38
+              OR word_similarity(v_norm_sender, LOWER(unaccent(TRIM(COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, ''))))) >= 0.50
               OR (
                   LENGTH(v_norm_sender) >= 4
                   AND (
