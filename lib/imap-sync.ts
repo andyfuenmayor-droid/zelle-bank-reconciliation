@@ -95,8 +95,8 @@ function isOfficialAllowedSender(fromAddress: string): boolean {
  */
 async function syncSingleMailbox(
   mailbox: MonitoredMailboxRow,
-  zelleDefaultFee: number,
-  binanceDefaultFee: number,
+  _zelleDefaultFee: number,
+  _binanceDefaultFee: number,
   monitoringStartDate: Date
 ): Promise<{
   scanned: number;
@@ -302,12 +302,10 @@ async function syncSingleMailbox(
         continue;
       }
 
-      const isBinance = extracted.plataforma.startsWith('BINANCE');
-      const baseFee = isBinance ? binanceDefaultFee : zelleDefaultFee;
-      const feePercentage =
-        extracted.tipo_movimiento === 'RECIBIDO' && Number.isFinite(baseFee)
-          ? baseFee
-          : 0.0;
+      // En detección inicial, la comisión es 0.00% porque el correo aún no pertenece
+      // a ningún cliente ni se le ha acordado un porcentaje de comisión.
+      // La comisión real se calcula y asigna al conciliar (automática o manualmente).
+      const feePercentage = 0.0;
 
       const rawBodySnapshot = sanitizeEmailContent(htmlBody || textBody).slice(0, 12000);
       const referenciaFinal = extracted.referencia ?? 'SIN-REF';

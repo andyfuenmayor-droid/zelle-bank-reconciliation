@@ -283,16 +283,18 @@ export interface AutoReconciliationResult {
  * Métricas agregadas del Panel de Control Financiero Multi-Canal (Zelle USD + Binance USDT)
  */
 export interface FinancialSummaryMetrics {
-  // Bloque Zelle (Citibank + TD Bank en USD)
+  // Bloque Zelle (Citibank + TD Bank en USD) - Exclusivo de Conciliados
   zelleBrutoRecibidoUsd: number;
   zelleComisionRetenidaUsd: number;
   zelleNetoLiquidableUsd: number;
+  zellePorConciliarUsd: number;
   zelleBrutoEnviadoUsd: number;
-  // Bloque Binance (Pay + P2P + On-Chain en USDT)
+  // Bloque Binance (Pay + P2P + On-Chain en USDT) - Exclusivo de Conciliados
   binanceRecibidoUsdt: number;
   binanceComisionRetenidaUsdt: number;
   binanceEnviadoUsdt: number;
   binanceNetoDisponibleUsdt: number;
+  binancePorConciliarUsdt: number;
   // Totales globales de estado
   totalBrutoRecibido: number;
   totalComisionDescontada: number;

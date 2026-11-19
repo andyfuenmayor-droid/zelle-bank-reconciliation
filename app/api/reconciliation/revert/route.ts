@@ -137,8 +137,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           ).catch((e) => console.error('[Revert] Error eliminando remitente aprendido:', e));
         }
 
-        // 3. Determinar comisión por defecto según plataforma
-        const defaultFee = currentTx.plataforma.startsWith('BINANCE') ? 1.5 : 4.0;
+        // 3. Al revertir, la comisión vuelve a 0.00% porque la transacción vuelve a estar sin cliente asignado
+        const defaultFee = 0.0;
         const auditLog = `Conciliación revertida por el administrador el ${new Date().toISOString().slice(0, 16)}. Motivo: ${motivo}. (Anteriormente asignado por error a: ${prevClientName}).`;
 
         // 4. Actualizar la transacción bancaria a REVISION_MANUAL y desvincular

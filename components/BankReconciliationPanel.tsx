@@ -776,16 +776,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   }, [currentBusinessUser, activeNegocioId, fetchAllData, fetchAiSettings]);
 
   // Métricas separadas para Bloque Zelle (USD) y Bloque Binance (USDT)
+  // REGLA FINANCIERA: Los totales financieros principales calculan EXCLUSIVAMENTE
+  // los pagos CONCILIADOS (item.estado === 'CONCILIADO' && item.tipo_movimiento === 'RECIBIDO').
+  // Las alertas en DETECTADO o REVISION_MANUAL aún no pertenecen a ningún cliente
+  // y por ende no devengan comisiones ni constituyen fondos acreditables.
   const financialMetrics = useMemo<FinancialSummaryMetrics>(() => {
-    let zelleBrutoRecibidoUsd = 0;
+    let zelleBrutoConciliadoUsd = 0;
     let zelleComisionRetenidaUsd = 0;
     let zelleNetoLiquidableUsd = 0;
+    let zellePorConciliarUsd = 0;
     let zelleBrutoEnviadoUsd = 0;
 
-    let binanceRecibidoUsdt = 0;
+    let binanceConciliadoUsdt = 0;
     let binanceComisionRetenidaUsdt = 0;
-    let binanceEnviadoUsdt = 0;
     let binanceNetoDisponibleUsdt = 0;
+    let binancePorConciliarUsdt = 0;
+    let binanceEnviadoUsdt = 0;
 
     let pagosConciliadosCount = 0;
     let pagosRevisionManualCount = 0;
@@ -797,17 +803,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
       if (isBinance) {
         if (item.tipo_movimiento === 'RECIBIDO') {
-          binanceRecibidoUsdt += item.monto_bruto;
-          binanceComisionRetenidaUsdt += item.monto_comision;
-          binanceNetoDisponibleUsdt += item.monto_neto;
+          if (item.estado === 'CONCILIADO') {
+            binanceConciliadoUsdt += item.monto_bruto;
+            binanceComisionRetenidaUsdt += item.monto_comision;
+            binanceNetoDisponibleUsdt += item.monto_neto;
+          } else {
+            binancePorConciliarUsdt += item.monto_bruto;
+          }
         } else {
           binanceEnviadoUsdt += item.monto_bruto;
         }
       } else {
         if (item.tipo_movimiento === 'RECIBIDO') {
-          zelleBrutoRecibidoUsd += item.monto_bruto;
-          zelleComisionRetenidaUsd += item.monto_comision;
-          zelleNetoLiquidableUsd += item.monto_neto;
+          if (item.estado === 'CONCILIADO') {
+            zelleBrutoConciliadoUsd += item.monto_bruto;
+            zelleComisionRetenidaUsd += item.monto_comision;
+            zelleNetoLiquidableUsd += item.monto_neto;
+          } else {
+            zellePorConciliarUsd += item.monto_bruto;
+          }
         } else {
           zelleBrutoEnviadoUsd += item.monto_bruto;
         }
@@ -825,15 +839,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     const round = (val: number): number => Math.round(val * 100) / 100;
 
     return {
-      zelleBrutoRecibidoUsd: round(zelleBrutoRecibidoUsd),
+      zelleBrutoRecibidoUsd: round(zelleBrutoConciliadoUsd),
       zelleComisionRetenidaUsd: round(zelleComisionRetenidaUsd),
       zelleNetoLiquidableUsd: round(zelleNetoLiquidableUsd),
+      zellePorConciliarUsd: round(zellePorConciliarUsd),
       zelleBrutoEnviadoUsd: round(zelleBrutoEnviadoUsd),
-      binanceRecibidoUsdt: round(binanceRecibidoUsdt),
+      binanceRecibidoUsdt: round(binanceConciliadoUsdt),
       binanceComisionRetenidaUsdt: round(binanceComisionRetenidaUsdt),
       binanceEnviadoUsdt: round(binanceEnviadoUsdt),
       binanceNetoDisponibleUsdt: round(binanceNetoDisponibleUsdt),
-      totalBrutoRecibido: round(zelleBrutoRecibidoUsd + binanceRecibidoUsdt),
+      binancePorConciliarUsdt: round(binancePorConciliarUsdt),
+      totalBrutoRecibido: round(zelleBrutoConciliadoUsd + binanceConciliadoUsdt),
       totalComisionDescontada: round(
         zelleComisionRetenidaUsd + binanceComisionRetenidaUsdt
       ),
@@ -2427,7 +2443,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     Bloque Zelle (Citibank + TD Bank)
                   </h2>
                   <p className="text-[11px] text-slate-400">
-                    Moneda USD · Comisión estándar 4.00%
+                    Total Conciliado Acreditado · Comisiones Reales
                   </p>
                 </div>
               </div>
@@ -2439,13 +2455,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Bruto Recibido
+                  Bruto Conciliado
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-white">
                   {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')}
                 </p>
-                <span className="text-[10px] text-slate-500">
-                  Enviado: {formatMoney(financialMetrics.zelleBrutoEnviadoUsd, 'USD')}
+                <span className="text-[10px] text-emerald-400/90 font-medium">
+                  {financialMetrics.pagosConciliadosCount} pagos conciliados
                 </span>
               </div>
 
@@ -2457,7 +2473,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   -{formatMoney(financialMetrics.zelleComisionRetenidaUsd, 'USD')}
                 </p>
                 <span className="text-[10px] text-slate-500">
-                  SQL GENERATED
+                  Cobrada sobre conciliados
                 </span>
               </div>
 
@@ -2469,10 +2485,24 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   {formatMoney(financialMetrics.zelleNetoLiquidableUsd, 'USD')}
                 </p>
                 <span className="text-[10px] text-emerald-300/70">
-                  Acreditable USD
+                  Acreditable a Clientes
                 </span>
               </div>
             </div>
+
+            {financialMetrics.zellePorConciliarUsd > 0 && (
+              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-500/20 bg-sky-950/30 px-3.5 py-2 text-xs text-sky-200/90">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-sky-400 shrink-0" />
+                  <span>
+                    <strong className="font-semibold text-white">En espera por conciliar:</strong> {formatMoney(financialMetrics.zellePorConciliarUsd, 'USD')} ({financialMetrics.pagosRevisionManualCount + financialMetrics.pagosDetectadosCount} correos)
+                  </span>
+                </div>
+                <span className="text-[11px] text-sky-300/70">
+                  Sin cliente asignado · Comisión 0% hasta conciliar
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Bloque Binance (Pay + P2P + On-Chain en USDT) */}
@@ -2487,7 +2517,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     Bloque Binance (Pay + P2P + On-Chain)
                   </h2>
                   <p className="text-[11px] text-slate-400">
-                    Moneda USDT · Comisión estándar 1.50%
+                    Total Conciliado USDT · Comisiones Reales
                   </p>
                 </div>
               </div>
@@ -2499,31 +2529,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Total USDT Recibido
+                  Total USDT Conciliado
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-white">
                   {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
                 </p>
-                <span className="text-[10px] text-slate-500">
-                  Fee: -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
+                <span className="text-[10px] text-amber-300/80">
+                  Recibido y conciliado
                 </span>
               </div>
 
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Total USDT Enviado
+                  Comisión Retenida USDT
                 </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-rose-300">
-                  {formatMoney(financialMetrics.binanceEnviadoUsdt, 'USDT')}
+                <p className="mt-1.5 font-mono text-lg font-bold text-violet-300">
+                  -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
                 </p>
                 <span className="text-[10px] text-slate-500">
-                  Pay / P2P Saliente
+                  Fee cobrado sobre conciliados
                 </span>
               </div>
 
               <div className="rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
                 <span className="text-[11px] font-semibold uppercase text-amber-300">
-                  Neto USDT Disponible
+                  Neto USDT Liquidable
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-amber-300">
                   {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
@@ -2533,6 +2563,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </span>
               </div>
             </div>
+
+            {financialMetrics.binancePorConciliarUsdt > 0 && (
+              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-950/30 px-3.5 py-2 text-xs text-amber-200/90">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong className="font-semibold text-white">En espera por conciliar:</strong> {formatMoney(financialMetrics.binancePorConciliarUsdt, 'USDT')}
+                  </span>
+                </div>
+                <span className="text-[11px] text-amber-300/70">
+                  Sin cliente asignado · Fee 0% hasta conciliar
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
@@ -2892,14 +2936,36 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               {formatMoney(alert.monto_bruto, alert.moneda)}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-xs text-violet-300">
-                              {alert.monto_comision > 0
-                                ? `-${formatMoney(alert.monto_comision, alert.moneda)} (${alert.porcentaje_comision}%)`
-                                : formatMoney(0, alert.moneda)}
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono text-xs">
+                              {alert.estado === 'CONCILIADO' ? (
+                                <span className="text-violet-300">
+                                  {alert.monto_comision > 0
+                                    ? `-${formatMoney(alert.monto_comision, alert.moneda)} (${alert.porcentaje_comision}%)`
+                                    : formatMoney(0, alert.moneda)}
+                                </span>
+                              ) : (
+                                <span
+                                  className="text-slate-500 font-normal cursor-help"
+                                  title="Sin comisión calculada: aún no está asignado ni conciliado a un cliente"
+                                >
+                                  —
+                                </span>
+                              )}
                             </td>
 
-                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-bold text-emerald-400">
-                              {formatMoney(alert.monto_neto, alert.moneda)}
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-mono font-bold">
+                              {alert.estado === 'CONCILIADO' ? (
+                                <span className="text-emerald-400">
+                                  {formatMoney(alert.monto_neto, alert.moneda)}
+                                </span>
+                              ) : (
+                                <span
+                                  className="text-slate-500 text-xs font-normal cursor-help"
+                                  title="Monto neto pendiente de conciliación con cliente"
+                                >
+                                  —
+                                </span>
+                              )}
                             </td>
 
                             <td className="whitespace-nowrap px-4 py-4">
