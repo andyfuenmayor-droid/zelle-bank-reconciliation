@@ -153,6 +153,10 @@ export interface FinancialTransactionRecord {
   comprobante_mime?: string | null;
   datos_ocr_extraidos?: OcrExtractionData | null;
   codigo_orden?: string | null;
+  remitente_reportado?: string | null;
+  referencia_reportada?: string | null;
+  monto_reportado?: number | null;
+  fecha_reportada?: string | null;
   // Alias retrocompatibles con la versión anterior
   message_id: string;
   banco: PlatformType;

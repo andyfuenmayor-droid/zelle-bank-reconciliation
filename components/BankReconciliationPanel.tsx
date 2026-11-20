@@ -212,18 +212,30 @@ function calculateSenderSimilarity(a: string, b: string): number {
   const tokensB = normB.split(/\s+/).filter(Boolean);
   if (tokensA.length === 0 || tokensB.length === 0) return 0;
 
+  const tokensMatch = (t1: string, t2: string): boolean =>
+    t1 === t2 || (t1.length >= 4 && t2.length >= 4 && (t2.startsWith(t1) || t1.startsWith(t2)));
+
   let sharedCount = 0;
   for (const tA of tokensA) {
-    if (
-      tokensB.some(
-        (tB) =>
-          tB === tA ||
-          (tA.length >= 4 && (tB.startsWith(tA) || tA.startsWith(tB)))
-      )
-    ) {
+    if (tokensB.some((tB) => tokensMatch(tA, tB))) {
       sharedCount++;
     }
   }
+
+  // Si ambos nombres tienen nombre + apellido (>=2 palabras) y solo comparten 1 apellido,
+  // pero el primer nombre es distinto (ej. "Yeilyn Villalobos" vs "Andry Villalobos"),
+  // no son la misma persona.
+  if (
+    tokensA.length >= 2 &&
+    tokensB.length >= 2 &&
+    sharedCount === 1 &&
+    tokensA[0] &&
+    tokensB[0] &&
+    !tokensMatch(tokensA[0], tokensB[0])
+  ) {
+    return 0.2;
+  }
+
   return (2 * sharedCount) / (tokensA.length + tokensB.length);
 }
 
@@ -1160,16 +1172,51 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     }
   };
 
-  // Busca orden pendiente candidata (con captura) asociada legítimamente a una transacción
+  // Busca orden vinculada o candidata legítima (con captura) asociada a una transacción
   const findAssociatedCaptureOrder = useCallback(
     (tx: BankEmailAlertRecord): PendingPaymentOrder | null => {
-      // 1. Si la transacción ya está vinculada a una orden
+      // 1. Si la transacción ya está vinculada a una orden en base de datos, usar exclusivamente los datos de esa orden
       if (tx.orden_conciliada_id) {
         const linked = pendingOrders.find((o) => o.id === tx.orden_conciliada_id);
         if (linked) return linked;
+
+        return {
+          id: tx.orden_conciliada_id,
+          codigo_orden: tx.codigo_orden ?? 'ORD-CONCILIADA',
+          cliente_id: tx.cliente_id ?? '',
+          cliente_nombre: tx.cliente_asignado_nombre ?? '',
+          cliente_email: '',
+          plataforma_esperada: (tx.plataforma === 'OTRO'
+            ? 'CITIBANK'
+            : tx.plataforma) as ExpectedPlatformType,
+          banco_destino: (tx.plataforma === 'OTRO'
+            ? 'CITIBANK'
+            : tx.plataforma) as ExpectedPlatformType,
+          moneda: tx.moneda,
+          monto_esperado: tx.monto_reportado ?? tx.monto_bruto,
+          remitente_reportado:
+            tx.remitente_reportado ?? tx.remitente_o_contraparte ?? '',
+          nombre_remitente_reportado:
+            tx.remitente_reportado ?? tx.remitente_o_contraparte ?? '',
+          referencia_reportada: tx.referencia_reportada ?? null,
+          has_capture: Boolean(tx.has_capture || tx.comprobante_base64),
+          comprobante_base64: tx.comprobante_base64 ?? null,
+          comprobante_mime: tx.comprobante_mime ?? 'image/jpeg',
+          datos_ocr_extraidos: tx.datos_ocr_extraidos ?? null,
+          estado: 'CONCILIADO',
+          transaccion_conciliada_id: tx.id,
+          notas_cliente: null,
+          created_at: tx.fecha_reportada ?? tx.conciliado_at ?? tx.created_at,
+          updated_at: tx.conciliado_at ?? tx.created_at,
+        };
       }
 
-      // 2. Filtrar órdenes del mismo monto y moneda
+      // Si ya está CONCILIADO sin orden vinculada, no tomar órdenes pendientes ajenas
+      if (tx.estado === 'CONCILIADO') {
+        return null;
+      }
+
+      // 2. Filtrar órdenes pendientes del mismo monto y moneda
       const sameAmountOrders = pendingOrders.filter(
         (o) =>
           o.moneda === tx.moneda &&
@@ -3315,10 +3362,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
                         />
                       </th>
-                      <th className="px-3 py-3">Canal &amp; Fecha</th>
+                      <th className="px-3 py-3">Canal &amp; Fecha Correo</th>
                       <th className="px-2.5 py-3">Flujo</th>
                       <th className="px-3 py-3">
-                        Contraparte / Titular Asignado
+                        Enviado Por (Correo)
+                      </th>
+                      <th className="px-3 py-3">
+                        Reportado Como (Cliente)
                       </th>
                       <th className="px-3 py-3">Referencia &amp; Origen</th>
                       <th className="px-3 py-3 text-right">Monto Bruto</th>
@@ -3334,7 +3384,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     {filteredAlerts.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={10}
+                          colSpan={11}
                           className="px-6 py-12 text-center text-slate-400"
                         >
                           No se encontraron transacciones con los filtros
@@ -3352,6 +3402,29 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           candidateOrder?.comprobante_base64
                         );
                         const isSelected = selectedAlertIds.includes(alert.id);
+                        const reportedSender =
+                          alert.remitente_reportado ||
+                          candidateOrder?.remitente_reportado ||
+                          candidateOrder?.nombre_remitente_reportado ||
+                          null;
+                        const reportedCode =
+                          alert.codigo_orden || candidateOrder?.codigo_orden || null;
+                        const reportedRef =
+                          alert.referencia_reportada ||
+                          candidateOrder?.referencia_reportada ||
+                          null;
+                        const senderSimilarity =
+                          reportedSender && alert.remitente_o_contraparte
+                            ? calculateSenderSimilarity(
+                                reportedSender,
+                                alert.remitente_o_contraparte
+                              )
+                            : 1;
+                        const hasNameDisparity = Boolean(
+                          reportedSender &&
+                            alert.remitente_o_contraparte &&
+                            senderSimilarity < 0.35
+                        );
 
                         return (
                           <tr
@@ -3379,7 +3452,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               >
                                 {badge.label}
                               </span>
-                              <p className="mt-1 text-xs text-slate-400">
+                              <p
+                                className="mt-1 text-xs font-medium text-slate-300"
+                                title="Fecha y hora exacta entregada por el correo bancario"
+                              >
+                                <span className="text-[10px] uppercase text-slate-500">
+                                  Correo:{' '}
+                                </span>
                                 {formatDateTime(alert.fecha_transaccion)}
                               </p>
                             </td>
@@ -3399,7 +3478,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             </td>
 
                             <td className="px-3 py-3 max-w-[220px] 2xl:max-w-xs">
-                              <div className="font-semibold text-white truncate">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                                Enviado por:
+                              </div>
+                              <div
+                                className="font-semibold text-white truncate"
+                                title={alert.remitente_o_contraparte || ''}
+                              >
                                 {alert.remitente_o_contraparte || (
                                   <span className="italic text-amber-400">
                                     Remitente no identificado
@@ -3417,6 +3502,62 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
                                   <Clock className="h-3 w-3 shrink-0 text-slate-600" />
                                   <span className="truncate">Sin cliente (En espera de orden)</span>
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="px-3 py-3 max-w-[230px] 2xl:max-w-xs">
+                              {reportedSender ? (
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
+                                    Reportado como:
+                                  </div>
+                                  <div
+                                    className={`font-semibold truncate ${
+                                      hasNameDisparity
+                                        ? 'text-amber-300'
+                                        : 'text-sky-200'
+                                    }`}
+                                    title={reportedSender}
+                                  >
+                                    {reportedSender}
+                                  </div>
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                                    {reportedCode && (
+                                      <span className="font-mono text-[10px] font-semibold text-sky-400">
+                                        {reportedCode}
+                                      </span>
+                                    )}
+                                    {reportedRef && (
+                                      <span className="font-mono text-[10px] text-slate-400 truncate">
+                                        · Ref: {reportedRef}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {hasNameDisparity && (
+                                    <span className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                                      <AlertTriangle className="h-2.5 w-2.5" />
+                                      Nombre distinto al correo
+                                    </span>
+                                  )}
+                                </div>
+                              ) : alert.estado === 'CONCILIADO' ? (
+                                <div className="text-xs text-slate-400">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/80 block">
+                                    Reportado como:
+                                  </span>
+                                  <span className="text-slate-300">
+                                    Remitente autorizado ({alert.cliente_asignado_nombre})
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-500">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 block">
+                                    Reportado como:
+                                  </span>
+                                  <span className="italic">
+                                    Sin reporte del cliente aún
+                                  </span>
                                 </div>
                               )}
                             </td>
