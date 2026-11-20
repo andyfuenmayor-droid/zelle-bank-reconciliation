@@ -58,10 +58,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const result = await withTransaction<FinancialTransactionRecord>(
+      const result = await withTransaction<FinancialTransactionRecord | null>(
       async (client) => {
         const txRes = await client.query<{
           id: string;
+          external_unique_id: string;
           plataforma: string;
           monto_bruto: number;
           estado: string;
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           `
           SELECT
             id,
+            external_unique_id,
             plataforma,
             monto_bruto,
             estado,
@@ -137,11 +139,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           ).catch((e) => console.error('[Revert] Error eliminando remitente aprendido:', e));
         }
 
-        // 3. Al revertir, la comisión vuelve a 0.00% porque la transacción vuelve a estar sin cliente asignado
+        // 3. Si fue una transacción creada manualmente sin correo bancario (MANUAL-ORD-...), eliminarla para que la orden vuelva limpia a PENDIENTE
+        if ((currentTx.external_unique_id || '').startsWith('MANUAL-ORD-')) {
+          await client.query(
+            `
+            DELETE FROM financial_transactions_reconciliation
+            WHERE id = $1::uuid;
+            `,
+            [alertId]
+          );
+          return null;
+        }
+
+        // 4. Al revertir un correo bancario real, la comisión vuelve a 0.00% porque la transacción vuelve a estar sin cliente asignado
         const defaultFee = 0.0;
         const auditLog = `Conciliación revertida por el administrador el ${new Date().toISOString().slice(0, 16)}. Motivo: ${motivo}. (Anteriormente asignado por error a: ${prevClientName}).`;
 
-        // 4. Actualizar la transacción bancaria a REVISION_MANUAL y desvincular
+        // 5. Actualizar la transacción bancaria a REVISION_MANUAL y desvincular
         const updatedTxRes = await client.query<FinancialTransactionRecord>(
           `
           UPDATE financial_transactions_reconciliation

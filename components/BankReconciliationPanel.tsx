@@ -535,6 +535,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [manualNotes, setManualNotes] = useState<string>('');
   const [isSubmittingMatch, setIsSubmittingMatch] = useState<boolean>(false);
 
+  // Modal Confirmación Manual de Orden / Captura del Cliente (Sin Correo Bancario o Vinculando Correo)
+  const [selectedOrderForManualConfirm, setSelectedOrderForManualConfirm] =
+    useState<PendingPaymentOrder | null>(null);
+  const [orderConfirmLinkedTxId, setOrderConfirmLinkedTxId] =
+    useState<string>('');
+  const [orderConfirmNotes, setOrderConfirmNotes] = useState<string>('');
+  const [isSubmittingOrderConfirm, setIsSubmittingOrderConfirm] =
+    useState<boolean>(false);
+  const [isRejectingOrderId, setIsRejectingOrderId] = useState<string | null>(
+    null
+  );
+
   // Modal Reversión / Deshacer Conciliación
   const [alertToRevert, setAlertToRevert] =
     useState<BankEmailAlertRecord | null>(null);
@@ -1575,6 +1587,147 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       setBannerMessage({ type: 'error', text: msg });
     } finally {
       setIsSubmittingMatch(false);
+    }
+  };
+
+  const openManualOrderConfirmModal = (order: PendingPaymentOrder): void => {
+    setSelectedOrderForManualConfirm(order);
+    // Buscar si existe algún correo DETECTADO del mismo monto y moneda que coincida por referencia o remitente
+    const candidateTx = alerts.find(
+      (a) =>
+        a.estado !== 'CONCILIADO' &&
+        a.tipo_movimiento === 'RECIBIDO' &&
+        a.moneda === order.moneda &&
+        Math.abs(a.monto_bruto - order.monto_esperado) < 0.01 &&
+        (referencesMatch(order.referencia_reportada, a.referencia) ||
+          calculateSenderSimilarity(
+            order.remitente_reportado || order.nombre_remitente_reportado || '',
+            a.remitente_o_contraparte || ''
+          ) >= 0.65)
+    );
+    setOrderConfirmLinkedTxId(candidateTx ? candidateTx.id : '');
+    setOrderConfirmNotes(
+      `Confirmado manualmente por el administrador tras verificar comprobante de ${
+        order.remitente_reportado ||
+        order.nombre_remitente_reportado ||
+        order.cliente_nombre
+      } (${order.codigo_orden}).`
+    );
+  };
+
+  const handleConfirmOrderManually = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    if (!selectedOrderForManualConfirm) {
+      return;
+    }
+
+    setIsSubmittingOrderConfirm(true);
+    try {
+      const payload = orderConfirmLinkedTxId
+        ? {
+            action: 'MATCH_TX' as const,
+            alertId: orderConfirmLinkedTxId,
+            ordenPagoId: selectedOrderForManualConfirm.id,
+            clienteNombreManual: selectedOrderForManualConfirm.cliente_nombre,
+            notasConciliacion: orderConfirmNotes.trim(),
+          }
+        : {
+            action: 'APPROVE_ORDER_WITHOUT_EMAIL' as const,
+            ordenPagoId: selectedOrderForManualConfirm.id,
+            clienteNombreManual: selectedOrderForManualConfirm.cliente_nombre,
+            notasConciliacion: orderConfirmNotes.trim(),
+          };
+
+      const response = await fetch('/api/reconciliation/manual-match', {
+        method: 'POST',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify(payload),
+      });
+
+      const result = (await response.json()) as {
+        ok: boolean;
+        alert?: BankEmailAlertRecord;
+        error?: string;
+      };
+
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error ?? 'Error al confirmar manualmente la captura.'
+        );
+      }
+
+      await fetchAllData();
+
+      setBannerMessage({
+        type: 'success',
+        text: `Orden ${selectedOrderForManualConfirm.codigo_orden} (${formatMoney(
+          selectedOrderForManualConfirm.monto_esperado,
+          selectedOrderForManualConfirm.moneda
+        )}) confirmada y acreditada manualmente a favor de "${selectedOrderForManualConfirm.cliente_nombre}".`,
+      });
+      setSelectedOrderForManualConfirm(null);
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al confirmar la orden.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setIsSubmittingOrderConfirm(false);
+    }
+  };
+
+  const handleRejectPendingOrder = async (
+    order: PendingPaymentOrder
+  ): Promise<void> => {
+    const confirmed = window.confirm(
+      `¿Descartar y eliminar la orden pendiente ${order.codigo_orden} (${
+        order.remitente_reportado || order.cliente_nombre
+      } · ${formatMoney(order.monto_esperado, order.moneda)} · Ref: ${
+        order.referencia_reportada || 'SIN-REF'
+      })?\n\nUsa esta opción si la captura es duplicada o inválida para que no quede pendiente en el portal del cliente.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsRejectingOrderId(order.id);
+    try {
+      const response = await fetch('/api/reconciliation/manual-match', {
+        method: 'POST',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          action: 'REJECT_PENDING_ORDER',
+          ordenPagoId: order.id,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+      };
+
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error ?? 'No se pudo descartar la orden pendiente.'
+        );
+      }
+
+      await fetchAllData();
+      setBannerMessage({
+        type: 'info',
+        text: `Orden pendiente ${order.codigo_orden} descartada y retirada de pendientes.`,
+      });
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error al descartar la orden pendiente.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setIsRejectingOrderId(null);
     }
   };
 
@@ -3468,6 +3621,187 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
             )}
 
+            {/* =================================================================
+                SECCIÓN: CAPTURAS ENVIADAS POR EL CLIENTE PENDIENTES (SIN CORREO DEL BANCO)
+               ================================================================= */}
+            {pendingOrders.length > 0 && (
+              <section
+                aria-label="Capturas Enviadas por el Cliente Pendientes de Confirmar"
+                className="mb-6 overflow-hidden rounded-xl border border-amber-500/40 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/20 shadow-xl"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-500/25 bg-amber-950/30 px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/20 font-mono text-xs font-bold text-amber-300 ring-1 ring-amber-400/40">
+                      {pendingOrders.length}
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">
+                        Capturas Enviadas por el Cliente en Espera de Confirmación Manual ({pendingOrders.length})
+                      </h3>
+                      <p className="text-xs text-amber-200/80">
+                        Estos comprobantes fueron subidos desde el portal del cliente pero no llegó el correo del banco o no coincidió automáticamente. Puedes ver la captura, confirmarlos manualmente o descartar duplicados.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse text-left text-xs table-auto">
+                    <thead>
+                      <tr className="border-b border-slate-800 bg-slate-950/70 font-semibold uppercase tracking-wider text-slate-400">
+                        <th className="px-3 py-2.5">#</th>
+                        <th className="px-3 py-2.5">Orden &amp; Fecha Envío</th>
+                        <th className="px-3 py-2.5">Cliente Titular</th>
+                        <th className="px-3 py-2.5">Remitente Reportado</th>
+                        <th className="px-3 py-2.5">Referencia Reportada</th>
+                        <th className="px-3 py-2.5">Diagnóstico / Estado Correo</th>
+                        <th className="px-3 py-2.5 text-right">Monto Bruto</th>
+                        <th className="px-3 py-2.5 text-right">Comisión</th>
+                        <th className="px-3 py-2.5 text-right">Neto a Acreditar</th>
+                        <th className="px-3 py-2.5 text-right">Captura &amp; Confirmación Manual</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {pendingOrders.map((order, idx) => {
+                        const clientObj = clients.find(
+                          (c) =>
+                            c.id === order.cliente_id ||
+                            c.nombre_titular.trim().toLowerCase() ===
+                              (order.cliente_nombre || '').trim().toLowerCase()
+                        );
+                        const feePct = (order.plataforma_esperada || 'CITIBANK').startsWith(
+                          'BINANCE'
+                        )
+                          ? (clientObj?.porcentaje_comision_binance ?? 1.5)
+                          : (clientObj?.porcentaje_comision_zelle ?? 4.0);
+                        const comision =
+                          Math.round(order.monto_esperado * (feePct / 100) * 100) / 100;
+                        const neto =
+                          Math.round((order.monto_esperado - comision) * 100) / 100;
+
+                        const alreadyReconciledTx = alerts.find(
+                          (a) =>
+                            a.estado === 'CONCILIADO' &&
+                            referencesMatch(order.referencia_reportada, a.referencia)
+                        );
+                        const duplicatePendingCount = pendingOrders.filter(
+                          (other) =>
+                            other.id !== order.id &&
+                            referencesMatch(
+                              order.referencia_reportada,
+                              other.referencia_reportada
+                            )
+                        ).length;
+                        const detectedSameAmountTx = alerts.find(
+                          (a) =>
+                            a.estado !== 'CONCILIADO' &&
+                            a.tipo_movimiento === 'RECIBIDO' &&
+                            a.moneda === order.moneda &&
+                            Math.abs(a.monto_bruto - order.monto_esperado) < 0.01
+                        );
+
+                        return (
+                          <tr
+                            key={order.id}
+                            className="transition hover:bg-slate-800/40"
+                          >
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-400">
+                              {idx + 1}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5">
+                              <div className="font-mono font-bold text-sky-300">
+                                {order.codigo_orden}
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                {formatDateTime(order.created_at)}
+                              </div>
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-emerald-300">
+                              {order.cliente_nombre}
+                            </td>
+                            <td className="px-3 py-2.5 font-semibold text-white">
+                              {order.remitente_reportado ||
+                                order.nombre_remitente_reportado ||
+                                'Sin remitente'}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono font-semibold text-amber-300">
+                              {order.referencia_reportada || 'SIN-REF'}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              {alreadyReconciledTx ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-950/60 px-2 py-0.5 text-[11px] font-semibold text-rose-200">
+                                  <AlertTriangle className="h-3 w-3 shrink-0 text-rose-400" />
+                                  Ref. ya conciliada en {alreadyReconciledTx.codigo_orden || alreadyReconciledTx.referencia} (Duplicado)
+                                </span>
+                              ) : duplicatePendingCount > 0 ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-950/60 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+                                  <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
+                                  Ref. repetida en otra orden pendiente
+                                </span>
+                              ) : detectedSameAmountTx ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-950/60 px-2 py-0.5 text-[11px] font-semibold text-sky-200">
+                                  <Clock className="h-3 w-3 shrink-0 text-sky-400" />
+                                  Sin correo exacto · Hay correo DETECTADO de {formatMoney(order.monto_esperado, order.moneda)}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
+                                  <Clock className="h-3 w-3 shrink-0 text-amber-400" />
+                                  No llegó correo del banco · Confirmación manual
+                                </span>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-white">
+                              {formatMoney(order.monto_esperado, order.moneda)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-violet-300">
+                              -{formatMoney(comision, order.moneda)} ({feePct}%)
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-emerald-400">
+                              {formatMoney(neto, order.moneda)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {(order.has_capture || order.comprobante_base64) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void openLightboxForOrder(order)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/25 cursor-pointer"
+                                    title="Ver la captura subida por el cliente"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Ver Captura
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => openManualOrderConfirmModal(order)}
+                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500 cursor-pointer shadow-sm"
+                                  title="Confirmar manualmente y acreditar saldo al cliente"
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Confirmar Manual
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isRejectingOrderId === order.id}
+                                  onClick={() => void handleRejectPendingOrder(order)}
+                                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 disabled:opacity-50 cursor-pointer"
+                                  title="Descartar orden pendiente duplicada o inválida"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Descartar
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
             <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
               <div className="overflow-x-auto xl:overflow-x-visible">
                 <table className="w-full border-collapse text-left text-sm table-auto">
@@ -4242,20 +4576,39 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               {formatMoney(o.monto_esperado, o.moneda)}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              {o.has_capture || o.comprobante_base64 ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                {o.has_capture || o.comprobante_base64 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void openLightboxForOrder(o)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/25 cursor-pointer"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Ver Captura
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-slate-500">
+                                    Sin imagen
+                                  </span>
+                                )}
                                 <button
                                   type="button"
-                                  onClick={() => void openLightboxForOrder(o)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/25"
+                                  onClick={() => openManualOrderConfirmModal(o)}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer"
                                 >
-                                  <Eye className="h-3.5 w-3.5" />
-                                  Ver Captura
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Confirmar Manual
                                 </button>
-                              ) : (
-                                <span className="text-xs text-slate-500">
-                                  Sin imagen
-                                </span>
-                              )}
+                                <button
+                                  type="button"
+                                  disabled={isRejectingOrderId === o.id}
+                                  onClick={() => void handleRejectPendingOrder(o)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/30 disabled:opacity-50 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Descartar
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -5517,6 +5870,41 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           Cerrar Visor
                         </button>
                       </Dialog.Close>
+                      {!lightboxData.tx &&
+                        lightboxData.order &&
+                        lightboxData.order.estado === 'PENDIENTE' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targetOrder = lightboxData.order;
+                                setLightboxData(null);
+                                if (targetOrder) {
+                                  void handleRejectPendingOrder(targetOrder);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-4 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/30 cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Descartar Orden
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targetOrder = lightboxData.order;
+                                setLightboxData(null);
+                                if (targetOrder) {
+                                  openManualOrderConfirmModal(targetOrder);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer"
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                              Confirmar Manualmente (Sin Correo)
+                            </button>
+                          </>
+                        )}
+
                       {lightboxData.tx &&
                         lightboxData.tx.estado !== 'CONCILIADO' &&
                         lightboxData.tx.tipo_movimiento === 'RECIBIDO' && (
@@ -5561,6 +5949,230 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </div>
                   </div>
                 </div>
+                );
+              })()}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* =====================================================================
+            MODAL: CONFIRMACIÓN MANUAL DE CAPTURA ENVIADA POR EL CLIENTE (SIN CORREO)
+           ===================================================================== */}
+        <Dialog.Root
+          open={selectedOrderForManualConfirm !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedOrderForManualConfirm(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div>
+                  <Dialog.Title className="text-lg font-bold text-white">
+                    Confirmar Manualmente Captura del Cliente
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                    Aprueba y acredita esta orden enviada desde el portal aunque no haya llegado el correo del banco, o vincúlala con un correo DETECTADO.
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {selectedOrderForManualConfirm && (() => {
+                const clientObj = clients.find(
+                  (c) =>
+                    c.id === selectedOrderForManualConfirm.cliente_id ||
+                    c.nombre_titular.trim().toLowerCase() ===
+                      (selectedOrderForManualConfirm.cliente_nombre || '').trim().toLowerCase()
+                );
+                const feePct = (
+                  selectedOrderForManualConfirm.plataforma_esperada || 'CITIBANK'
+                ).startsWith('BINANCE')
+                  ? (clientObj?.porcentaje_comision_binance ?? 1.5)
+                  : (clientObj?.porcentaje_comision_zelle ?? 4.0);
+                const comision =
+                  Math.round(
+                    selectedOrderForManualConfirm.monto_esperado * (feePct / 100) * 100
+                  ) / 100;
+                const neto =
+                  Math.round(
+                    (selectedOrderForManualConfirm.monto_esperado - comision) * 100
+                  ) / 100;
+
+                const alreadyReconciledTx = alerts.find(
+                  (a) =>
+                    a.estado === 'CONCILIADO' &&
+                    referencesMatch(
+                      selectedOrderForManualConfirm.referencia_reportada,
+                      a.referencia
+                    )
+                );
+
+                const availableUnreconciledTxs = alerts.filter(
+                  (a) =>
+                    a.estado !== 'CONCILIADO' &&
+                    a.tipo_movimiento === 'RECIBIDO' &&
+                    a.moneda === selectedOrderForManualConfirm.moneda
+                );
+
+                return (
+                  <form
+                    onSubmit={(e) => void handleConfirmOrderManually(e)}
+                    className="mt-5 space-y-4"
+                  >
+                    {alreadyReconciledTx && (
+                      <div className="rounded-xl border border-rose-500/50 bg-rose-950/50 p-3.5 text-xs text-rose-200">
+                        <div className="flex items-start gap-2.5">
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-rose-200">
+                              ⚠️ Atención: Referencia ya conciliada previamente
+                            </p>
+                            <p className="mt-0.5 text-slate-300">
+                              La referencia <strong className="font-mono text-white">{selectedOrderForManualConfirm.referencia_reportada}</strong> ya fue conciliada y acreditada en el pago de <strong>{alreadyReconciledTx.remitente_o_contraparte}</strong> ({formatMoney(alreadyReconciledTx.monto_bruto, alreadyReconciledTx.moneda)} · Ref: <span className="font-mono">{alreadyReconciledTx.referencia}</span>). Si esta captura es repetida, te recomendamos usar <strong>&quot;Descartar&quot;</strong> para no acreditar el saldo dos veces.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">
+                          Orden:{' '}
+                          <strong className="font-mono text-sky-300">
+                            {selectedOrderForManualConfirm.codigo_orden}
+                          </strong>
+                        </span>
+                        <span className="text-slate-400">
+                          Cliente Titular:{' '}
+                          <strong className="text-emerald-300">
+                            {selectedOrderForManualConfirm.cliente_nombre}
+                          </strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">
+                          Remitente Reportado:{' '}
+                          <strong className="text-white">
+                            {selectedOrderForManualConfirm.remitente_reportado ||
+                              selectedOrderForManualConfirm.nombre_remitente_reportado}
+                          </strong>
+                        </span>
+                        <span className="text-slate-400">
+                          Ref:{' '}
+                          <strong className="font-mono text-amber-300">
+                            {selectedOrderForManualConfirm.referencia_reportada || 'SIN-REF'}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 border-t border-slate-800 pt-3 text-center">
+                        <div>
+                          <span className="block text-[11px] uppercase text-slate-400">
+                            Monto Bruto
+                          </span>
+                          <span className="font-mono text-sm font-bold text-white">
+                            {formatMoney(
+                              selectedOrderForManualConfirm.monto_esperado,
+                              selectedOrderForManualConfirm.moneda
+                            )}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] uppercase text-slate-400">
+                            Comisión ({feePct}%)
+                          </span>
+                          <span className="font-mono text-sm font-semibold text-violet-300">
+                            -{formatMoney(comision, selectedOrderForManualConfirm.moneda)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] uppercase text-emerald-400">
+                            Neto a Acreditar
+                          </span>
+                          <span className="font-mono text-sm font-bold text-emerald-400">
+                            {formatMoney(neto, selectedOrderForManualConfirm.moneda)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                        Modo de Confirmación
+                      </label>
+                      <select
+                        value={orderConfirmLinkedTxId}
+                        onChange={(e) => setOrderConfirmLinkedTxId(e.target.value)}
+                        className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      >
+                        <option value="">
+                          ✅ Acreditar directamente sin correo del banco (Confirmación Manual por Captura)
+                        </option>
+                        {availableUnreconciledTxs.map((tx) => {
+                          const isSameAmt =
+                            Math.abs(
+                              tx.monto_bruto -
+                                selectedOrderForManualConfirm.monto_esperado
+                            ) < 0.01;
+                          return (
+                            <option key={tx.id} value={tx.id}>
+                              {isSameAmt ? '★ [MISMO MONTO] ' : ''}
+                              Vincular con correo DETECTADO: {tx.remitente_o_contraparte} ·{' '}
+                              {formatMoney(tx.monto_bruto, tx.moneda)} · Ref: {tx.referencia} (
+                              {formatDateTime(tx.fecha_transaccion)})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                        Nota de Auditoría
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={orderConfirmNotes}
+                        onChange={(e) => setOrderConfirmNotes(e.target.value)}
+                        className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                      <Dialog.Close asChild>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                        >
+                          Cancelar
+                        </button>
+                      </Dialog.Close>
+                      <button
+                        type="submit"
+                        disabled={isSubmittingOrderConfirm}
+                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-60 cursor-pointer"
+                      >
+                        {isSubmittingOrderConfirm ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4" />
+                        )}
+                        Confirmar y Acreditar ({formatMoney(neto, selectedOrderForManualConfirm.moneda)})
+                      </button>
+                    </div>
+                  </form>
                 );
               })()}
             </Dialog.Content>

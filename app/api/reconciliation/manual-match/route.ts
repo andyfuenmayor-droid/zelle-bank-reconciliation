@@ -10,6 +10,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 interface ManualMatchPayload {
+  action?: 'MATCH_TX' | 'APPROVE_ORDER_WITHOUT_EMAIL' | 'REJECT_PENDING_ORDER';
   alertId?: string;
   ordenPagoId?: string | null;
   clienteNombreManual?: string;
@@ -19,10 +20,336 @@ interface ManualMatchPayload {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = (await request.json()) as ManualMatchPayload;
+    const action = body.action ?? 'MATCH_TX';
     const alertId = body.alertId?.trim() ?? '';
     const ordenPagoId = body.ordenPagoId?.trim() || null;
     const clienteNombreManual = body.clienteNombreManual?.trim() ?? '';
     const notasConciliacion = body.notasConciliacion?.trim() ?? '';
+
+    const dbConnected = await isDatabaseAvailable();
+
+    // =========================================================================
+    // ACCIÓN 1: DESCARTAR / ELIMINAR ORDEN PENDIENTE (DUPLICADA O INVÁLIDA)
+    // =========================================================================
+    if (action === 'REJECT_PENDING_ORDER') {
+      if (!ordenPagoId) {
+        return NextResponse.json(
+          { ok: false, error: 'El identificador de la orden pendiente (ordenPagoId) es requerido.' },
+          { status: 400 }
+        );
+      }
+
+      if (!dbConnected) {
+        const store = getDemoStore();
+        const idx = store.orders.findIndex((o) => o.id === ordenPagoId && o.estado === 'PENDIENTE');
+        if (idx === -1) {
+          return NextResponse.json(
+            { ok: false, error: 'Orden pendiente no encontrada.' },
+            { status: 404 }
+          );
+        }
+        const [removed] = store.orders.splice(idx, 1);
+        return NextResponse.json({
+          ok: true,
+          mode: 'DEMO_FALLBACK',
+          deletedOrderId: ordenPagoId,
+          codigoOrden: removed?.codigo_orden,
+        });
+      }
+
+      const deletedOrder = await withTransaction(async (client) => {
+        const res = await client.query<{ id: string; codigo_orden: string; cliente_nombre: string }>(
+          `
+          DELETE FROM ordenes_pago_pendientes
+          WHERE id = $1::uuid
+            AND estado = 'PENDIENTE'
+          RETURNING id, codigo_orden, cliente_nombre;
+          `,
+          [ordenPagoId]
+        );
+        if (!res.rows[0]) {
+          throw new Error('La orden especificada no existe o ya fue conciliada.');
+        }
+        return res.rows[0];
+      });
+
+      return NextResponse.json({
+        ok: true,
+        mode: 'POSTGRESQL_LIVE',
+        deletedOrderId: deletedOrder.id,
+        codigoOrden: deletedOrder.codigo_orden,
+        clienteNombre: deletedOrder.cliente_nombre,
+      });
+    }
+
+    // =========================================================================
+    // ACCIÓN 2: CONFIRMAR Y ACREDITAR ORDEN MANUALMENTE SIN CORREO DEL BANCO
+    // =========================================================================
+    if (action === 'APPROVE_ORDER_WITHOUT_EMAIL' || (!alertId && ordenPagoId)) {
+      if (!ordenPagoId) {
+        return NextResponse.json(
+          { ok: false, error: 'El identificador de la orden pendiente (ordenPagoId) es requerido.' },
+          { status: 400 }
+        );
+      }
+
+      if (!dbConnected) {
+        const store = getDemoStore();
+        const order = store.orders.find((o) => o.id === ordenPagoId);
+        if (!order) {
+          return NextResponse.json(
+            { ok: false, error: 'La orden seleccionada no existe.' },
+            { status: 404 }
+          );
+        }
+        if (order.estado === 'CONCILIADO') {
+          return NextResponse.json(
+            { ok: false, error: 'Esta orden ya se encuentra conciliada.' },
+            { status: 400 }
+          );
+        }
+
+        const clientRecord = store.clients.find((c) => c.id === order.cliente_id);
+        const feePct = (order.plataforma_esperada || 'CITIBANK').startsWith('BINANCE')
+          ? (clientRecord?.porcentaje_comision_binance ?? 1.5)
+          : (clientRecord?.porcentaje_comision_zelle ?? 4.0);
+        const comision = Math.round(order.monto_esperado * (feePct / 100) * 100) / 100;
+        const neto = Math.round((order.monto_esperado - comision) * 100) / 100;
+        const nowIso = new Date().toISOString();
+        const newTxId = `manual-tx-${Date.now()}`;
+        const auditNote =
+          notasConciliacion.length > 0
+            ? notasConciliacion
+            : `Confirmado manualmente desde captura del portal (${order.codigo_orden}) sin correo bancario. Titular: ${order.cliente_nombre}.`;
+
+        const extIdDemo = `MANUAL-ORD-${order.codigo_orden}-${Date.now()}`;
+        const newTx: FinancialTransactionRecord = {
+          id: newTxId,
+          negocio_id: order.negocio_id,
+          external_unique_id: extIdDemo,
+          message_id: extIdDemo,
+          dedup_key: `${order.plataforma_esperada || 'CITIBANK'}:MANUAL:${order.codigo_orden}:${order.monto_esperado.toFixed(2)}`,
+          plataforma: order.plataforma_esperada || 'CITIBANK',
+          banco: order.plataforma_esperada || 'CITIBANK',
+          moneda: order.moneda || 'USD',
+          tipo_movimiento: 'RECIBIDO',
+          monto_bruto: order.monto_esperado,
+          porcentaje_comision: feePct,
+          monto_comision: comision,
+          monto_neto: neto,
+          remitente_o_contraparte:
+            order.remitente_reportado || order.nombre_remitente_reportado || order.cliente_nombre,
+          remitente_o_destinatario:
+            order.remitente_reportado || order.nombre_remitente_reportado || order.cliente_nombre,
+          referencia: order.referencia_reportada || 'SIN-REF',
+          fecha_transaccion: order.created_at,
+          origen_deteccion: 'EMAIL_AI',
+          metodo_extraccion: 'AI_FALLBACK',
+          raw_payload: {
+            source: 'MANUAL_PORTAL_APPROVAL',
+            codigo_orden: order.codigo_orden,
+          },
+          raw_body: auditNote,
+          estado: 'CONCILIADO',
+          cliente_id: order.cliente_id,
+          cliente_asignado_nombre: order.cliente_nombre,
+          orden_conciliada_id: order.id,
+          orden_pago_id: order.id,
+          codigo_orden: order.codigo_orden,
+          nota_auditoria: auditNote,
+          notas_conciliacion: auditNote,
+          conciliado_at: nowIso,
+          created_at: nowIso,
+          has_capture: Boolean(order.comprobante_base64),
+          comprobante_base64: order.comprobante_base64,
+          comprobante_mime: order.comprobante_mime,
+          datos_ocr_extraidos: order.datos_ocr_extraidos,
+        };
+
+        store.transactions.unshift(newTx);
+        order.estado = 'CONCILIADO';
+        order.transaccion_conciliada_id = newTxId;
+        order.updated_at = nowIso;
+
+        return NextResponse.json({
+          ok: true,
+          mode: 'DEMO_FALLBACK',
+          reconciledAt: nowIso,
+          alert: newTx,
+        });
+      }
+
+      const createdAlert = await withTransaction<FinancialTransactionRecord>(
+        async (client) => {
+          const orderLookup = await client.query<PendingPaymentOrder & { negocio_id?: string | null }>(
+            `
+            SELECT *
+            FROM ordenes_pago_pendientes
+            WHERE id = $1::uuid
+            FOR UPDATE;
+            `,
+            [ordenPagoId]
+          );
+
+          const targetOrder = orderLookup.rows[0];
+          if (!targetOrder) {
+            throw new Error('La orden de pago seleccionada no existe.');
+          }
+          if (targetOrder.estado === 'CONCILIADO') {
+            throw new Error(`La orden ${targetOrder.codigo_orden} ya se encuentra conciliada.`);
+          }
+
+          let effectiveFee = 4.0;
+          if (targetOrder.cliente_id) {
+            const feeRes = await client.query<{
+              porcentaje_comision_zelle: number;
+              porcentaje_comision_binance: number;
+            }>(
+              `
+              SELECT porcentaje_comision_zelle, porcentaje_comision_binance
+              FROM clientes_titulares
+              WHERE id = $1::uuid
+              LIMIT 1;
+              `,
+              [targetOrder.cliente_id]
+            );
+            const feeRow = feeRes.rows[0];
+            if (feeRow) {
+              effectiveFee = (targetOrder.plataforma_esperada || 'CITIBANK').startsWith('BINANCE')
+                ? Number(feeRow.porcentaje_comision_binance ?? 1.5)
+                : Number(feeRow.porcentaje_comision_zelle ?? 4.0);
+            }
+          }
+
+          const platform = targetOrder.plataforma_esperada || targetOrder.banco_destino || 'CITIBANK';
+          const currency = targetOrder.moneda || 'USD';
+          const senderName =
+            targetOrder.remitente_reportado ||
+            targetOrder.nombre_remitente_reportado ||
+            targetOrder.cliente_nombre ||
+            'Remitente Portal';
+          const refReported = targetOrder.referencia_reportada?.trim() || 'SIN-REF';
+          const extId = `MANUAL-ORD-${targetOrder.codigo_orden}-${Date.now()}`;
+          const dedupKey = `${platform}:MANUAL:${targetOrder.codigo_orden}:${Number(
+            targetOrder.monto_esperado
+          ).toFixed(2)}`;
+
+          const auditNote =
+            notasConciliacion.length > 0
+              ? notasConciliacion
+              : `Confirmado y acreditado manualmente por el administrador desde comprobante del portal (${targetOrder.codigo_orden}) sin correo bancario recibido. Comisión: ${effectiveFee.toFixed(2)}%.`;
+
+          const rawPayload = {
+            source: 'MANUAL_PORTAL_APPROVAL',
+            codigo_orden: targetOrder.codigo_orden,
+            remitente_reportado: senderName,
+            referencia_reportada: refReported,
+            raw_body: `Confirmación manual de captura subida en /portal (${targetOrder.codigo_orden}) por ${targetOrder.cliente_nombre}. Remitente: ${senderName} · Ref: ${refReported} · Monto: $${Number(targetOrder.monto_esperado).toFixed(2)} ${currency}.`,
+          };
+
+          const insertTxRes = await client.query<FinancialTransactionRecord>(
+            `
+            INSERT INTO financial_transactions_reconciliation (
+              negocio_id,
+              external_unique_id,
+              dedup_key,
+              plataforma,
+              moneda,
+              tipo_movimiento,
+              monto_bruto,
+              porcentaje_comision,
+              remitente_o_contraparte,
+              referencia,
+              fecha_transaccion,
+              origen_deteccion,
+              raw_payload,
+              estado,
+              cliente_id,
+              cliente_asignado_nombre,
+              orden_conciliada_id,
+              nota_auditoria,
+              conciliado_at
+            )
+            VALUES (
+              $1::uuid,
+              $2,
+              $3,
+              $4,
+              $5,
+              'RECIBIDO',
+              $6,
+              $7,
+              $8,
+              $9,
+              COALESCE($10::timestamptz, NOW()),
+              'EMAIL_AI',
+              $11::jsonb,
+              'CONCILIADO',
+              $12::uuid,
+              $13,
+              $14::uuid,
+              $15,
+              NOW()
+            )
+            RETURNING
+              *,
+              external_unique_id AS message_id,
+              plataforma AS banco,
+              remitente_o_contraparte AS remitente_o_destinatario,
+              COALESCE(raw_payload->>'raw_body', raw_payload::text) AS raw_body,
+              'AI_FALLBACK' AS metodo_extraccion,
+              orden_conciliada_id AS orden_pago_id,
+              nota_auditoria AS notas_conciliacion;
+            `,
+            [
+              targetOrder.negocio_id ?? null,
+              extId,
+              dedupKey,
+              platform,
+              currency,
+              targetOrder.monto_esperado,
+              effectiveFee,
+              senderName,
+              refReported,
+              targetOrder.created_at,
+              JSON.stringify(rawPayload),
+              targetOrder.cliente_id,
+              targetOrder.cliente_nombre,
+              targetOrder.id,
+              auditNote,
+            ]
+          );
+
+          const newTx = insertTxRes.rows[0];
+          if (!newTx) {
+            throw new Error('No se pudo crear la transacción conciliada.');
+          }
+
+          await client.query(
+            `
+            UPDATE ordenes_pago_pendientes
+            SET estado = 'CONCILIADO',
+                transaccion_conciliada_id = $1::uuid,
+                alerta_conciliada_id = $1::uuid,
+                conciliado_por = 'MANUAL_ADMIN_NO_EMAIL',
+                score_similitud = 1.0000,
+                conciliado_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $2::uuid;
+            `,
+            [newTx.id, targetOrder.id]
+          );
+
+          return newTx;
+        }
+      );
+
+      return NextResponse.json({
+        ok: true,
+        mode: 'POSTGRESQL_LIVE',
+        alert: createdAlert,
+      });
+    }
 
     if (!alertId) {
       return NextResponse.json(
@@ -41,8 +368,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 400 }
       );
     }
-
-    const dbConnected = await isDatabaseAvailable();
 
     if (!dbConnected) {
       const store = getDemoStore();
