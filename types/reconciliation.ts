@@ -345,14 +345,24 @@ export interface FinancialSummaryMetrics {
   // Bloque Zelle (Citibank + TD Bank en USD) - Exclusivo de Conciliados
   zelleBrutoRecibidoUsd: number;
   zelleComisionRetenidaUsd: number;
+  zelleNetoAcumuladoUsd?: number;
+  zelleLiquidadoUsd?: number;
   zelleNetoLiquidableUsd: number;
+  zelleCicloBrutoUsd?: number;
+  zelleCicloComisionUsd?: number;
+  zelleCicloNetoUsd?: number;
   zellePorConciliarUsd: number;
   zelleBrutoEnviadoUsd: number;
   // Bloque Binance (Pay + P2P + On-Chain en USDT) - Exclusivo de Conciliados
   binanceRecibidoUsdt: number;
   binanceComisionRetenidaUsdt: number;
+  binanceNetoAcumuladoUsdt?: number;
+  binanceLiquidadoUsdt?: number;
   binanceEnviadoUsdt: number;
   binanceNetoDisponibleUsdt: number;
+  binanceCicloBrutoUsdt?: number;
+  binanceCicloComisionUsdt?: number;
+  binanceCicloNetoUsdt?: number;
   binancePorConciliarUsdt: number;
   // Totales globales de estado
   totalBrutoRecibido: number;
@@ -360,6 +370,7 @@ export interface FinancialSummaryMetrics {
   totalNetoDisponible: number;
   totalBrutoEnviado: number;
   pagosConciliadosCount: number;
+  pagosConciliadosHistoricoCount?: number;
   pagosRevisionManualCount: number;
   pagosDetectadosCount: number;
 }

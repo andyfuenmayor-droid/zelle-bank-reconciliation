@@ -264,24 +264,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const summarySql = `
       SELECT
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_bruto,
-        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_comision,
-        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_neto_acumulado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_neto,
         COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
         COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
-        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
-        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto_acumulado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_neto,
         COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
         COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
-        COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL)::int AS conciliados_count,
-        COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL' AND liquidado_at IS NULL)::int AS revision_count,
-        COUNT(*) FILTER (WHERE estado = 'DETECTADO' AND liquidado_at IS NULL)::int AS detectados_count
+        COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO')::int AS conciliados_count,
+        COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO')::int AS conciliados_historico_count,
+        COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO')::int AS revision_count,
+        COUNT(*) FILTER (WHERE estado = 'DETECTADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO')::int AS detectados_count
       FROM financial_transactions_reconciliation
       WHERE negocio_id = $1::uuid;
     `;
 
-    const [alertsRes, ordersRes, summaryRes] = await Promise.all([
+    const liqSummarySql = `
+      SELECT
+        COALESCE(SUM(monto_liquidado) FILTER (WHERE moneda <> 'USDT'), 0)::numeric(14,2) AS zelle_liquidado,
+        COALESCE(SUM(monto_liquidado) FILTER (WHERE moneda = 'USDT'), 0)::numeric(14,2) AS binance_liquidado
+      FROM liquidaciones_clientes
+      WHERE negocio_id = $1::uuid;
+    `;
+
+    const [alertsRes, ordersRes, summaryRes, liqSummaryRes] = await Promise.all([
       dbQuery<FinancialTransactionRecord>(alertsSql, params),
       dbQuery<PendingPaymentOrder>(
         pendingOrdersSql,
@@ -290,42 +305,79 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       dbQuery<{
         zelle_bruto: number;
         zelle_comision: number;
-        zelle_neto: number;
+        zelle_neto_acumulado: number;
+        zelle_ciclo_bruto: number;
+        zelle_ciclo_comision: number;
+        zelle_ciclo_neto: number;
         zelle_por_conciliar: number;
         zelle_enviado: number;
         binance_bruto: number;
         binance_comision: number;
-        binance_neto: number;
+        binance_neto_acumulado: number;
+        binance_ciclo_bruto: number;
+        binance_ciclo_comision: number;
+        binance_ciclo_neto: number;
         binance_por_conciliar: number;
         binance_enviado: number;
         conciliados_count: number;
+        conciliados_historico_count: number;
         revision_count: number;
         detectados_count: number;
       }>(summarySql, [scope.negocioId]),
+      dbQuery<{
+        zelle_liquidado: number;
+        binance_liquidado: number;
+      }>(liqSummarySql, [scope.negocioId]),
     ]);
 
     const s = summaryRes.rows[0];
+    const lq = liqSummaryRes.rows[0];
+    const round2 = (v: number): number => Math.round(v * 100) / 100;
+    const zelleNetoAcum = Number(s?.zelle_neto_acumulado ?? 0);
+    const zelleLiq = Number(lq?.zelle_liquidado ?? 0);
+    const zelleSaldoPendiente = Math.max(0, round2(zelleNetoAcum - zelleLiq));
+    const binanceNetoAcum = Number(s?.binance_neto_acumulado ?? 0);
+    const binanceLiq = Number(lq?.binance_liquidado ?? 0);
+    const binanceSaldoPendiente = Math.max(0, round2(binanceNetoAcum - binanceLiq));
+
     const summaryMetrics: FinancialSummaryMetrics | null = s
       ? {
           zelleBrutoRecibidoUsd: Number(s.zelle_bruto ?? 0),
           zelleComisionRetenidaUsd: Number(s.zelle_comision ?? 0),
-          zelleNetoLiquidableUsd: Number(s.zelle_neto ?? 0),
+          zelleNetoAcumuladoUsd: zelleNetoAcum,
+          zelleLiquidadoUsd: zelleLiq,
+          zelleNetoLiquidableUsd: zelleSaldoPendiente,
+          zelleCicloBrutoUsd: Number(s.zelle_ciclo_bruto ?? 0),
+          zelleCicloComisionUsd: Number(s.zelle_ciclo_comision ?? 0),
+          zelleCicloNetoUsd: Number(s.zelle_ciclo_neto ?? 0),
           zellePorConciliarUsd: Number(s.zelle_por_conciliar ?? 0),
           zelleBrutoEnviadoUsd: Number(s.zelle_enviado ?? 0),
           binanceRecibidoUsdt: Number(s.binance_bruto ?? 0),
           binanceComisionRetenidaUsdt: Number(s.binance_comision ?? 0),
-          binanceNetoDisponibleUsdt: Number(s.binance_neto ?? 0),
+          binanceNetoAcumuladoUsdt: binanceNetoAcum,
+          binanceLiquidadoUsdt: binanceLiq,
+          binanceNetoDisponibleUsdt: binanceSaldoPendiente,
+          binanceCicloBrutoUsdt: Number(s.binance_ciclo_bruto ?? 0),
+          binanceCicloComisionUsdt: Number(s.binance_ciclo_comision ?? 0),
+          binanceCicloNetoUsdt: Number(s.binance_ciclo_neto ?? 0),
           binancePorConciliarUsdt: Number(s.binance_por_conciliar ?? 0),
           binanceEnviadoUsdt: Number(s.binance_enviado ?? 0),
-          totalBrutoRecibido:
-            Math.round((Number(s.zelle_bruto ?? 0) + Number(s.binance_bruto ?? 0)) * 100) / 100,
-          totalComisionDescontada:
-            Math.round((Number(s.zelle_comision ?? 0) + Number(s.binance_comision ?? 0)) * 100) / 100,
-          totalNetoDisponible:
-            Math.round((Number(s.zelle_neto ?? 0) + Number(s.binance_neto ?? 0)) * 100) / 100,
-          totalBrutoEnviado:
-            Math.round((Number(s.zelle_enviado ?? 0) + Number(s.binance_enviado ?? 0)) * 100) / 100,
+          totalBrutoRecibido: round2(
+            Number(s.zelle_bruto ?? 0) + Number(s.binance_bruto ?? 0)
+          ),
+          totalComisionDescontada: round2(
+            Number(s.zelle_comision ?? 0) + Number(s.binance_comision ?? 0)
+          ),
+          totalNetoDisponible: round2(
+            zelleSaldoPendiente + binanceSaldoPendiente
+          ),
+          totalBrutoEnviado: round2(
+            Number(s.zelle_enviado ?? 0) + Number(s.binance_enviado ?? 0)
+          ),
           pagosConciliadosCount: Number(s.conciliados_count ?? 0),
+          pagosConciliadosHistoricoCount: Number(
+            s.conciliados_historico_count ?? 0
+          ),
           pagosRevisionManualCount: Number(s.revision_count ?? 0),
           pagosDetectadosCount: Number(s.detectados_count ?? 0),
         }

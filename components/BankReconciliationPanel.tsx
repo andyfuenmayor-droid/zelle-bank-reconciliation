@@ -3116,16 +3116,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Bruto Conciliado
+                  Neto Conciliado
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-white">
-                  {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')}
+                  {formatMoney(
+                    financialMetrics.zelleNetoAcumuladoUsd ??
+                      financialMetrics.zelleNetoLiquidableUsd,
+                    'USD'
+                  )}
                 </p>
-                <span className="text-[10px] text-emerald-400/90 font-medium">
-                  {financialMetrics.pagosConciliadosCount} pagos conciliados
+                <span className="text-[10px] text-slate-400">
+                  Bruto {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')} ·{' '}
+                  {financialMetrics.pagosConciliadosHistoricoCount ??
+                    financialMetrics.pagosConciliadosCount}{' '}
+                  pagos
                 </span>
               </div>
 
@@ -3137,19 +3144,33 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   -{formatMoney(financialMetrics.zelleComisionRetenidaUsd, 'USD')}
                 </p>
                 <span className="text-[10px] text-slate-500">
-                  Cobrada sobre conciliados
+                  Ciclo actual: -
+                  {formatMoney(financialMetrics.zelleCicloComisionUsd ?? 0, 'USD')}
                 </span>
               </div>
 
-              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/30 p-3.5">
+              <div className="rounded-xl border border-rose-500/25 bg-rose-950/20 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-rose-300">
+                  Total Liquidado
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-rose-400">
+                  -{formatMoney(financialMetrics.zelleLiquidadoUsd ?? 0, 'USD')}
+                </p>
+                <span className="text-[10px] text-rose-300/70">
+                  Ya pagado a titulares
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/35 bg-emerald-950/35 p-3.5">
                 <span className="text-[11px] font-semibold uppercase text-emerald-300">
-                  Neto Liquidable
+                  Saldo Pendiente
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-emerald-400">
                   {formatMoney(financialMetrics.zelleNetoLiquidableUsd, 'USD')}
                 </p>
-                <span className="text-[10px] text-emerald-300/70">
-                  Acreditable a Clientes
+                <span className="text-[10px] text-emerald-300/80">
+                  Conciliado − Liquidado (Ciclo: +
+                  {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')})
                 </span>
               </div>
             </div>
@@ -3172,6 +3193,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     .filter((c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0)
                     .map((client) => {
                       const isSelected = selectedClientFilter === client.id;
+                      const clientLiquidadoUsd = Number(
+                        client.total_liquidado_usd ?? 0
+                      );
+                      const clientSaldoPendienteUsd = Math.max(
+                        0,
+                        Math.round(
+                          Number(
+                            client.saldo_disponible_usd ??
+                              client.total_neto_usd - clientLiquidadoUsd
+                          ) * 100
+                        ) / 100
+                      );
                       return (
                         <div
                           key={client.id}
@@ -3201,17 +3234,34 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 </span>
                               </div>
                               <p className="text-[11px] text-slate-400">
-                                Bruto: <strong className="text-slate-200">{formatMoney(client.total_bruto_usd, 'USD')}</strong> · Com ({client.porcentaje_comision_zelle}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usd, 'USD')}</span>
+                                Conciliado:{' '}
+                                <strong className="text-slate-200">
+                                  {formatMoney(client.total_neto_usd, 'USD')}
+                                </strong>{' '}
+                                (Bruto {formatMoney(client.total_bruto_usd, 'USD')} · Com{' '}
+                                <span className="text-violet-300">
+                                  -{formatMoney(client.total_comision_usd, 'USD')}
+                                </span>
+                                )
+                                {clientLiquidadoUsd > 0 && (
+                                  <>
+                                    {' '}
+                                    · Liquidado:{' '}
+                                    <strong className="text-rose-400">
+                                      -{formatMoney(clientLiquidadoUsd, 'USD')}
+                                    </strong>
+                                  </>
+                                )}
                               </p>
                             </div>
                           </div>
 
                           <div className="text-right pl-3">
                             <div className="font-mono text-sm font-bold text-emerald-400">
-                              {formatMoney(client.total_neto_usd, 'USD')}
+                              {formatMoney(clientSaldoPendienteUsd, 'USD')}
                             </div>
                             <div className="text-[10px] text-slate-400 font-medium">
-                              Neto Acreditable
+                              Saldo Pendiente
                             </div>
                           </div>
                         </div>
@@ -3257,40 +3307,56 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Total USDT Conciliado
+                  Neto Conciliado
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-white">
-                  {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
+                  {formatMoney(
+                    financialMetrics.binanceNetoAcumuladoUsdt ??
+                      financialMetrics.binanceNetoDisponibleUsdt,
+                    'USDT'
+                  )}
                 </p>
                 <span className="text-[10px] text-amber-300/80">
-                  Recibido y conciliado
+                  Bruto {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
                 </span>
               </div>
 
               <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
                 <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Comisión Retenida USDT
+                  Comisión USDT
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-violet-300">
                   -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
                 </p>
                 <span className="text-[10px] text-slate-500">
-                  Fee cobrado sobre conciliados
+                  Fee sobre conciliados
                 </span>
               </div>
 
-              <div className="rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
+              <div className="rounded-xl border border-rose-500/25 bg-rose-950/20 p-3.5">
+                <span className="text-[11px] font-medium uppercase text-rose-300">
+                  Total Liquidado
+                </span>
+                <p className="mt-1.5 font-mono text-lg font-bold text-rose-400">
+                  -{formatMoney(financialMetrics.binanceLiquidadoUsdt ?? 0, 'USDT')}
+                </p>
+                <span className="text-[10px] text-rose-300/70">
+                  Ya pagado en USDT
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-amber-500/35 bg-amber-950/25 p-3.5">
                 <span className="text-[11px] font-semibold uppercase text-amber-300">
-                  Neto USDT Liquidable
+                  Saldo Pendiente
                 </span>
                 <p className="mt-1.5 font-mono text-lg font-bold text-amber-300">
                   {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
                 </p>
-                <span className="text-[10px] text-amber-300/70">
-                  Saldo líquido USDT
+                <span className="text-[10px] text-amber-300/80">
+                  Conciliado − Liquidado
                 </span>
               </div>
             </div>
@@ -3313,6 +3379,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     .filter((c) => c.total_neto_usdt > 0)
                     .map((client) => {
                       const isSelected = selectedClientFilter === client.id;
+                      const clientLiquidadoUsdt = Number(
+                        client.total_liquidado_usdt ?? 0
+                      );
+                      const clientSaldoPendienteUsdt = Math.max(
+                        0,
+                        Math.round(
+                          Number(
+                            client.saldo_disponible_usdt ??
+                              client.total_neto_usdt - clientLiquidadoUsdt
+                          ) * 100
+                        ) / 100
+                      );
                       return (
                         <div
                           key={client.id}
@@ -3336,16 +3414,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 {client.nombre_titular}
                               </div>
                               <p className="text-[11px] text-slate-400">
-                                Fee ({client.porcentaje_comision_binance}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usdt, 'USDT')}</span>
+                                Conciliado: <strong className="text-slate-200">{formatMoney(client.total_neto_usdt, 'USDT')}</strong> · Fee ({client.porcentaje_comision_binance}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usdt, 'USDT')}</span>
+                                {clientLiquidadoUsdt > 0 && (
+                                  <>
+                                    {' '}
+                                    · Liquidado:{' '}
+                                    <strong className="text-rose-400">
+                                      -{formatMoney(clientLiquidadoUsdt, 'USDT')}
+                                    </strong>
+                                  </>
+                                )}
                               </p>
                             </div>
                           </div>
                           <div className="text-right pl-3">
                             <div className="font-mono text-sm font-bold text-amber-300">
-                              {formatMoney(client.total_neto_usdt, 'USDT')}
+                              {formatMoney(clientSaldoPendienteUsdt, 'USDT')}
                             </div>
                             <div className="text-[10px] text-slate-400">
-                              Neto USDT
+                              Saldo Pendiente
                             </div>
                           </div>
                         </div>
@@ -3505,11 +3592,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     >
                       <option value="TODOS">Todos los Titulares</option>
                       <option value="SIN_ASIGNAR">⚠️ Sin Cliente (En Espera)</option>
-                      {clients.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          👤 {c.nombre_titular} ({formatMoney(c.total_neto_usd, 'USD')} neto)
-                        </option>
-                      ))}
+                      {clients.map((c) => {
+                        const cSaldo = Math.max(
+                          0,
+                          Math.round(
+                            Number(
+                              c.saldo_disponible_usd ??
+                                c.total_neto_usd - (c.total_liquidado_usd ?? 0)
+                            ) * 100
+                          ) / 100
+                        );
+                        return (
+                          <option key={c.id} value={c.id}>
+                            👤 {c.nombre_titular} ({formatMoney(cSaldo, 'USD')} pendiente)
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                 </div>

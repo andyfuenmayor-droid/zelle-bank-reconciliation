@@ -1888,6 +1888,19 @@ export default function ClientPaymentPortal(): React.JSX.Element {
               sumComision = Math.round(sumComision * 100) / 100;
               sumNeto = Math.round(sumNeto * 100) / 100;
 
+              const walletTotalAcreditadoUsd = Number(
+                wallet.totalAcreditadoUsd ??
+                  wallet.saldoNetoUsd + (wallet.totalLiquidadoUsd ?? 0)
+              );
+              const walletTotalLiquidadoUsd = Number(
+                wallet.totalLiquidadoUsd ?? 0
+              );
+              const walletSaldoPendienteUsd = Number(wallet.saldoNetoUsd ?? 0);
+              const saldoAnteriorRestanteUsd = Math.max(
+                0,
+                Math.round((walletSaldoPendienteUsd - sumNeto) * 100) / 100
+              );
+
               const handleCopyShortSummary = async (): Promise<void> => {
                 const directSuffix =
                   filteredDirectCount > 0
@@ -1895,8 +1908,13 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     : '';
                 const lines: string[] = [
                   `📊 RESUMEN DE PAGOS Y CONCILIACIONES - ${client.nombre_titular.toUpperCase()}`,
-                  `Total registros: ${filteredReportOrders.length} (${filteredConciliadosCount} conciliados, ${filteredReportOrders.length - filteredConciliadosCount} pendientes${directSuffix})`,
-                  `Bruto Conciliado: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto Acreditado: $${sumNeto.toFixed(2)} USD`,
+                  `Ciclo actual: ${filteredReportOrders.length} registro(s) (${filteredConciliadosCount} conciliados, ${filteredReportOrders.length - filteredConciliadosCount} pendientes${directSuffix})`,
+                  `Ciclo actual -> Bruto: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto ciclo: +$${sumNeto.toFixed(2)} USD`,
+                  ...(walletTotalLiquidadoUsd > 0
+                    ? [
+                        `Balance Total -> Conciliado Neto: $${walletTotalAcreditadoUsd.toFixed(2)} USD − Liquidado: -$${walletTotalLiquidadoUsd.toFixed(2)} USD = Saldo Pendiente: $${walletSaldoPendienteUsd.toFixed(2)} USD`,
+                      ]
+                    : []),
                   `------------------------------------------------------------`,
                 ];
                 filteredReportOrders.forEach((o, i) => {
@@ -1959,6 +1977,41 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       )}
                     </button>
                   </div>
+
+                  {/* Resumen de Balance Acumulado: Conciliado - Liquidado = Saldo Pendiente */}
+                  {walletTotalLiquidadoUsd > 0 && (
+                    <div className="mb-4 grid grid-cols-1 gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3.5 sm:grid-cols-3">
+                      <div className="rounded-lg border border-slate-800/80 bg-slate-950/70 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-slate-400">
+                          Total Conciliado Neto
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                          ${walletTotalAcreditadoUsd.toFixed(2)} USD
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-rose-500/25 bg-rose-950/20 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-rose-300">
+                          Menos Total Liquidado
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-rose-400">
+                          -${walletTotalLiquidadoUsd.toFixed(2)} USD
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/35 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                          Saldo Pendiente Total
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                          ${walletSaldoPendienteUsd.toFixed(2)} USD
+                        </p>
+                        {saldoAnteriorRestanteUsd > 0 && (
+                          <span className="text-[10px] text-emerald-300/80">
+                            Saldo ant. ${saldoAnteriorRestanteUsd.toFixed(2)} + Ciclo +${sumNeto.toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Tarjetas de Totales Rápidos del Reporte */}
                   <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
