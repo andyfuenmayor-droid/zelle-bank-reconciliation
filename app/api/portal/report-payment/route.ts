@@ -119,12 +119,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (!comprobanteBase64 || comprobanteBase64.length < 30) {
+    if (
+      !comprobanteBase64 ||
+      comprobanteBase64.length < 100 ||
+      !comprobanteBase64.startsWith('data:image/')
+    ) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            'La captura de pantalla del comprobante es obligatoria.',
+            'La captura de pantalla del comprobante de pago es obligatoria. Debes adjuntar la imagen del comprobante para enviar el reporte.',
         },
         { status: 400 }
       );

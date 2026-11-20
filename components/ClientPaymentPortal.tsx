@@ -12,7 +12,6 @@ import {
   Copy,
   DollarSign,
   Eye,
-  ImagePlus,
   KeyRound,
   Loader2,
   LogOut,
@@ -25,7 +24,6 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { buildSampleReceiptBase64 } from '@/lib/mock-seed-data';
 import {
   AssignedReceivingAccount,
   ClientAccountRecord,
@@ -504,10 +502,19 @@ export default function ClientPaymentPortal(): React.JSX.Element {
       if (!file) {
         return;
       }
+      if (!file.type.startsWith('image/')) {
+        setReportFeedback({
+          type: 'error',
+          title: 'Archivo inválido (Captura obligatoria)',
+          detail: 'Debes subir un archivo de imagen válido (PNG, JPG o WEBP) con la captura del comprobante.',
+        });
+        return;
+      }
       try {
         const compressed = await compressImageFileToBase64(file);
         setReceiptBase64(compressed.base64);
         setReceiptMime(compressed.mime);
+        setReportFeedback(null);
         // Escanear e identificar con IA inmediatamente al cargar la imagen
         await triggerAiScan(compressed.base64);
       } catch (err: unknown) {
@@ -547,32 +554,30 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     return () => window.removeEventListener('paste', handlePaste);
   }, [client, handleFilePicked]);
 
-  const handleGenerateSampleCapture = (): void => {
-    const sampleAmount = monto.trim() || (moneda === 'USDT' ? '500.00' : '650.00');
-    const sampleRef =
-      referencia.trim() ||
-      (plataforma === 'BINANCE_ONCHAIN' ? 'TX88492011A9F82C1' : 'CITI665091200');
-    const sampleSender =
-      remitente.trim() || client?.nombre_titular || 'JORGE LUIS VILLAMIZAR';
-
-    const svgDataUrl = buildSampleReceiptBase64({
-      plataforma,
-      monto: moneda === 'USD' ? `$${sampleAmount}` : sampleAmount,
-      moneda,
-      remitente: sampleSender,
-      referencia: sampleRef,
-      fecha: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    });
-    setReceiptBase64(svgDataUrl);
-    setReceiptMime('image/svg+xml');
-    void triggerAiScan(svgDataUrl);
-  };
-
   const handleSubmitPaymentReport = async (
     event: React.FormEvent<HTMLFormElement>
   ): Promise<void> => {
     event.preventDefault();
     if (!client) {
+      return;
+    }
+
+    if (
+      !receiptBase64 ||
+      receiptBase64.length < 100 ||
+      !receiptBase64.startsWith('data:image/')
+    ) {
+      setReportFeedback({
+        type: 'error',
+        title: 'Captura de comprobante obligatoria',
+        detail:
+          'Es obligatorio subir o pegar la captura de pantalla del comprobante de pago en el Paso 1 antes de enviar el reporte.',
+      });
+      setShowToast({
+        type: 'error',
+        title: 'Falta la captura del pago',
+        message: 'Debes adjuntar obligatoriamente la imagen del comprobante en el Paso 1.',
+      });
       return;
     }
 
@@ -1030,35 +1035,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       Reportar Nuevo Pago
                     </h3>
                   </div>
-                  {sourceMode !== 'POSTGRESQL_LIVE' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPlataforma('BINANCE_ONCHAIN');
-                        setMoneda('USDT');
-                        setMonto('500.00');
-                        setRemitente(client.nombre_titular);
-                        setReferencia('TX88492011A9F82C1');
-                        setReceiptBase64(
-                          buildSampleReceiptBase64({
-                            plataforma: 'BINANCE_ONCHAIN',
-                            monto: '500.00',
-                            moneda: 'USDT',
-                            remitente: client.nombre_titular,
-                            referencia: 'TX88492011A9F82C1',
-                            fecha: new Date()
-                              .toISOString()
-                              .slice(0, 16)
-                              .replace('T', ' '),
-                          })
-                        );
-                        setReceiptMime('image/svg+xml');
-                      }}
-                      className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300 hover:bg-amber-500/20"
-                    >
-                      Probar Match Instantáneo (500 USDT)
-                    </button>
-                  )}
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-amber-300">
+                    Captura Obligatoria
+                  </span>
                 </div>
 
                 <form
@@ -1077,22 +1056,15 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         <label className="text-xs font-bold uppercase tracking-wider text-emerald-300">
                           Sube la Captura o Comprobante de Pago *
                         </label>
+                        <span className="rounded border border-rose-500/40 bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-rose-300">
+                          Obligatorio
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
                           <Sparkles className="h-3 w-3 animate-pulse text-emerald-400" />
                           Identificación con IA Activa
                         </span>
-                        {sourceMode !== 'POSTGRESQL_LIVE' && (
-                          <button
-                            type="button"
-                            onClick={handleGenerateSampleCapture}
-                            className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-950/40 px-2 py-0.5 text-[11px] font-semibold text-sky-300 hover:bg-sky-900/40"
-                          >
-                            <ImagePlus className="h-3 w-3" />
-                            Ejemplo IA
-                          </button>
-                        )}
                       </div>
                     </div>
 
@@ -1552,10 +1524,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     )}
 
                     {!receiptBase64 && (
-                      <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400">
-                        <UploadCloud className="h-4 w-4 shrink-0 text-emerald-400" />
+                      <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/40 bg-amber-950/40 p-3.5 text-xs text-amber-200">
+                        <UploadCloud className="h-4 w-4 shrink-0 text-amber-400" />
                         <span>
-                          Sube o arrastra la captura de tu comprobante en el <strong>Paso 1</strong> para habilitar el botón de confirmación.
+                          <strong>Captura de comprobante obligatoria:</strong> Debes subir, arrastrar o pegar la imagen de tu comprobante en el <strong>Paso 1</strong> para poder enviar el reporte.
                         </span>
                       </div>
                     )}
