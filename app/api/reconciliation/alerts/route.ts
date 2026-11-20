@@ -40,6 +40,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const moneda = searchParams.get('moneda');
   const search = searchParams.get('search')?.trim() ?? '';
   const includeLiquidated = searchParams.get('includeLiquidated') === '1';
+  const includeDiscarded = searchParams.get('includeDiscarded') === '1';
 
   const dbConnected = await isDatabaseAvailable();
 
@@ -58,6 +59,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         demoNegocioId &&
         (item.negocio_id ?? store.businessUsers[0]?.id) !== demoNegocioId
       ) {
+        return false;
+      }
+      if (!includeDiscarded && estado !== 'DESCARTADO' && item.estado === 'DESCARTADO') {
         return false;
       }
       if (plataforma && plataforma !== 'TODOS' && item.plataforma !== plataforma) {
@@ -108,6 +112,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!includeLiquidated) {
       conditions.push(`t.liquidado_at IS NULL`);
+    }
+
+    if (!includeDiscarded && estado !== 'DESCARTADO') {
+      conditions.push(`t.estado <> 'DESCARTADO'`);
     }
 
     if (plataforma && plataforma !== 'TODOS') {
@@ -270,16 +278,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_bruto,
         COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_comision,
         COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_ciclo_neto,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado IN ('DETECTADO', 'REVISION_MANUAL') AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND estado <> 'DESCARTADO' AND liquidado_at IS NULL AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
         COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
         COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
         COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto_acumulado,
         COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_bruto,
         COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_comision,
         COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_ciclo_neto,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado IN ('DETECTADO', 'REVISION_MANUAL') AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND estado <> 'DESCARTADO' AND liquidado_at IS NULL AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
         COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO')::int AS conciliados_count,
         COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO')::int AS conciliados_historico_count,
         COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO')::int AS revision_count,
@@ -666,6 +674,254 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       error instanceof Error
         ? error.message
         : 'Error al procesar correo bancario.';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+let discardConstraintEnsured = false;
+
+async function ensureDiscardSchemaReady(): Promise<void> {
+  if (discardConstraintEnsured) {
+    return;
+  }
+  await dbQuery(
+    'ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS descartado_at TIMESTAMPTZ;'
+  );
+  await dbQuery(`
+    DO $$
+    BEGIN
+      ALTER TABLE financial_transactions_reconciliation DROP CONSTRAINT IF EXISTS financial_transactions_reconciliation_estado_check;
+      ALTER TABLE financial_transactions_reconciliation ADD CONSTRAINT financial_transactions_reconciliation_estado_check
+        CHECK (estado IN ('DETECTADO', 'CONCILIADO', 'REVISION_MANUAL', 'DESCARTADO'));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
+  `);
+  discardConstraintEnsured = true;
+}
+
+interface DiscardAlertsBody {
+  alertId?: string;
+  alertIds?: string[];
+  reason?: string;
+}
+
+/**
+ * Marca uno o varios correos bancarios no conciliados como `DESCARTADO`
+ * (correos propios o ajenos a la conciliación).
+ * Conserva el `external_unique_id` / `dedup_key` en BD para evitar que el
+ * sincronizador IMAP vuelva a descargarlos en el futuro.
+ */
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
+  try {
+    const body = (await request.json()) as DiscardAlertsBody;
+    const rawIds = [
+      ...(body.alertId ? [body.alertId] : []),
+      ...(Array.isArray(body.alertIds) ? body.alertIds : []),
+    ]
+      .map((id) => String(id).trim())
+      .filter((id) => id.length > 0);
+
+    const uniqueIds = Array.from(new Set(rawIds));
+    if (uniqueIds.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: 'Debes indicar al menos un correo para eliminar.' },
+        { status: 400 }
+      );
+    }
+
+    const reason = (
+      body.reason?.trim() || 'Correo propio o ajeno a la conciliación (eliminado por administrador)'
+    ).slice(0, 300);
+
+    const dbConnected = await isDatabaseAvailable();
+
+    if (!dbConnected) {
+      const store = getDemoStore();
+      const nowIso = new Date().toISOString();
+      const discardedIds: string[] = [];
+
+      for (const tx of store.transactions) {
+        if (
+          uniqueIds.includes(tx.id) &&
+          tx.estado !== 'CONCILIADO' &&
+          !tx.liquidado_at &&
+          !tx.orden_conciliada_id
+        ) {
+          tx.estado = 'DESCARTADO';
+          tx.descartado_at = nowIso;
+          tx.nota_auditoria = `Descartado: ${reason}`;
+          tx.notas_conciliacion = `Descartado: ${reason}`;
+          discardedIds.push(tx.id);
+        }
+      }
+
+      if (discardedIds.length === 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              'Ninguno de los correos seleccionados puede eliminarse (ya están conciliados o liquidados).',
+          },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        mode: 'DEMO_FALLBACK',
+        discardedCount: discardedIds.length,
+        discardedIds,
+        skippedCount: uniqueIds.length - discardedIds.length,
+      });
+    }
+
+    await ensureDiscardSchemaReady();
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const validUuids = uniqueIds.filter((id) => uuidRegex.test(id));
+    if (validUuids.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: 'Identificadores de correo inválidos.' },
+        { status: 400 }
+      );
+    }
+
+    const auditLine = `[DESCARTADO ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC] ${reason}`;
+
+    const updateRes = await dbQuery<{ id: string }>(
+      `
+      UPDATE financial_transactions_reconciliation
+      SET estado = 'DESCARTADO',
+          descartado_at = NOW(),
+          nota_auditoria = CASE
+            WHEN nota_auditoria IS NULL OR TRIM(nota_auditoria) = '' THEN $3
+            ELSE nota_auditoria || chr(10) || $3
+          END
+      WHERE id = ANY($1::uuid[])
+        AND ($2::uuid IS NULL OR negocio_id = $2::uuid OR negocio_id IS NULL)
+        AND estado IN ('DETECTADO', 'REVISION_MANUAL')
+        AND liquidado_at IS NULL
+        AND orden_conciliada_id IS NULL
+      RETURNING id;
+      `,
+      [validUuids, authorizedNegocioId || null, auditLine]
+    );
+
+    const discardedIds = updateRes.rows.map((r) => r.id);
+    if (discardedIds.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'No se pudo eliminar ningún correo. Solo se pueden eliminar correos que no estén conciliados ni liquidados.',
+        },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      mode: 'POSTGRESQL_LIVE',
+      discardedCount: discardedIds.length,
+      discardedIds,
+      skippedCount: validUuids.length - discardedIds.length,
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Error al eliminar correos seleccionados.';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+interface RestoreAlertBody {
+  action?: 'RESTORE';
+  alertId?: string;
+}
+
+/**
+ * Restaura un correo previamente descartado devolviéndolo al estado `DETECTADO`.
+ */
+export async function PATCH(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
+  try {
+    const body = (await request.json()) as RestoreAlertBody;
+    const alertId = body.alertId?.trim() ?? '';
+    if (!alertId) {
+      return NextResponse.json(
+        { ok: false, error: 'El identificador del correo (alertId) es requerido.' },
+        { status: 400 }
+      );
+    }
+
+    const dbConnected = await isDatabaseAvailable();
+    if (!dbConnected) {
+      const store = getDemoStore();
+      const tx = store.transactions.find(
+        (t) => t.id === alertId && t.estado === 'DESCARTADO'
+      );
+      if (!tx) {
+        return NextResponse.json(
+          { ok: false, error: 'Correo descartado no encontrado.' },
+          { status: 404 }
+        );
+      }
+      tx.estado = 'DETECTADO';
+      tx.descartado_at = null;
+      return NextResponse.json({
+        ok: true,
+        mode: 'DEMO_FALLBACK',
+        restoredId: tx.id,
+      });
+    }
+
+    await ensureDiscardSchemaReady();
+
+    const restoreRes = await dbQuery<{ id: string }>(
+      `
+      UPDATE financial_transactions_reconciliation
+      SET estado = 'DETECTADO',
+          descartado_at = NULL,
+          nota_auditoria = CASE
+            WHEN nota_auditoria IS NULL OR TRIM(nota_auditoria) = '' THEN 'Restaurado a DETECTADO por administrador'
+            ELSE nota_auditoria || chr(10) || '[RESTAURADO] Devuelto a DETECTADO por administrador'
+          END
+      WHERE id = $1::uuid
+        AND ($2::uuid IS NULL OR negocio_id = $2::uuid OR negocio_id IS NULL)
+        AND estado = 'DESCARTADO'
+      RETURNING id;
+      `,
+      [alertId, authorizedNegocioId || null]
+    );
+
+    if (!restoreRes.rows[0]) {
+      return NextResponse.json(
+        { ok: false, error: 'El correo no existe o no se encuentra en estado DESCARTADO.' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      mode: 'POSTGRESQL_LIVE',
+      restoredId: restoreRes.rows[0].id,
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : 'Error al restaurar correo.';
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }

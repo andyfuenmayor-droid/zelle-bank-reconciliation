@@ -510,6 +510,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [showLiquidatedHistory, setShowLiquidatedHistory] =
     useState<boolean>(false);
+  const [showDiscardedHistory, setShowDiscardedHistory] =
+    useState<boolean>(false);
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('TODOS');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [liqSearch, setLiqSearch] = useState<string>('');
@@ -556,6 +558,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     useState<BankEmailAlertRecord | null>(null);
   const [revertReason, setRevertReason] = useState<string>('');
   const [isSubmittingRevert, setIsSubmittingRevert] = useState<boolean>(false);
+
+  // Modal Eliminar / Descartar Correos Propios o Ajenos a la Conciliación
+  const [alertsToDiscard, setAlertsToDiscard] = useState<BankEmailAlertRecord[]>([]);
+  const [discardReason, setDiscardReason] = useState<string>(
+    'Correo propio / no corresponde a conciliación'
+  );
+  const [isSubmittingDiscard, setIsSubmittingDiscard] = useState<boolean>(false);
+  const [restoringAlertId, setRestoringAlertId] = useState<string | null>(null);
 
   // Modal Inspector Crudo / Payload
   const [inspectedAlert, setInspectedAlert] =
@@ -697,8 +707,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     setIsLoading(true);
     try {
       const reqHeaders = buildScopeHeaders(false);
-      const alertsUrl = showLiquidatedHistory
-        ? '/api/reconciliation/alerts?includeLiquidated=1'
+      const alertQueryParams = new URLSearchParams();
+      if (showLiquidatedHistory) {
+        alertQueryParams.set('includeLiquidated', '1');
+      }
+      if (showDiscardedHistory) {
+        alertQueryParams.set('includeDiscarded', '1');
+      }
+      const alertQueryStr = alertQueryParams.toString();
+      const alertsUrl = alertQueryStr
+        ? `/api/reconciliation/alerts?${alertQueryStr}`
         : '/api/reconciliation/alerts';
       const [alertsRes, clientsRes, mailboxesRes, authRes, liqRes] = await Promise.all([
         fetch(alertsUrl, {
@@ -818,7 +836,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId, showLiquidatedHistory]);
+  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId, showLiquidatedHistory, showDiscardedHistory]);
 
   // Restaurar sesión de negocio desde localStorage y revisar ?login=1
   useEffect(() => {
@@ -1071,6 +1089,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     let pagosDetectadosCount = 0;
 
     for (const item of alerts) {
+      if (item.estado === 'DESCARTADO') {
+        continue;
+      }
       const isBinance =
         item.plataforma.startsWith('BINANCE') || item.moneda === 'USDT';
 
@@ -1230,7 +1251,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const eligibleAlertsForBatch = useMemo(
     () =>
       filteredAlerts.filter(
-        (a) => a.estado !== 'CONCILIADO' && a.tipo_movimiento === 'RECIBIDO'
+        (a) =>
+          a.estado !== 'CONCILIADO' &&
+          a.estado !== 'DESCARTADO' &&
+          !a.liquidado_at
       ),
     [filteredAlerts]
   );
@@ -1773,6 +1797,113 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       setBannerMessage({ type: 'error', text: msg });
     } finally {
       setIsSubmittingRevert(false);
+    }
+  };
+
+  const openDiscardModalForAlerts = (targets: BankEmailAlertRecord[]): void => {
+    const valid = targets.filter(
+      (a) =>
+        a.estado !== 'CONCILIADO' &&
+        a.estado !== 'DESCARTADO' &&
+        !a.liquidado_at
+    );
+    if (valid.length === 0) {
+      setBannerMessage({
+        type: 'warning',
+        text: 'Solo se pueden eliminar correos que no estén conciliados ni liquidados.',
+      });
+      return;
+    }
+    setAlertsToDiscard(valid);
+    setDiscardReason('Correo propio / no corresponde a conciliación');
+  };
+
+  const handleConfirmDiscardAlerts = async (
+    event: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    if (alertsToDiscard.length === 0) {
+      return;
+    }
+    setIsSubmittingDiscard(true);
+    try {
+      const targetIds = alertsToDiscard.map((a) => a.id);
+      const response = await fetch('/api/reconciliation/alerts', {
+        method: 'DELETE',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          alertIds: targetIds,
+          reason:
+            discardReason.trim() ||
+            'Correo propio / no corresponde a conciliación',
+        }),
+      });
+      const result = (await response.json()) as {
+        ok: boolean;
+        discardedCount?: number;
+        discardedIds?: string[];
+        error?: string;
+      };
+      if (!response.ok || !result.ok) {
+        throw new Error(
+          result.error ?? 'No se pudieron eliminar los correos seleccionados.'
+        );
+      }
+      const discardedSet = new Set(result.discardedIds ?? targetIds);
+      setSelectedAlertIds((prev) => prev.filter((id) => !discardedSet.has(id)));
+      setAlertsToDiscard([]);
+      await fetchAllData();
+      setBannerMessage({
+        type: 'success',
+        text:
+          (result.discardedCount ?? targetIds.length) === 1
+            ? 'Correo eliminado de la lista activa (no volverá a importarse en futuras sincronizaciones IMAP).'
+            : `${result.discardedCount ?? targetIds.length} correos eliminados de la lista activa (no volverán a importarse en futuras sincronizaciones IMAP).`,
+      });
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al eliminar correos.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setIsSubmittingDiscard(false);
+    }
+  };
+
+  const handleRestoreDiscardedAlert = async (
+    alert: BankEmailAlertRecord
+  ): Promise<void> => {
+    setRestoringAlertId(alert.id);
+    try {
+      const response = await fetch('/api/reconciliation/alerts', {
+        method: 'PATCH',
+        headers: buildScopeHeaders(true),
+        body: JSON.stringify({
+          action: 'RESTORE',
+          alertId: alert.id,
+        }),
+      });
+      const result = (await response.json()) as {
+        ok: boolean;
+        error?: string;
+      };
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error ?? 'No se pudo restaurar el correo.');
+      }
+      await fetchAllData();
+      setBannerMessage({
+        type: 'success',
+        text: `Correo (${alert.remitente_o_contraparte} · ${formatMoney(alert.monto_bruto, alert.moneda)}) restaurado a la lista activa.`,
+      });
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error
+          ? error.message
+          : 'Error inesperado al restaurar correo.';
+      setBannerMessage({ type: 'error', text: msg });
+    } finally {
+      setRestoringAlertId(null);
     }
   };
 
@@ -3665,6 +3796,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <option value="CONCILIADO">Conciliado</option>
                       <option value="REVISION_MANUAL">Revisión Manual</option>
                       <option value="DETECTADO">Detectado</option>
+                      {showDiscardedHistory && (
+                        <option value="DESCARTADO">Eliminados / Descartados</option>
+                      )}
                     </select>
                   </div>
                 </div>
@@ -3672,23 +3806,51 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
                 <p className="text-xs text-slate-400">
-                  {showLiquidatedHistory
-                    ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
-                    : 'Mostrando únicamente el ciclo activo actual (las transacciones liquidadas están archivadas).'}
+                  {showLiquidatedHistory && showDiscardedHistory
+                    ? 'Mostrando ciclo activo + historial liquidado + correos eliminados/descartados.'
+                    : showLiquidatedHistory
+                      ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
+                      : showDiscardedHistory
+                        ? 'Mostrando ciclo activo + correos eliminados/descartados (puedes restaurarlos).'
+                        : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados están ocultos).'}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowLiquidatedHistory((prev) => !prev)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-                    showLiquidatedHistory
-                      ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
-                      : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
-                  }`}
-                >
-                  {showLiquidatedHistory
-                    ? 'Ocultar Historial Liquidado'
-                    : 'Ver Historial Liquidado'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDiscardedHistory((prev) => {
+                        const next = !prev;
+                        if (!next && statusFilter === 'DESCARTADO') {
+                          setStatusFilter('TODOS');
+                        }
+                        return next;
+                      });
+                    }}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      showDiscardedHistory
+                        ? 'border-rose-500/50 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
+                        : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
+                    }`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {showDiscardedHistory
+                      ? 'Ocultar Eliminados'
+                      : 'Ver Correos Eliminados'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowLiquidatedHistory((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                      showLiquidatedHistory
+                        ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
+                        : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
+                    }`}
+                  >
+                    {showLiquidatedHistory
+                      ? 'Ocultar Historial Liquidado'
+                      : 'Ver Historial Liquidado'}
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -3716,23 +3878,53 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
+                      const receivedOnlyIds = alerts
+                        .filter(
+                          (a) =>
+                            selectedAlertIds.includes(a.id) &&
+                            a.tipo_movimiento === 'RECIBIDO'
+                        )
+                        .map((a) => a.id);
+                      if (receivedOnlyIds.length === 0) {
+                        setBannerMessage({
+                          type: 'warning',
+                          text: 'Solo se pueden asignar al cliente pagos de tipo RECIBIDO. Los correos ENVIADOS solo pueden eliminarse.',
+                        });
+                        return;
+                      }
+                      if (receivedOnlyIds.length !== selectedAlertIds.length) {
+                        setSelectedAlertIds(receivedOnlyIds);
+                      }
                       setBatchTargetClient('');
                       setBatchNotes('Asignación masiva por lote (auditoría)');
                       setIsBatchModalOpen(true);
                     }}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:bg-emerald-400"
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:bg-emerald-400 cursor-pointer"
                   >
                     <UserCheck className="h-4 w-4" />
                     Asignar pagos seleccionados al cliente...
                   </button>
                   <button
                     type="button"
+                    onClick={() => {
+                      const selectedRecords = alerts.filter((a) =>
+                        selectedAlertIds.includes(a.id)
+                      );
+                      openDiscardModalForAlerts(selectedRecords);
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-rose-500/50 bg-rose-600/90 px-4 py-2 text-xs font-bold text-white shadow-md transition hover:bg-rose-500 cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Eliminar seleccionados ({selectedAlertIds.length})
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setSelectedAlertIds([])}
-                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800 cursor-pointer"
                   >
                     Deseleccionar todos
                   </button>
@@ -4050,7 +4242,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           >
                             <td className="w-9 px-2 py-3 text-center">
                               {alert.estado !== 'CONCILIADO' &&
-                              alert.tipo_movimiento === 'RECIBIDO' ? (
+                              alert.estado !== 'DESCARTADO' &&
+                              !alert.liquidado_at ? (
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
@@ -4242,6 +4435,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                       DETECTADO
                                     </span>
                                   )}
+                                  {alert.estado === 'DESCARTADO' && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/35 bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300">
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                      ELIMINADO
+                                    </span>
+                                  )}
                                 </>
                               )}
                             </td>
@@ -4270,6 +4469,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 </button>
 
                                 {alert.estado !== 'CONCILIADO' &&
+                                  alert.estado !== 'DESCARTADO' &&
+                                  !alert.liquidado_at &&
                                   alert.tipo_movimiento === 'RECIBIDO' && (
                                     <button
                                       type="button"
@@ -4285,6 +4486,37 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                       Conciliar
                                     </button>
                                   )}
+
+                                {alert.estado !== 'CONCILIADO' &&
+                                  alert.estado !== 'DESCARTADO' &&
+                                  !alert.liquidado_at && (
+                                    <button
+                                      type="button"
+                                      onClick={() => openDiscardModalForAlerts([alert])}
+                                      className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 cursor-pointer"
+                                      title="Eliminar correo propio o que no corresponde a conciliación"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                      Eliminar
+                                    </button>
+                                  )}
+
+                                {alert.estado === 'DESCARTADO' && (
+                                  <button
+                                    type="button"
+                                    disabled={restoringAlertId === alert.id}
+                                    onClick={() => void handleRestoreDiscardedAlert(alert)}
+                                    className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/30 disabled:opacity-50 cursor-pointer"
+                                    title="Restaurar correo a la lista activa"
+                                  >
+                                    {restoringAlertId === alert.id ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : (
+                                      <RotateCcw className="h-3 w-3" />
+                                    )}
+                                    Restaurar
+                                  </button>
+                                )}
 
                                 {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
                                   <button
@@ -7519,6 +7751,183 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         <RotateCcw className="h-4 w-4" />
                       )}
                       Confirmar Reversión
+                    </button>
+                  </div>
+                </form>
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+
+        {/* Modal Eliminar / Descartar Correos Propios o Ajenos a la Conciliación */}
+        <Dialog.Root
+          open={alertsToDiscard.length > 0}
+          onOpenChange={(open) => {
+            if (!open && !isSubmittingDiscard) {
+              setAlertsToDiscard([]);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-rose-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/15 text-rose-400">
+                    <Trash2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <Dialog.Title className="text-base font-bold text-white">
+                      {alertsToDiscard.length === 1
+                        ? 'Eliminar Correo de la Lista Activa'
+                        : `Eliminar ${alertsToDiscard.length} Correos Seleccionados`}
+                    </Dialog.Title>
+                    <Dialog.Description className="mt-0.5 text-xs text-slate-400">
+                      Correos propios o transferencias que nadie va a confirmar
+                    </Dialog.Description>
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {alertsToDiscard.length > 0 && (
+                <form
+                  onSubmit={(e) => void handleConfirmDiscardAlerts(e)}
+                  className="mt-4 space-y-4"
+                >
+                  {alertsToDiscard.length === 1 ? (
+                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3.5 text-xs space-y-1.5">
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Remitente:</span>
+                        <span className="font-semibold text-white">
+                          {alertsToDiscard[0]?.remitente_o_contraparte || 'Desconocido'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Referencia:</span>
+                        <span className="font-mono text-slate-200">
+                          {alertsToDiscard[0]?.referencia || 'SIN-REF'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Fecha Correo:</span>
+                        <span className="text-slate-200">
+                          {formatDateTime(alertsToDiscard[0]?.fecha_transaccion ?? null)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-400">Monto:</span>
+                        <span className="font-mono font-bold text-rose-300">
+                          {formatMoney(
+                            alertsToDiscard[0]?.monto_bruto ?? 0,
+                            alertsToDiscard[0]?.moneda ?? 'USD'
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3.5 text-xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Cantidad seleccionada:</span>
+                        <span className="font-bold text-white">
+                          {alertsToDiscard.length} correos sin conciliar
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Monto total excluido:</span>
+                        <span className="font-mono font-bold text-rose-300">
+                          $
+                          {alertsToDiscard
+                            .reduce((acc, item) => acc + Number(item.monto_bruto || 0), 0)
+                            .toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="max-h-28 overflow-y-auto border-t border-slate-800 pt-2 space-y-1">
+                        {alertsToDiscard.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between text-[11px] text-slate-300"
+                          >
+                            <span className="truncate pr-2">
+                              {item.remitente_o_contraparte} · {item.referencia || 'SIN-REF'}
+                            </span>
+                            <span className="font-mono font-semibold text-white">
+                              {formatMoney(item.monto_bruto, item.moneda)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <label
+                      htmlFor="discard-reason"
+                      className="block text-xs font-semibold uppercase tracking-wide text-slate-300"
+                    >
+                      Motivo de eliminación
+                    </label>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {[
+                        'Correo propio / transferencia personal',
+                        'No corresponde a conciliación',
+                        'Transferencia interna sin cliente',
+                      ].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setDiscardReason(preset)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] transition cursor-pointer ${
+                            discardReason === preset
+                              ? 'border-rose-400/60 bg-rose-500/20 text-rose-200'
+                              : 'border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      id="discard-reason"
+                      type="text"
+                      value={discardReason}
+                      onChange={(e) => setDiscardReason(e.target.value)}
+                      placeholder="Ej. Transferencia propia, no pertenece a ningún cliente..."
+                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <p className="rounded-lg border border-slate-800 bg-slate-950/70 p-2.5 text-[11px] leading-relaxed text-slate-400">
+                    El correo desaparecerá de la lista activa y de los totales pendientes, y el sincronizador IMAP <strong className="text-slate-200">no volverá a descargarlo</strong>. Si lo necesitas en el futuro, podrás restaurarlo desde <strong className="text-slate-200">«Ver Correos Eliminados»</strong>.
+                  </p>
+
+                  <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                    <Dialog.Close asChild>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </Dialog.Close>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingDiscard}
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-60 cursor-pointer"
+                    >
+                      {isSubmittingDiscard ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      Confirmar Eliminación
                     </button>
                   </div>
                 </form>

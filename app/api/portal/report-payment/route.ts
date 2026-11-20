@@ -69,6 +69,51 @@ function extractMimeFromDataUrl(dataUrl: string, explicitMime?: string): string 
   return match?.[1] ?? 'image/jpeg';
 }
 
+function formatDuplicateDateVe(value: string | Date | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+  }
+  try {
+    return new Intl.DateTimeFormat('es-VE', {
+      timeZone: 'America/Caracas',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }).format(d);
+  } catch {
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
+}
+
+function formatTransferDateOnlyVe(value: string | null | undefined): string | null {
+  if (!value || !value.trim()) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const [y, m, day] = trimmed.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, day, 12, 0, 0));
+    try {
+      return new Intl.DateTimeFormat('es-VE', {
+        timeZone: 'UTC',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }).format(d);
+    } catch {
+      return trimmed;
+    }
+  }
+  return formatDuplicateDateVe(trimmed);
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const clientSession = getClientSession(request);
@@ -294,42 +339,131 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const dupOrderRes = await client.query<{
           codigo_orden: string;
           estado: string;
+          cliente_nombre: string | null;
           remitente_reportado: string;
           monto_esperado: number;
+          moneda: string | null;
+          fecha_transferencia: string | null;
+          created_at: string;
+          conciliado_at: string | null;
+          liquidado_at: string | null;
+          codigo_liquidacion: string | null;
+          liquidacion_fecha: string | null;
+          tx_fecha: string | null;
         }>(
           `
-          SELECT codigo_orden, estado, remitente_reportado, monto_esperado
-          FROM ordenes_pago_pendientes
-          WHERE estado IN ('CONCILIADO', 'PENDIENTE')
-            AND UPPER(REGEXP_REPLACE(COALESCE(referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = $1
+          SELECT
+            o.codigo_orden,
+            o.estado,
+            o.cliente_nombre,
+            COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, 'Remitente') AS remitente_reportado,
+            o.monto_esperado,
+            COALESCE(o.moneda, 'USD') AS moneda,
+            o.fecha_transferencia,
+            o.created_at,
+            o.conciliado_at,
+            COALESCE(o.liquidado_at, t.liquidado_at) AS liquidado_at,
+            l.codigo_liquidacion,
+            l.created_at AS liquidacion_fecha,
+            t.fecha_transaccion AS tx_fecha
+          FROM ordenes_pago_pendientes o
+          LEFT JOIN financial_transactions_reconciliation t
+            ON t.id = COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id)
+          LEFT JOIN liquidaciones_clientes l
+            ON l.id = COALESCE(o.liquidacion_id, t.liquidacion_id)
+          WHERE o.estado IN ('CONCILIADO', 'PENDIENTE', 'LIQUIDADO')
+            AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = $1
+          ORDER BY o.created_at DESC
           LIMIT 1;
           `,
           [cleanRefCheck]
         );
         const dupOrder = dupOrderRes.rows[0];
         if (dupOrder) {
-          throw new Error(
-            `Comprobante duplicado: La referencia "${referenciaReportada}" ya fue registrada anteriormente en la orden ${dupOrder.codigo_orden} (${dupOrder.estado} · ${dupOrder.remitente_reportado} · $${Number(
-              dupOrder.monto_esperado
-            ).toFixed(2)}). No se permite subir el mismo comprobante dos veces.`
+          const dupCurrency = dupOrder.moneda || 'USD';
+          const fechaPagoStr =
+            formatDuplicateDateVe(dupOrder.tx_fecha) ??
+            formatTransferDateOnlyVe(dupOrder.fecha_transferencia);
+          const fechaRegistroStr = formatDuplicateDateVe(dupOrder.created_at);
+          const fechaConciliadoStr = formatDuplicateDateVe(dupOrder.conciliado_at);
+          const fechaLiqStr = formatDuplicateDateVe(
+            dupOrder.liquidacion_fecha ?? dupOrder.liquidado_at
           );
+          const isLiquidated = Boolean(
+            dupOrder.estado === 'LIQUIDADO' ||
+              dupOrder.liquidado_at ||
+              dupOrder.codigo_liquidacion
+          );
+          const cicloDesc = isLiquidated
+            ? `Ciclo cerrado — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
+                dupOrder.codigo_liquidacion
+                  ? ` (${dupOrder.codigo_liquidacion})`
+                  : ''
+              }`
+            : dupOrder.estado === 'CONCILIADO'
+              ? 'Ciclo activo actual (conciliado, pendiente por liquidar)'
+              : 'Ciclo activo actual (en verificación bancaria)';
+
+          const details: string[] = [
+            `Comprobante duplicado: La referencia "${referenciaReportada}" (${dupOrder.remitente_reportado} · $${Number(
+              dupOrder.monto_esperado
+            ).toFixed(2)} ${dupCurrency}) ya fue registrada en la orden ${dupOrder.codigo_orden}${
+              dupOrder.cliente_nombre
+                ? ` a favor de ${dupOrder.cliente_nombre}`
+                : ''
+            }.`,
+          ];
+          if (fechaPagoStr) {
+            details.push(`• Fecha del pago/correo: ${fechaPagoStr}`);
+          }
+          if (fechaConciliadoStr) {
+            details.push(`• Fecha de conciliación: ${fechaConciliadoStr}`);
+          } else if (fechaRegistroStr) {
+            details.push(`• Fecha de registro: ${fechaRegistroStr}`);
+          }
+          details.push(`• Ciclo: ${cicloDesc}.`);
+          details.push('No se permite subir el mismo comprobante dos veces.');
+
+          throw new Error(details.join('\n'));
         }
 
         const dupTxRes = await client.query<{
           referencia: string;
           remitente_o_contraparte: string;
           monto_bruto: number;
+          moneda: string | null;
           cliente_asignado_nombre: string | null;
+          fecha_transaccion: string | null;
+          conciliado_at: string | null;
+          liquidado_at: string | null;
+          codigo_liquidacion: string | null;
+          liquidacion_fecha: string | null;
+          codigo_orden: string | null;
         }>(
           `
-          SELECT referencia, remitente_o_contraparte, monto_bruto, cliente_asignado_nombre
-          FROM financial_transactions_reconciliation
-          WHERE estado = 'CONCILIADO'
-            AND tipo_movimiento = 'RECIBIDO'
-            AND monto_bruto = $2
+          SELECT
+            t.referencia,
+            t.remitente_o_contraparte,
+            t.monto_bruto,
+            COALESCE(t.moneda, 'USD') AS moneda,
+            t.cliente_asignado_nombre,
+            t.fecha_transaccion,
+            t.conciliado_at,
+            t.liquidado_at,
+            l.codigo_liquidacion,
+            l.created_at AS liquidacion_fecha,
+            o.codigo_orden
+          FROM financial_transactions_reconciliation t
+          LEFT JOIN liquidaciones_clientes l
+            ON l.id = t.liquidacion_id
+          LEFT JOIN ordenes_pago_pendientes o
+            ON o.id = t.orden_conciliada_id
+          WHERE t.estado = 'CONCILIADO'
+            AND t.tipo_movimiento = 'RECIBIDO'
+            AND t.monto_bruto = $2
             AND (
-              UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $1
-              OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $1 || '%'
+              UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) = $1
+              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $1 || '%'
             )
           LIMIT 1;
           `,
@@ -337,15 +471,44 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
         const dupTx = dupTxRes.rows[0];
         if (dupTx) {
-          throw new Error(
+          const dupCurrency = dupTx.moneda || 'USD';
+          const fechaCorreoStr = formatDuplicateDateVe(dupTx.fecha_transaccion);
+          const fechaConciliadoStr = formatDuplicateDateVe(dupTx.conciliado_at);
+          const fechaLiqStr = formatDuplicateDateVe(
+            dupTx.liquidacion_fecha ?? dupTx.liquidado_at
+          );
+          const isLiquidated = Boolean(
+            dupTx.liquidado_at || dupTx.codigo_liquidacion
+          );
+          const cicloDesc = isLiquidated
+            ? `Ciclo cerrado — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
+                dupTx.codigo_liquidacion
+                  ? ` (${dupTx.codigo_liquidacion})`
+                  : ''
+              }`
+            : 'Ciclo activo actual (acreditado, pendiente por liquidar)';
+
+          const details: string[] = [
             `Comprobante ya acreditado: La referencia bancaria "${dupTx.referencia}" (${dupTx.remitente_o_contraparte} · $${Number(
               dupTx.monto_bruto
-            ).toFixed(2)}) ya fue conciliada y acreditada anteriormente${
+            ).toFixed(2)} ${dupCurrency}) ya fue conciliada y acreditada anteriormente${
               dupTx.cliente_asignado_nombre
                 ? ` a favor de ${dupTx.cliente_asignado_nombre}`
                 : ''
-            }.`
-          );
+            }.`,
+          ];
+          if (dupTx.codigo_orden) {
+            details.push(`• Orden asociada: ${dupTx.codigo_orden}`);
+          }
+          if (fechaCorreoStr) {
+            details.push(`• Fecha del correo bancario: ${fechaCorreoStr}`);
+          }
+          if (fechaConciliadoStr) {
+            details.push(`• Fecha de conciliación: ${fechaConciliadoStr}`);
+          }
+          details.push(`• Ciclo: ${cicloDesc}.`);
+
+          throw new Error(details.join('\n'));
         }
 
         // Validación obligatoria de nombre cuando el correo bancario coincidente YA llegó a la BD:
@@ -361,7 +524,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           `
           SELECT id, remitente_o_contraparte, referencia, monto_bruto
           FROM financial_transactions_reconciliation
-          WHERE estado <> 'CONCILIADO'
+          WHERE estado IN ('DETECTADO', 'REVISION_MANUAL')
             AND tipo_movimiento = 'RECIBIDO'
             AND moneda = $1
             AND monto_bruto = $2

@@ -44,6 +44,18 @@ async function ensureMultiTenantColumnsAndTable(): Promise<void> {
   await dbQuery(
     'ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS negocio_id UUID REFERENCES usuarios_negocios(id) ON DELETE CASCADE;'
   );
+  await dbQuery(
+    'ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS descartado_at TIMESTAMPTZ;'
+  );
+  await dbQuery(`
+    DO $$
+    BEGIN
+      ALTER TABLE financial_transactions_reconciliation DROP CONSTRAINT IF EXISTS financial_transactions_reconciliation_estado_check;
+      ALTER TABLE financial_transactions_reconciliation ADD CONSTRAINT financial_transactions_reconciliation_estado_check
+        CHECK (estado IN ('DETECTADO', 'CONCILIADO', 'REVISION_MANUAL', 'DESCARTADO'));
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
+  `);
 
   schemaEnsured = true;
 }

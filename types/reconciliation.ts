@@ -28,7 +28,11 @@ export type ExtractionMethod =
   | 'EMAIL_AI'
   | 'BINANCE_API';
 
-export type AlertStatus = 'DETECTADO' | 'CONCILIADO' | 'REVISION_MANUAL';
+export type AlertStatus =
+  | 'DETECTADO'
+  | 'CONCILIADO'
+  | 'REVISION_MANUAL'
+  | 'DESCARTADO';
 
 export type PendingOrderStatus =
   | 'PENDIENTE'
@@ -148,6 +152,7 @@ export interface FinancialTransactionRecord {
   liquidacion_id?: string | null;
   liquidado_at?: string | null;
   codigo_liquidacion?: string | null;
+  descartado_at?: string | null;
   created_at: string;
   // Datos enriquecidos de la orden vinculada (para visor de capturas en el dashboard)
   has_capture?: boolean;

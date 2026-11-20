@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS financial_transactions_reconciliation (
     fecha_transaccion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     origen_deteccion VARCHAR(25) NOT NULL CHECK (origen_deteccion IN ('EMAIL_REGEX', 'EMAIL_AI', 'BINANCE_API')),
     raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    estado VARCHAR(25) NOT NULL DEFAULT 'DETECTADO' CHECK (estado IN ('DETECTADO', 'CONCILIADO', 'REVISION_MANUAL')),
+    estado VARCHAR(25) NOT NULL DEFAULT 'DETECTADO' CHECK (estado IN ('DETECTADO', 'CONCILIADO', 'REVISION_MANUAL', 'DESCARTADO')),
     cliente_id UUID REFERENCES clientes_titulares(id) ON DELETE SET NULL,
     cliente_asignado_nombre TEXT,
     orden_conciliada_id UUID REFERENCES ordenes_pago_pendientes(id) ON DELETE SET NULL,
@@ -208,6 +208,10 @@ CREATE TABLE IF NOT EXISTS financial_transactions_reconciliation (
 );
 
 ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS negocio_id UUID REFERENCES usuarios_negocios(id) ON DELETE CASCADE;
+ALTER TABLE financial_transactions_reconciliation ADD COLUMN IF NOT EXISTS descartado_at TIMESTAMPTZ;
+ALTER TABLE financial_transactions_reconciliation DROP CONSTRAINT IF EXISTS financial_transactions_reconciliation_estado_check;
+ALTER TABLE financial_transactions_reconciliation ADD CONSTRAINT financial_transactions_reconciliation_estado_check
+    CHECK (estado IN ('DETECTADO', 'CONCILIADO', 'REVISION_MANUAL', 'DESCARTADO'));
 
 -- Migración automática desde la tabla heredada `bank_email_alerts` (si existe como tabla física)
 DO $$
@@ -430,7 +434,7 @@ BEGIN
         SELECT t.*
         INTO v_tx
         FROM financial_transactions_reconciliation t
-        WHERE t.estado <> 'CONCILIADO'
+        WHERE t.estado IN ('DETECTADO', 'REVISION_MANUAL')
           AND t.tipo_movimiento = 'RECIBIDO'
           AND t.moneda = v_orden.moneda
           AND t.monto_bruto = v_orden.monto_esperado
@@ -495,7 +499,7 @@ BEGIN
         SELECT t.*
         INTO v_tx
         FROM financial_transactions_reconciliation t
-        WHERE t.estado <> 'CONCILIADO'
+        WHERE t.estado IN ('DETECTADO', 'REVISION_MANUAL')
           AND t.tipo_movimiento = 'RECIBIDO'
           AND t.moneda = v_orden.moneda
           AND t.monto_bruto = v_orden.monto_esperado
@@ -605,6 +609,11 @@ BEGIN
 
     IF v_tx.estado = 'CONCILIADO' THEN
         RETURN QUERY SELECT TRUE, v_tx.estado::VARCHAR(32), v_tx.orden_conciliada_id, NULL::VARCHAR(64), v_tx.cliente_id, v_tx.cliente_asignado_nombre, 'ALREADY_RECONCILED'::VARCHAR(64), 1.0000::NUMERIC(5,4), 'La transacción ya se encontraba conciliada.'::TEXT;
+        RETURN;
+    END IF;
+
+    IF v_tx.estado = 'DESCARTADO' THEN
+        RETURN QUERY SELECT FALSE, v_tx.estado::VARCHAR(32), NULL::UUID, NULL::VARCHAR(64), NULL::UUID, NULL::TEXT, 'SKIPPED_DISCARDED'::VARCHAR(64), 0.0000::NUMERIC(5,4), 'Correo descartado/eliminado por el administrador; omitido de conciliación.'::TEXT;
         RETURN;
     END IF;
 

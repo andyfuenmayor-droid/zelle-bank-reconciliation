@@ -1070,7 +1070,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     )}
                     <div>
                       <h3 className="text-sm font-bold">{reportFeedback.title}</h3>
-                      <p className="mt-1 text-xs leading-relaxed opacity-90">
+                      <p className="mt-1 whitespace-pre-line text-xs leading-relaxed opacity-90">
                         {reportFeedback.detail}
                       </p>
                     </div>
@@ -1584,7 +1584,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                               <h4 className="text-xs font-bold leading-tight">
                                 {reportFeedback.title}
                               </h4>
-                              <p className="mt-1 text-xs opacity-90 leading-relaxed">
+                              <p className="mt-1 whitespace-pre-line text-xs opacity-90 leading-relaxed">
                                 {reportFeedback.detail}
                               </p>
                             </div>
