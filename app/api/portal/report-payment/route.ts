@@ -472,7 +472,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             AND tipo_movimiento = 'RECIBIDO'
             AND (
               cliente_id = $1::uuid
-              OR UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($2))
+              OR (
+                cliente_id IS NULL
+                AND UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($2))
+              )
             )
           GROUP BY moneda;
           `,

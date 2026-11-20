@@ -340,6 +340,11 @@ CREATE INDEX IF NOT EXISTS idx_ftr_negocio_id
     ON financial_transactions_reconciliation (negocio_id);
 CREATE INDEX IF NOT EXISTS idx_ftr_negocio_fecha_created
     ON financial_transactions_reconciliation (negocio_id, fecha_transaccion DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ftr_cliente_id_estado
+    ON financial_transactions_reconciliation (cliente_id, estado, moneda)
+    WHERE cliente_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_ordenes_cliente_id_created
+    ON ordenes_pago_pendientes (cliente_id, estado, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_clientes_negocio_id
     ON clientes_titulares (negocio_id);
 CREATE INDEX IF NOT EXISTS idx_ordenes_negocio_id

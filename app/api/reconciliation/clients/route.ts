@@ -108,7 +108,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         COALESCE(liq.liquidaciones_count, 0)::int AS liquidaciones_count
       FROM clientes_titulares c
       LEFT JOIN financial_transactions_reconciliation t
-        ON (t.cliente_id = c.id OR UPPER(TRIM(COALESCE(t.cliente_asignado_nombre, ''))) = UPPER(TRIM(c.nombre_titular)))
+        ON (
+          t.cliente_id = c.id
+          OR (
+            t.cliente_id IS NULL
+            AND UPPER(TRIM(COALESCE(t.cliente_asignado_nombre, ''))) = UPPER(TRIM(c.nombre_titular))
+          )
+        )
         AND (t.negocio_id IS NOT DISTINCT FROM c.negocio_id OR t.negocio_id IS NULL OR c.negocio_id IS NULL)
       LEFT JOIN (
         SELECT

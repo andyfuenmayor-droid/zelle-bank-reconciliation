@@ -189,7 +189,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           AND moneda = $1
           AND (
             cliente_id = $2::uuid
-            OR UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($3))
+            OR (
+              cliente_id IS NULL
+              AND UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($3))
+            )
           )
         `,
         [moneda, clientRow.id, clientRow.nombre_titular]
@@ -290,7 +293,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               liquidado_at = NOW()
           WHERE (
             cliente_id = $2::uuid
-            OR UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($3))
+            OR (
+              cliente_id IS NULL
+              AND UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($3))
+            )
           )
           AND moneda = $4
           AND estado = 'CONCILIADO'
