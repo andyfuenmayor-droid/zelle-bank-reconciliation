@@ -145,6 +145,9 @@ export interface FinancialTransactionRecord {
   negocio_id?: string | null;
   nota_auditoria: string | null;
   conciliado_at: string | null;
+  liquidacion_id?: string | null;
+  liquidado_at?: string | null;
+  codigo_liquidacion?: string | null;
   created_at: string;
   // Datos enriquecidos de la orden vinculada (para visor de capturas en el dashboard)
   has_capture?: boolean;

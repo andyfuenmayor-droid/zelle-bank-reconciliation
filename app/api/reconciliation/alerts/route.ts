@@ -39,6 +39,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const estado = searchParams.get('estado');
   const moneda = searchParams.get('moneda');
   const search = searchParams.get('search')?.trim() ?? '';
+  const includeLiquidated = searchParams.get('includeLiquidated') === '1';
 
   const dbConnected = await isDatabaseAvailable();
 
@@ -105,6 +106,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       conditions.push(`t.negocio_id = $${params.length}::uuid`);
     }
 
+    if (!includeLiquidated) {
+      conditions.push(`t.liquidado_at IS NULL`);
+    }
+
     if (plataforma && plataforma !== 'TODOS') {
       params.push(plataforma);
       conditions.push(`t.plataforma = $${params.length}`);
@@ -159,6 +164,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         t.orden_conciliada_id,
         t.nota_auditoria,
         t.conciliado_at,
+        t.liquidacion_id,
+        t.liquidado_at,
+        l.codigo_liquidacion,
         t.created_at,
         (CASE WHEN o.comprobante_base64 IS NOT NULL AND LENGTH(o.comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
         o.id AS capture_order_id,
@@ -184,6 +192,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       FROM financial_transactions_reconciliation t
       LEFT JOIN ordenes_pago_pendientes o
         ON o.id = t.orden_conciliada_id
+      LEFT JOIN liquidaciones_clientes l
+        ON l.id = t.liquidacion_id
       ${whereClause}
       ORDER BY t.fecha_transaccion DESC, t.created_at DESC
       LIMIT 250;
@@ -254,19 +264,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const summarySql = `
       SELECT
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_bruto,
-        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_comision,
-        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_neto,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
-        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
-        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
-        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
-        COUNT(*) FILTER (WHERE estado = 'CONCILIADO')::int AS conciliados_count,
-        COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL')::int AS revision_count,
-        COUNT(*) FILTER (WHERE estado = 'DETECTADO')::int AS detectados_count
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND liquidado_at IS NULL AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND liquidado_at IS NULL AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
+        COUNT(*) FILTER (WHERE estado = 'CONCILIADO' AND liquidado_at IS NULL)::int AS conciliados_count,
+        COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL' AND liquidado_at IS NULL)::int AS revision_count,
+        COUNT(*) FILTER (WHERE estado = 'DETECTADO' AND liquidado_at IS NULL)::int AS detectados_count
       FROM financial_transactions_reconciliation
       WHERE negocio_id = $1::uuid;
     `;

@@ -81,6 +81,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           orden_conciliada_id: string | null;
           remitente_o_contraparte: string;
           nota_auditoria: string | null;
+          liquidado_at: string | null;
         }>(
           `
           SELECT
@@ -93,7 +94,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             cliente_asignado_nombre,
             orden_conciliada_id,
             remitente_o_contraparte,
-            nota_auditoria
+            nota_auditoria,
+            liquidado_at
           FROM financial_transactions_reconciliation
           WHERE id = $1::uuid
             AND (negocio_id = $2::uuid OR negocio_id IS NULL)
@@ -110,6 +112,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (currentTx.estado !== 'CONCILIADO') {
           throw new Error(
             `Solo se pueden revertir transacciones en estado CONCILIADO (estado actual: ${currentTx.estado}).`
+          );
+        }
+
+        if (currentTx.liquidado_at) {
+          throw new Error(
+            'No se puede deshacer esta conciliación porque el pago ya fue liquidado y archivado.'
           );
         }
 

@@ -508,6 +508,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [statusFilter, setStatusFilter] = useState<'TODOS' | AlertStatus>(
     'TODOS'
   );
+  const [showLiquidatedHistory, setShowLiquidatedHistory] =
+    useState<boolean>(false);
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('TODOS');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [liqSearch, setLiqSearch] = useState<string>('');
@@ -695,8 +697,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     setIsLoading(true);
     try {
       const reqHeaders = buildScopeHeaders(false);
+      const alertsUrl = showLiquidatedHistory
+        ? '/api/reconciliation/alerts?includeLiquidated=1'
+        : '/api/reconciliation/alerts';
       const [alertsRes, clientsRes, mailboxesRes, authRes, liqRes] = await Promise.all([
-        fetch('/api/reconciliation/alerts', {
+        fetch(alertsUrl, {
           cache: 'no-store',
           credentials: 'same-origin',
           headers: reqHeaders,
@@ -813,7 +818,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId]);
+  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId, showLiquidatedHistory]);
 
   // Restaurar sesión de negocio desde localStorage y revisar ?login=1
   useEffect(() => {
@@ -3566,6 +3571,27 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
                 </div>
               </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
+                <p className="text-xs text-slate-400">
+                  {showLiquidatedHistory
+                    ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
+                    : 'Mostrando únicamente el ciclo activo actual (las transacciones liquidadas están archivadas).'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowLiquidatedHistory((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                    showLiquidatedHistory
+                      ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
+                      : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
+                  }`}
+                >
+                  {showLiquidatedHistory
+                    ? 'Ocultar Historial Liquidado'
+                    : 'Ver Historial Liquidado'}
+                </button>
+              </div>
             </section>
 
             {/* Barra de Acciones Masivas por Lote (Bulk Actions) */}
@@ -4086,23 +4112,39 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             </td>
 
                             <td className="whitespace-nowrap px-2.5 py-3">
-                              {alert.estado === 'CONCILIADO' && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  CONCILIADO
-                                </span>
-                              )}
-                              {alert.estado === 'REVISION_MANUAL' && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
-                                  <AlertTriangle className="h-3.5 w-3.5" />
-                                  REVISIÓN MANUAL
-                                </span>
-                              )}
-                              {alert.estado === 'DETECTADO' && (
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">
-                                  <Clock className="h-3.5 w-3.5" />
-                                  DETECTADO
-                                </span>
+                              {alert.liquidado_at ? (
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1 text-xs font-semibold text-indigo-300">
+                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                    LIQUIDADO
+                                  </span>
+                                  {alert.codigo_liquidacion && (
+                                    <span className="font-mono text-[10px] text-indigo-300/80">
+                                      {alert.codigo_liquidacion}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <>
+                                  {alert.estado === 'CONCILIADO' && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
+                                      <CheckCircle2 className="h-3.5 w-3.5" />
+                                      CONCILIADO
+                                    </span>
+                                  )}
+                                  {alert.estado === 'REVISION_MANUAL' && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                      REVISIÓN MANUAL
+                                    </span>
+                                  )}
+                                  {alert.estado === 'DETECTADO' && (
+                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">
+                                      <Clock className="h-3.5 w-3.5" />
+                                      DETECTADO
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </td>
 
@@ -4146,7 +4188,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     </button>
                                   )}
 
-                                {alert.estado === 'CONCILIADO' && (
+                                {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -5945,7 +5987,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         )}
 
                       {lightboxData.tx &&
-                        lightboxData.tx.estado === 'CONCILIADO' && (
+                        lightboxData.tx.estado === 'CONCILIADO' &&
+                        !lightboxData.tx.liquidado_at && (
                           <button
                             type="button"
                             onClick={() => {
