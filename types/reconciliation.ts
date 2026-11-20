@@ -199,6 +199,7 @@ export interface PendingPaymentOrder {
   created_at: string;
   updated_at?: string;
   // Datos enriquecidos del correo bancario conciliado para el resumen corto
+  origen_registro?: 'PORTAL_CLIENTE' | 'ADMIN_DIRECTA';
   tx_fecha_correo?: string | null;
   tx_remitente_correo?: string | null;
   tx_referencia_correo?: string | null;

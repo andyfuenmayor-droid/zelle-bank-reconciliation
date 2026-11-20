@@ -240,7 +240,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   // Modal preview de captura en historial
   const [previewOrder, setPreviewOrder] = useState<PendingPaymentOrder | null>(null);
   const [showAllRecentCards, setShowAllRecentCards] = useState<boolean>(true);
-  const [reportFilterStatus, setReportFilterStatus] = useState<'TODOS' | 'CONCILIADO' | 'PENDIENTE'>('TODOS');
+  const [reportFilterStatus, setReportFilterStatus] = useState<
+    'TODOS' | 'CONCILIADO' | 'DIRECTA' | 'PENDIENTE'
+  >('TODOS');
   const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
   const [copiedSummaryReport, setCopiedSummaryReport] = useState<boolean>(false);
 
@@ -1626,6 +1628,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   <div className="max-h-[680px] space-y-3 overflow-y-auto pr-1">
                     {(showAllRecentCards ? orders : orders.slice(0, 50)).map((order, idx) => {
                       const isConciliado = order.estado === 'CONCILIADO';
+                      const isDirectAdmin = order.origen_registro === 'ADMIN_DIRECTA';
                       const feePct = Number(
                         order.tx_porcentaje_comision ??
                           client.porcentaje_comision_zelle ??
@@ -1644,19 +1647,29 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       return (
                         <div
                           key={order.id}
-                          className="rounded-xl border border-slate-800 bg-slate-950/90 p-3.5 transition hover:border-slate-700"
+                          className={`rounded-xl border p-3.5 transition ${
+                            isDirectAdmin
+                              ? 'border-indigo-500/35 bg-indigo-950/15 hover:border-indigo-400/50'
+                              : 'border-slate-800 bg-slate-950/90 hover:border-slate-700'
+                          }`}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div>
-                              <span className="mr-1.5 font-mono text-[10px] font-bold text-slate-500">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="font-mono text-[10px] font-bold text-slate-500">
                                 #{idx + 1}
                               </span>
                               <span className="font-mono text-xs font-bold text-sky-300">
                                 {order.codigo_orden}
                               </span>
-                              <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
+                              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300">
                                 {order.plataforma_esperada}
                               </span>
+                              {isDirectAdmin && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
+                                  <ShieldCheck className="h-3 w-3" />
+                                  Conciliación Directa
+                                </span>
+                              )}
                             </div>
 
                             {isConciliado ? (
@@ -1712,7 +1725,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             )}
                           </div>
 
-                          {(order.has_capture || order.comprobante_base64) && (
+                          {order.has_capture || order.comprobante_base64 ? (
                             <div className="mt-2.5 flex items-center justify-end border-t border-slate-800/70 pt-2">
                               <button
                                 type="button"
@@ -1738,7 +1751,14 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                 Ver Captura Subida
                               </button>
                             </div>
-                          )}
+                          ) : isDirectAdmin ? (
+                            <div className="mt-2 flex items-center justify-between border-t border-indigo-500/20 pt-2 text-[11px] text-indigo-300/90">
+                              <span className="inline-flex items-center gap-1">
+                                <ShieldCheck className="h-3.5 w-3.5 text-indigo-400" />
+                                Acreditado directamente por administración desde correo bancario
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -1747,11 +1767,17 @@ export default function ClientPaymentPortal(): React.JSX.Element {
               </section>
             </div>
 
-            {/* Reporte Adicional: Resumen Corto de Cada Comprobante Enviado (Todos los Registros) */}
+            {/* Reporte Adicional: Resumen Corto de Cada Comprobante y Conciliación Directa (Todos los Registros) */}
             {(() => {
               const feeDefault = Number(client.porcentaje_comision_zelle ?? 4);
               const filteredReportOrders = orders.filter((o) => {
                 if (reportFilterStatus === 'CONCILIADO' && o.estado !== 'CONCILIADO') {
+                  return false;
+                }
+                if (
+                  reportFilterStatus === 'DIRECTA' &&
+                  o.origen_registro !== 'ADMIN_DIRECTA'
+                ) {
                   return false;
                 }
                 if (reportFilterStatus === 'PENDIENTE' && o.estado === 'CONCILIADO') {
@@ -1764,20 +1790,35 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     (o.remitente_reportado || '').toLowerCase().includes(q) ||
                     (o.tx_remitente_correo || '').toLowerCase().includes(q) ||
                     (o.referencia_reportada || '').toLowerCase().includes(q) ||
-                    (o.tx_referencia_correo || '').toLowerCase().includes(q)
+                    (o.tx_referencia_correo || '').toLowerCase().includes(q) ||
+                    (o.origen_registro === 'ADMIN_DIRECTA' &&
+                      'conciliacion directa admin'.includes(q))
                   );
                 }
                 return true;
               });
 
-              const conciliadosTotalCount = orders.filter((o) => o.estado === 'CONCILIADO').length;
+              const conciliadosTotalCount = orders.filter(
+                (o) => o.estado === 'CONCILIADO'
+              ).length;
+              const directAdminCount = orders.filter(
+                (o) => o.origen_registro === 'ADMIN_DIRECTA'
+              ).length;
+              const capturasConciliadasCount =
+                conciliadosTotalCount - directAdminCount;
               const pendientesTotalCount = orders.length - conciliadosTotalCount;
 
               let sumBruto = 0;
               let sumComision = 0;
               let sumNeto = 0;
+              let filteredConciliadosCount = 0;
+              let filteredDirectCount = 0;
               for (const o of filteredReportOrders) {
+                if (o.origen_registro === 'ADMIN_DIRECTA') {
+                  filteredDirectCount += 1;
+                }
                 if (o.estado === 'CONCILIADO') {
+                  filteredConciliadosCount += 1;
                   const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
                   const f = Number(o.tx_porcentaje_comision ?? feeDefault);
                   const c = Number(
@@ -1791,16 +1832,24 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   sumNeto += n;
                 }
               }
+              sumBruto = Math.round(sumBruto * 100) / 100;
+              sumComision = Math.round(sumComision * 100) / 100;
+              sumNeto = Math.round(sumNeto * 100) / 100;
 
               const handleCopyShortSummary = async (): Promise<void> => {
+                const directSuffix =
+                  filteredDirectCount > 0
+                    ? ` · incluye ${filteredDirectCount} conciliación(es) directa(s) por Admin`
+                    : '';
                 const lines: string[] = [
-                  `📊 RESUMEN DE PAGOS REPORTADOS - ${client.nombre_titular.toUpperCase()}`,
-                  `Total registros: ${filteredReportOrders.length} (${conciliadosTotalCount} conciliados, ${pendientesTotalCount} pendientes)`,
+                  `📊 RESUMEN DE PAGOS Y CONCILIACIONES - ${client.nombre_titular.toUpperCase()}`,
+                  `Total registros: ${filteredReportOrders.length} (${filteredConciliadosCount} conciliados, ${filteredReportOrders.length - filteredConciliadosCount} pendientes${directSuffix})`,
                   `Bruto Conciliado: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto Acreditado: $${sumNeto.toFixed(2)} USD`,
                   `------------------------------------------------------------`,
                 ];
                 filteredReportOrders.forEach((o, i) => {
                   const isConc = o.estado === 'CONCILIADO';
+                  const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
                   const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
                   const f = Number(o.tx_porcentaje_comision ?? feeDefault);
                   const c = Number(
@@ -1811,8 +1860,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   );
                   const dateLabel = formatDateTime(o.tx_fecha_correo ?? o.created_at);
                   const refLabel = o.referencia_reportada || o.tx_referencia_correo || 'SIN-REF';
+                  const originTag = isDirect ? ' [Conciliación Directa]' : '';
                   lines.push(
-                    `${i + 1}. ${o.codigo_orden} | ${dateLabel} | De: ${o.remitente_reportado} | Ref: ${refLabel} | Bruto: $${b.toFixed(2)} | Neto: ${isConc ? `$${n.toFixed(2)}` : 'PENDIENTE'} (${o.estado})`
+                    `${i + 1}. ${o.codigo_orden}${originTag} | ${dateLabel} | De: ${o.remitente_reportado} | Ref: ${refLabel} | Bruto: $${b.toFixed(2)} | Neto: ${isConc ? `$${n.toFixed(2)}` : 'PENDIENTE'} (${o.estado})`
                   );
                 });
                 try {
@@ -1831,11 +1881,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       <div className="flex items-center gap-2">
                         <CheckCircle2 className="h-5 w-5 text-sky-400" />
                         <h3 className="text-base font-bold text-white">
-                          Reporte General y Resumen Corto de Cada Captura ({orders.length} enviados)
+                          Reporte General y Resumen Corto de Pagos ({orders.length} registros)
                         </h3>
                       </div>
                       <p className="mt-0.5 text-xs text-slate-400">
-                        Vista completa de todos tus comprobantes enviados con su resumen corto individual (fecha del correo, remitente, referencia, comisión y neto acreditado).
+                        Vista completa de tus comprobantes reportados y conciliaciones directas acreditadas por administración (fecha del correo, remitente, referencia, comisión y neto acreditado).
                       </p>
                     </div>
 
@@ -1862,13 +1912,15 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
                       <span className="text-[11px] font-semibold uppercase text-slate-400">
-                        Total Capturas
+                        Total Pagos / Reportes
                       </span>
                       <p className="mt-1 font-mono text-lg font-bold text-white">
                         {orders.length}
                       </p>
                       <span className="text-[11px] text-slate-400">
-                        {conciliadosTotalCount} conciliadas · {pendientesTotalCount} pendientes
+                        {directAdminCount > 0
+                          ? `${capturasConciliadasCount} capturas + ${directAdminCount} directos · ${pendientesTotalCount} pend.`
+                          : `${conciliadosTotalCount} conciliadas · ${pendientesTotalCount} pendientes`}
                       </span>
                     </div>
 
@@ -1880,7 +1932,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         ${sumBruto.toFixed(2)} USD
                       </p>
                       <span className="text-[11px] text-slate-400">
-                        Suma de pagos verificados
+                        Suma de pagos verificados ({filteredConciliadosCount})
                       </span>
                     </div>
 
@@ -1904,7 +1956,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         +${sumNeto.toFixed(2)} USD
                       </p>
                       <span className="text-[11px] text-emerald-300/80">
-                        Saldo líquido de estos reportes
+                        Saldo líquido de estos registros
                       </span>
                     </div>
                   </div>
@@ -1934,6 +1986,19 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       >
                         Conciliados ({conciliadosTotalCount})
                       </button>
+                      {directAdminCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setReportFilterStatus('DIRECTA')}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                            reportFilterStatus === 'DIRECTA'
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-slate-950 text-indigo-300/80 hover:bg-slate-800'
+                          }`}
+                        >
+                          Conciliación Directa ({directAdminCount})
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setReportFilterStatus('PENDIENTE')}
@@ -1970,7 +2035,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           <th className="px-3 py-2.5 text-right">Comisión</th>
                           <th className="px-3 py-2.5 text-right">Neto</th>
                           <th className="px-3 py-2.5 text-center">Estado</th>
-                          <th className="px-3 py-2.5 text-right">Captura</th>
+                          <th className="px-3 py-2.5 text-right">Origen / Captura</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/70 bg-slate-950/60">
@@ -1983,6 +2048,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         ) : (
                           filteredReportOrders.map((o, idx) => {
                             const isConc = o.estado === 'CONCILIADO';
+                            const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
+                            const isBinanceRow =
+                              (o.plataforma_esperada || '').startsWith('BINANCE') ||
+                              o.moneda === 'USDT';
                             const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
                             const f = Number(o.tx_porcentaje_comision ?? feeDefault);
                             const c = Number(
@@ -1993,14 +2062,28 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             );
 
                             return (
-                              <tr key={o.id} className="hover:bg-slate-800/40">
+                              <tr
+                                key={o.id}
+                                className={
+                                  isDirect
+                                    ? 'bg-indigo-950/15 hover:bg-indigo-950/30'
+                                    : 'hover:bg-slate-800/40'
+                                }
+                              >
                                 <td className="px-3 py-2.5 font-mono text-slate-500">
                                   {idx + 1}
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5">
-                                  <span className="font-mono font-bold text-sky-300">
-                                    {o.codigo_orden}
-                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-bold text-sky-300">
+                                      {o.codigo_orden}
+                                    </span>
+                                    {isDirect && (
+                                      <span className="inline-flex items-center gap-0.5 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-indigo-300">
+                                        Directa
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="text-[11px] text-slate-400">
                                     {formatDateTime(o.tx_fecha_correo ?? o.created_at)}
                                   </div>
@@ -2031,7 +2114,12 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                 <td className="px-3 py-2.5 text-slate-300">
                                   {isConc ? (
                                     <span>
-                                      Pago Zelle verificado (${b.toFixed(2)} - ${c.toFixed(2)} fee ={' '}
+                                      {isDirect
+                                        ? `Conciliación directa por Admin (${o.plataforma_esperada})`
+                                        : isBinanceRow
+                                          ? 'Pago Binance verificado'
+                                          : 'Pago Zelle verificado'}{' '}
+                                      (${b.toFixed(2)} - ${c.toFixed(2)} fee ={' '}
                                       <strong className="text-emerald-400">+${n.toFixed(2)}</strong>)
                                     </span>
                                   ) : (
@@ -2065,7 +2153,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                   )}
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5 text-right">
-                                  {(o.has_capture || o.comprobante_base64) && (
+                                  {o.has_capture || o.comprobante_base64 ? (
                                     <button
                                       type="button"
                                       onClick={async () => {
@@ -2091,6 +2179,13 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                       <Eye className="h-3 w-3" />
                                       Ver
                                     </button>
+                                  ) : isDirect ? (
+                                    <span className="inline-flex items-center gap-1 rounded border border-indigo-500/35 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
+                                      <ShieldCheck className="h-3 w-3" />
+                                      Asignado por Admin
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500">—</span>
                                   )}
                                 </td>
                               </tr>

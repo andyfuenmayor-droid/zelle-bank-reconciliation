@@ -141,46 +141,109 @@ async function loadPostgresPortalSession(
     ),
     dbQuery<PendingPaymentOrder>(
       `
-      SELECT
-        o.id,
-        o.codigo_orden,
-        o.cliente_id,
-        o.cliente_nombre,
-        o.cliente_email,
-        COALESCE(o.plataforma_esperada, o.banco_destino, 'CITIBANK') AS plataforma_esperada,
-        COALESCE(o.banco_destino, o.plataforma_esperada, 'CITIBANK') AS banco_destino,
-        COALESCE(o.moneda, 'USD') AS moneda,
-        o.monto_esperado,
-        COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, o.cliente_nombre) AS remitente_reportado,
-        COALESCE(o.nombre_remitente_reportado, o.remitente_reportado, o.cliente_nombre) AS nombre_remitente_reportado,
-        o.referencia_reportada,
-        (CASE WHEN o.comprobante_base64 IS NOT NULL AND LENGTH(o.comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
-        NULL::text AS comprobante_base64,
-        o.comprobante_mime,
-        o.datos_ocr_extraidos,
-        o.estado,
-        COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id) AS transaccion_conciliada_id,
-        o.liquidacion_id,
-        o.liquidado_at,
-        o.notas_cliente,
-        o.created_at,
-        o.updated_at,
-        t.fecha_transaccion AS tx_fecha_correo,
-        t.remitente_o_contraparte AS tx_remitente_correo,
-        t.referencia AS tx_referencia_correo,
-        t.monto_bruto AS tx_monto_bruto,
-        t.porcentaje_comision AS tx_porcentaje_comision,
-        t.monto_comision AS tx_monto_comision,
-        t.monto_neto AS tx_monto_neto
-      FROM ordenes_pago_pendientes o
-      LEFT JOIN financial_transactions_reconciliation t
-        ON t.id = COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id)
-      WHERE o.cliente_id = $1::uuid
-        AND o.liquidado_at IS NULL
-      ORDER BY COALESCE(t.fecha_transaccion, o.created_at) DESC, o.created_at DESC
+      SELECT *
+      FROM (
+        SELECT
+          o.id,
+          o.codigo_orden::text AS codigo_orden,
+          o.cliente_id,
+          o.cliente_nombre::text AS cliente_nombre,
+          o.cliente_email::text AS cliente_email,
+          COALESCE(o.plataforma_esperada, o.banco_destino, 'CITIBANK')::text AS plataforma_esperada,
+          COALESCE(o.banco_destino, o.plataforma_esperada, 'CITIBANK')::text AS banco_destino,
+          COALESCE(o.moneda, 'USD')::text AS moneda,
+          o.monto_esperado::numeric(12,2) AS monto_esperado,
+          o.fecha_transferencia::text AS fecha_transferencia,
+          COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, o.cliente_nombre)::text AS remitente_reportado,
+          COALESCE(o.nombre_remitente_reportado, o.remitente_reportado, o.cliente_nombre)::text AS nombre_remitente_reportado,
+          o.referencia_reportada::text AS referencia_reportada,
+          (CASE WHEN o.comprobante_base64 IS NOT NULL AND LENGTH(o.comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
+          NULL::text AS comprobante_base64,
+          o.comprobante_mime::text AS comprobante_mime,
+          o.datos_ocr_extraidos,
+          o.estado::text AS estado,
+          COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id) AS transaccion_conciliada_id,
+          o.liquidacion_id,
+          o.liquidado_at,
+          o.notas_cliente::text AS notas_cliente,
+          'PORTAL_CLIENTE'::text AS origen_registro,
+          o.created_at,
+          o.updated_at,
+          t.fecha_transaccion AS tx_fecha_correo,
+          t.remitente_o_contraparte::text AS tx_remitente_correo,
+          t.referencia::text AS tx_referencia_correo,
+          t.monto_bruto::numeric(12,2) AS tx_monto_bruto,
+          t.porcentaje_comision::numeric(5,2) AS tx_porcentaje_comision,
+          t.monto_comision::numeric(12,2) AS tx_monto_comision,
+          t.monto_neto::numeric(12,2) AS tx_monto_neto
+        FROM ordenes_pago_pendientes o
+        LEFT JOIN financial_transactions_reconciliation t
+          ON t.id = COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id)
+        WHERE o.cliente_id = $1::uuid
+          AND o.liquidado_at IS NULL
+
+        UNION ALL
+
+        SELECT
+          t.id,
+          ('DIR-' || UPPER(SUBSTRING(REPLACE(t.id::text, '-', ''), 1, 8)))::text AS codigo_orden,
+          COALESCE(t.cliente_id, $1::uuid) AS cliente_id,
+          COALESCE(t.cliente_asignado_nombre, $2)::text AS cliente_nombre,
+          $3::text AS cliente_email,
+          COALESCE(t.plataforma, 'CITIBANK')::text AS plataforma_esperada,
+          COALESCE(t.plataforma, 'CITIBANK')::text AS banco_destino,
+          COALESCE(t.moneda, 'USD')::text AS moneda,
+          t.monto_bruto::numeric(12,2) AS monto_esperado,
+          NULL::text AS fecha_transferencia,
+          COALESCE(t.remitente_o_contraparte, t.cliente_asignado_nombre, $2)::text AS remitente_reportado,
+          COALESCE(t.remitente_o_contraparte, t.cliente_asignado_nombre, $2)::text AS nombre_remitente_reportado,
+          t.referencia::text AS referencia_reportada,
+          false AS has_capture,
+          NULL::text AS comprobante_base64,
+          NULL::text AS comprobante_mime,
+          '{}'::jsonb AS datos_ocr_extraidos,
+          'CONCILIADO'::text AS estado,
+          t.id AS transaccion_conciliada_id,
+          t.liquidacion_id,
+          t.liquidado_at,
+          t.nota_auditoria::text AS notas_cliente,
+          'ADMIN_DIRECTA'::text AS origen_registro,
+          COALESCE(t.conciliado_at, t.created_at) AS created_at,
+          COALESCE(t.conciliado_at, t.created_at) AS updated_at,
+          t.fecha_transaccion AS tx_fecha_correo,
+          t.remitente_o_contraparte::text AS tx_remitente_correo,
+          t.referencia::text AS tx_referencia_correo,
+          t.monto_bruto::numeric(12,2) AS tx_monto_bruto,
+          t.porcentaje_comision::numeric(5,2) AS tx_porcentaje_comision,
+          t.monto_comision::numeric(12,2) AS tx_monto_comision,
+          t.monto_neto::numeric(12,2) AS tx_monto_neto
+        FROM financial_transactions_reconciliation t
+        WHERE t.estado = 'CONCILIADO'
+          AND t.tipo_movimiento = 'RECIBIDO'
+          AND t.liquidado_at IS NULL
+          AND (
+            t.cliente_id = $1::uuid
+            OR (
+              t.cliente_id IS NULL
+              AND UPPER(TRIM(COALESCE(t.cliente_asignado_nombre, ''))) = UPPER(TRIM($2))
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM ordenes_pago_pendientes o2
+            WHERE o2.id = t.orden_conciliada_id
+               OR o2.transaccion_conciliada_id = t.id
+               OR o2.alerta_conciliada_id = t.id
+          )
+      ) unified_reports
+      ORDER BY COALESCE(tx_fecha_correo, created_at) DESC, created_at DESC
       LIMIT 1000;
       `,
-      [clientRow.id]
+      [
+        clientRow.id,
+        clientRow.nombre_titular,
+        clientRow.email ?? clientRow.email_contacto ?? '',
+      ]
     ),
     dbQuery<ClientLiquidationRecord>(
       `
@@ -293,12 +356,69 @@ function buildDemoSessionResponse(demoClient: DemoClientInternal): {
     store.transactions,
     store.orders
   );
-  const orders = store.orders
+  const portalOrders: PendingPaymentOrder[] = store.orders
     .filter((o) => o.cliente_id === demoClient.id)
-    .sort(
-      (a, b) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    .map((o) => ({
+      ...o,
+      origen_registro: o.origen_registro ?? 'PORTAL_CLIENTE',
+    }));
+
+  const linkedTxIds = new Set(
+    portalOrders
+      .map((o) => o.transaccion_conciliada_id)
+      .filter((id): id is string => Boolean(id))
+  );
+  const linkedOrderIds = new Set(portalOrders.map((o) => o.id));
+
+  const directAdminOrders: PendingPaymentOrder[] = store.transactions
+    .filter(
+      (t) =>
+        t.estado === 'CONCILIADO' &&
+        t.tipo_movimiento === 'RECIBIDO' &&
+        (t.cliente_id === demoClient.id ||
+          (!t.cliente_id &&
+            (t.cliente_asignado_nombre ?? '').trim().toLowerCase() ===
+              demoClient.nombre_titular.trim().toLowerCase())) &&
+        !linkedTxIds.has(t.id) &&
+        !(t.orden_conciliada_id && linkedOrderIds.has(t.orden_conciliada_id))
+    )
+    .map((t) => ({
+      id: t.id,
+      codigo_orden: `DIR-${t.id.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase()}`,
+      cliente_id: demoClient.id,
+      cliente_nombre: t.cliente_asignado_nombre ?? demoClient.nombre_titular,
+      cliente_email: demoClient.email ?? demoClient.email_contacto ?? '',
+      plataforma_esperada: t.plataforma,
+      banco_destino: t.plataforma,
+      moneda: t.moneda,
+      monto_esperado: t.monto_bruto,
+      remitente_reportado: t.remitente_o_contraparte,
+      nombre_remitente_reportado: t.remitente_o_contraparte,
+      referencia_reportada: t.referencia,
+      has_capture: false,
+      comprobante_base64: null,
+      comprobante_mime: null,
+      datos_ocr_extraidos: null,
+      estado: 'CONCILIADO',
+      transaccion_conciliada_id: t.id,
+      notas_cliente: t.nota_auditoria,
+      origen_registro: 'ADMIN_DIRECTA',
+      created_at: t.conciliado_at ?? t.created_at,
+      updated_at: t.conciliado_at ?? t.created_at,
+      tx_fecha_correo: t.fecha_transaccion,
+      tx_remitente_correo: t.remitente_o_contraparte,
+      tx_referencia_correo: t.referencia,
+      tx_monto_bruto: t.monto_bruto,
+      tx_porcentaje_comision: t.porcentaje_comision,
+      tx_monto_comision: t.monto_comision,
+      tx_monto_neto: t.monto_neto,
+    }));
+
+  const orders = [...portalOrders, ...directAdminOrders].sort(
+    (a, b) =>
+      new Date(b.tx_fecha_correo ?? b.created_at).getTime() -
+      new Date(a.tx_fecha_correo ?? a.created_at).getTime()
+  );
 
   const publicClient: ClientAccountRecord = {
     id: demoClient.id,

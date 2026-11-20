@@ -448,8 +448,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           [orderRow.id]
         );
         if (refreshedOrder.rows[0]) {
-          orderRow = refreshedOrder.rows[0];
+          orderRow = {
+            ...refreshedOrder.rows[0],
+            origen_registro: 'PORTAL_CLIENTE',
+            has_capture: Boolean(refreshedOrder.rows[0].comprobante_base64),
+            tx_fecha_correo: reconciledTransaction?.fecha_transaccion ?? null,
+            tx_remitente_correo: reconciledTransaction?.remitente_o_contraparte ?? null,
+            tx_referencia_correo: reconciledTransaction?.referencia ?? null,
+            tx_monto_bruto: reconciledTransaction?.monto_bruto ?? null,
+            tx_porcentaje_comision: reconciledTransaction?.porcentaje_comision ?? null,
+            tx_monto_comision: reconciledTransaction?.monto_comision ?? null,
+            tx_monto_neto: reconciledTransaction?.monto_neto ?? null,
+          };
         }
+      } else {
+        orderRow = {
+          ...orderRow,
+          origen_registro: 'PORTAL_CLIENTE',
+          has_capture: Boolean(orderRow.comprobante_base64),
+        };
       }
 
       const [aggRes, liqAggRes, pendingRes] = await Promise.all([
