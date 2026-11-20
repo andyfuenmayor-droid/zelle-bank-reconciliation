@@ -1,5 +1,3 @@
-import { SenderNameVerification } from '@/types/reconciliation';
-
 const BUSINESS_STOP_WORDS = new Set([
   'llc',
   'inc',
@@ -184,60 +182,5 @@ export function computeNameMatchScore(
     matched: similarityPercent >= 70,
     matchLevel,
     detail,
-  };
-}
-
-/**
- * Enmascara parcialmente un nombre bancario cuando el pago aún no está conciliado,
- * para no exponer nombres completos de correos de terceros.
- */
-export function maskBankSenderName(raw: string | null | undefined): string {
-  const clean = (raw ?? '').trim();
-  if (!clean) return '***';
-  return clean
-    .split(/\s+/)
-    .map((word) => {
-      if (word.length <= 2) return `${word[0] ?? '*'}*`;
-      return `${word[0]}${'*'.repeat(Math.min(word.length - 1, 5))}`;
-    })
-    .join(' ');
-}
-
-export function buildNameVerification(params: {
-  reportedName: string;
-  bankSenderName: string | null;
-  matchedBy: string;
-  maskBankName?: boolean;
-}): SenderNameVerification {
-  const { reportedName, bankSenderName, matchedBy, maskBankName = false } = params;
-
-  if (!bankSenderName || !bankSenderName.trim()) {
-    return {
-      checked: true,
-      bankEmailFound: false,
-      matched: false,
-      similarityPercent: 0,
-      reportedName,
-      bankSenderName: null,
-      matchLevel: 'SIN_CORREO',
-      matchedBy,
-      detail:
-        'Aún no se recibe un correo bancario coincidente para comparar el nombre del remitente.',
-    };
-  }
-
-  const score = computeNameMatchScore(reportedName, bankSenderName);
-  return {
-    checked: true,
-    bankEmailFound: true,
-    matched: score.matched,
-    similarityPercent: score.similarityPercent,
-    reportedName,
-    bankSenderName: maskBankName
-      ? maskBankSenderName(bankSenderName)
-      : bankSenderName.trim(),
-    matchLevel: score.matchLevel,
-    matchedBy,
-    detail: score.detail,
   };
 }

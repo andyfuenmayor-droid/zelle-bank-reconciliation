@@ -1,11 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
-import { scanReceiptWithAi } from '@/lib/receipt-scanner';
-import {
-  buildNameVerification,
-  computeNameMatchScore,
-} from '@/lib/name-similarity';
+import { computeNameMatchScore } from '@/lib/name-similarity';
 import {
   generateUniqueCode,
   getClientSession,
@@ -24,7 +20,6 @@ import {
   FinancialTransactionRecord,
   OcrExtractionData,
   PendingPaymentOrder,
-  SenderNameVerification,
 } from '@/types/reconciliation';
 
 export const runtime = 'nodejs';
@@ -52,6 +47,18 @@ interface ReportPaymentBody {
   comprobante_base64?: string;
   comprobante_mime?: string;
   notas_cliente?: string;
+}
+
+class NameMismatchError extends Error {
+  similarityPercent: number;
+  reportedName: string;
+
+  constructor(message: string, similarityPercent: number, reportedName: string) {
+    super(message);
+    this.name = 'NameMismatchError';
+    this.similarityPercent = similarityPercent;
+    this.reportedName = reportedName;
+  }
 }
 
 function extractMimeFromDataUrl(dataUrl: string, explicitMime?: string): string {
@@ -205,15 +212,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       store.orders.unshift(newOrder);
       const matchResult = runDemoAutoReconcileForOrder(newOrder.id);
-      const demoNameVerification = buildNameVerification({
-        reportedName: remitenteReportado,
-        bankSenderName: matchResult.transaction?.remitente_o_contraparte ?? null,
-        matchedBy: matchResult.reconciled ? 'DEMO_MATCH' : 'WAITING_BANK_EMAIL',
-      });
-      newOrder.datos_ocr_extraidos = {
-        ...ocrData,
-        verificacion_nombre: demoNameVerification,
-      };
       const wallet = computeClientWalletSummary(
         client.id,
         store.transactions,
@@ -226,42 +224,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         instantReconciled: matchResult.reconciled,
         order: newOrder,
         reconciledTransaction: matchResult.transaction,
-        nameVerification: demoNameVerification,
         wallet,
       });
     }
 
-    // Validación OCR unificada usando el motor IA configurado (Gemini / Groq / OpenAI)
-    let ocrResult: OcrExtractionData;
-    try {
-      const aiScan = await scanReceiptWithAi({ comprobanteBase64 });
-      ocrResult = {
-        plataforma_detectada: aiScan.data.plataforma,
-        moneda_detectada: aiScan.data.moneda,
-        monto_detectado: aiScan.data.monto ?? normalizedAmount,
-        remitente_detectado: remitenteReportado,
-        referencia_detectada: aiScan.data.referencia || referenciaReportada,
-        confianza_ocr: aiScan.data.confianza,
-        coincide_con_reporte:
-          aiScan.data.monto === null ||
-          Math.abs(aiScan.data.monto - normalizedAmount) < 0.01,
-        observaciones: aiScan.data.observaciones,
-      };
-    } catch {
-      ocrResult = buildDemoOcrFallback({
-        plataforma,
-        moneda,
-        monto: normalizedAmount,
-        referencia: referenciaReportada,
-        remitente: remitenteReportado,
-      });
-    }
+    // Metadatos OCR rápidos de los datos ya escaneados y confirmados en el Paso 1
+    // (evita re-llamar a Gemini Vision al presionar Enviar y elimina demoras/cortes en móvil)
+    const ocrResult: OcrExtractionData = buildDemoOcrFallback({
+      plataforma,
+      moneda,
+      monto: normalizedAmount,
+      referencia: referenciaReportada,
+      remitente: remitenteReportado,
+    });
 
     const txOutcome = await withTransaction<{
       order: PendingPaymentOrder;
       instantReconciled: boolean;
       reconciledTransaction: FinancialTransactionRecord | null;
-      nameVerification: SenderNameVerification;
+      nameMatchPercent: number | null;
       wallet: ClientPortalWalletSummary;
     }>(async (client) => {
       const clientRes = await client.query<{
@@ -366,6 +347,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             }.`
           );
         }
+
+        // Validación obligatoria de nombre cuando el correo bancario coincidente YA llegó a la BD:
+        // - Si el correo coincidente aún NO ha llegado -> graba y envía normalmente en PENDIENTE.
+        // - Si el correo coincidente YA llegó -> verifica que el nombre introducido coincida (>= 70%);
+        //   si no coincide, no graba y solicita al cliente corregir el nombre del remitente.
+        const matchingBankEmailRes = await client.query<{
+          id: string;
+          remitente_o_contraparte: string;
+          referencia: string;
+          monto_bruto: number;
+        }>(
+          `
+          SELECT id, remitente_o_contraparte, referencia, monto_bruto
+          FROM financial_transactions_reconciliation
+          WHERE estado <> 'CONCILIADO'
+            AND tipo_movimiento = 'RECIBIDO'
+            AND moneda = $1
+            AND monto_bruto = $2
+            AND (negocio_id IS NOT DISTINCT FROM $3::uuid OR negocio_id IS NULL OR $3::uuid IS NULL)
+            AND (
+              UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $4
+              OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $4 || '%'
+              OR $4 LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
+              OR (
+                LENGTH($4) >= 6
+                AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
+                AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT($4, 6)
+              )
+            )
+          ORDER BY fecha_transaccion ASC
+          LIMIT 1;
+          `,
+          [moneda, normalizedAmount, clientRow.negocio_id, cleanRefCheck]
+        );
+
+        const matchedBankEmail = matchingBankEmailRes.rows[0];
+        if (matchedBankEmail) {
+          const nameCheck = computeNameMatchScore(
+            remitenteReportado,
+            matchedBankEmail.remitente_o_contraparte
+          );
+          if (nameCheck.similarityPercent < 70) {
+            throw new NameMismatchError(
+              `El correo bancario para este pago ($${normalizedAmount.toFixed(2)} ${moneda} · Ref: ${referenciaReportada}) ya fue recibido, pero el nombre ingresado "${remitenteReportado}" no coincide con el remitente del banco (${nameCheck.similarityPercent}% de coincidencia). Por favor introduce el nombre correcto que realizó la transferencia y vuelve a enviar.`,
+              nameCheck.similarityPercent,
+              remitenteReportado
+            );
+          }
+        }
       }
 
       const insertOrderRes = await client.query<PendingPaymentOrder>(
@@ -438,11 +468,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       let reconciledTransaction: FinancialTransactionRecord | null = null;
       let instantReconciled = false;
-      let nameVerification: SenderNameVerification = buildNameVerification({
-        reportedName: remitenteReportado,
-        bankSenderName: null,
-        matchedBy: match?.metodo_match ?? 'WAITING_BANK_EMAIL',
-      });
+      let nameMatchPercent: number | null = null;
 
       if (match?.conciliado && match.transaccion_id) {
         instantReconciled = true;
@@ -463,22 +489,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           [match.transaccion_id]
         );
         reconciledTransaction = txFetch.rows[0] ?? null;
-
-        nameVerification = buildNameVerification({
-          reportedName: remitenteReportado,
-          bankSenderName: reconciledTransaction?.remitente_o_contraparte ?? null,
-          matchedBy: match.metodo_match || 'CONCILIADO',
-          maskBankName: false,
-        });
-
-        await client.query(
-          `
-          UPDATE ordenes_pago_pendientes
-          SET datos_ocr_extraidos = COALESCE(datos_ocr_extraidos, '{}'::jsonb) || jsonb_build_object('verificacion_nombre', $2::jsonb)
-          WHERE id = $1::uuid;
-          `,
-          [orderRow.id, JSON.stringify(nameVerification)]
-        );
+        if (reconciledTransaction?.remitente_o_contraparte) {
+          nameMatchPercent = computeNameMatchScore(
+            remitenteReportado,
+            reconciledTransaction.remitente_o_contraparte
+          ).similarityPercent;
+        }
 
         const refreshedOrder = await client.query<PendingPaymentOrder>(
           'SELECT * FROM ordenes_pago_pendientes WHERE id = $1::uuid;',
@@ -499,95 +515,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           };
         }
       } else {
-        // Aunque la orden quede PENDIENTE, verificar si existe un correo bancario DETECTADO en la BD
-        // para informar el porcentaje de coincidencia de nombre sin exponer correos de terceros.
-        const candidateEmailsRes = await client.query<{
-          remitente_o_contraparte: string;
-          referencia: string;
-          monto_bruto: number;
-          ref_matched: boolean;
-        }>(
-          `
-          SELECT
-            remitente_o_contraparte,
-            referencia,
-            monto_bruto,
-            (
-              $5::boolean = TRUE
-              AND (
-                UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $4
-                OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $4 || '%'
-              )
-            ) AS ref_matched
-          FROM financial_transactions_reconciliation
-          WHERE estado <> 'CONCILIADO'
-            AND tipo_movimiento = 'RECIBIDO'
-            AND moneda = $1
-            AND monto_bruto = $2
-            AND (negocio_id IS NOT DISTINCT FROM $3::uuid OR negocio_id IS NULL OR $3::uuid IS NULL)
-          ORDER BY ref_matched DESC, fecha_transaccion DESC
-          LIMIT 20;
-          `,
-          [
-            moneda,
-            normalizedAmount,
-            clientRow.negocio_id,
-            cleanRefCheck,
-            isSpecificBankRef,
-          ]
-        );
-
-        if (candidateEmailsRes.rows.length > 0) {
-          const refCandidate = candidateEmailsRes.rows.find((r) => r.ref_matched);
-          if (refCandidate) {
-            nameVerification = buildNameVerification({
-              reportedName: remitenteReportado,
-              bankSenderName: refCandidate.remitente_o_contraparte,
-              matchedBy: 'CANDIDATO_POR_REFERENCIA',
-              maskBankName: false,
-            });
-          } else {
-            let bestRow = candidateEmailsRes.rows[0];
-            let bestScore = computeNameMatchScore(
-              remitenteReportado,
-              bestRow.remitente_o_contraparte
-            );
-            for (const row of candidateEmailsRes.rows.slice(1)) {
-              const s = computeNameMatchScore(
-                remitenteReportado,
-                row.remitente_o_contraparte
-              );
-              if (s.similarityPercent > bestScore.similarityPercent) {
-                bestRow = row;
-                bestScore = s;
-              }
-            }
-            nameVerification = buildNameVerification({
-              reportedName: remitenteReportado,
-              bankSenderName: bestRow.remitente_o_contraparte,
-              matchedBy: 'CANDIDATO_MISMO_MONTO',
-              maskBankName: true,
-            });
-          }
-
-          await client.query(
-            `
-            UPDATE ordenes_pago_pendientes
-            SET datos_ocr_extraidos = COALESCE(datos_ocr_extraidos, '{}'::jsonb) || jsonb_build_object('verificacion_nombre', $2::jsonb)
-            WHERE id = $1::uuid;
-            `,
-            [orderRow.id, JSON.stringify(nameVerification)]
-          );
-        }
-
         orderRow = {
           ...orderRow,
           origen_registro: 'PORTAL_CLIENTE',
           has_capture: Boolean(orderRow.comprobante_base64),
-          datos_ocr_extraidos: {
-            ...(orderRow.datos_ocr_extraidos ?? {}),
-            verificacion_nombre: nameVerification,
-          },
         };
       }
 
@@ -700,7 +631,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         order: orderRow,
         instantReconciled,
         reconciledTransaction,
-        nameVerification,
+        nameMatchPercent,
         wallet,
       };
     });
@@ -711,6 +642,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ...txOutcome,
     });
   } catch (error: unknown) {
+    if (error instanceof NameMismatchError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'NAME_MISMATCH',
+          similarityPercent: error.similarityPercent,
+          reportedName: error.reportedName,
+          error: error.message,
+        },
+        { status: 422 }
+      );
+    }
     const msg =
       error instanceof Error
         ? error.message

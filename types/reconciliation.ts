@@ -66,21 +66,6 @@ export interface BusinessUserRecord {
 }
 
 /**
- * Resultado de la verificación de coincidencia de nombre entre el reporte del cliente y el correo bancario
- */
-export interface SenderNameVerification {
-  checked: boolean;
-  bankEmailFound: boolean;
-  matched: boolean;
-  similarityPercent: number;
-  reportedName: string;
-  bankSenderName: string | null;
-  matchLevel: 'EXACTO' | 'ALTO' | 'PARCIAL' | 'BAJO' | 'SIN_CORREO';
-  matchedBy: string;
-  detail: string;
-}
-
-/**
  * Resultado opcional de validación visual (OCR / Vision) sobre la captura subida por el cliente
  */
 export interface OcrExtractionData {
@@ -93,7 +78,6 @@ export interface OcrExtractionData {
   coincide_con_reporte?: boolean;
   confianza_ocr?: number;
   observaciones?: string;
-  verificacion_nombre?: SenderNameVerification | null;
 }
 
 /**
