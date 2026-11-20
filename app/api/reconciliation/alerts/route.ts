@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveRequestNegocioScope } from '@/lib/business-scope';
 import { dbQuery, isDatabaseAvailable, SqlPrimitive } from '@/lib/db';
 import {
   buildDedupKey,
@@ -12,7 +11,12 @@ import {
   runDemoAutoReconcileForOrder,
 } from '@/lib/mock-seed-data';
 import {
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
+import {
   AutoReconciliationResult,
+  FinancialSummaryMetrics,
   FinancialTransactionRecord,
   PendingPaymentOrder,
 } from '@/types/reconciliation';
@@ -21,6 +25,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   const { searchParams } = new URL(request.url);
   const plataforma =
     searchParams.get('plataforma') ?? searchParams.get('banco');
@@ -33,10 +44,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (!dbConnected) {
     const store = getDemoStore();
-    const demoNegocioId =
-      request.headers.get('x-negocio-id')?.trim() ||
-      store.businessUsers[0]?.id ||
-      '';
+    const demoNegocioId = authorizedNegocioId || store.businessUsers[0]?.id || '';
     const pendingOrders = store.orders.filter(
       (o) =>
         o.estado === 'PENDIENTE' &&
@@ -88,7 +96,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const scope = await resolveRequestNegocioScope(request);
+    const scope = { negocioId: authorizedNegocioId };
     const conditions: string[] = [];
     const params: SqlPrimitive[] = [];
 
@@ -244,19 +252,81 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         LIMIT 100;
       `;
 
-    const [alertsRes, ordersRes] = await Promise.all([
+    const summarySql = `
+      SELECT
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND NOT (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS zelle_enviado,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_bruto,
+        COALESCE(SUM(monto_comision) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_comision,
+        COALESCE(SUM(monto_neto) FILTER (WHERE estado = 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_neto,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE estado <> 'CONCILIADO' AND tipo_movimiento = 'RECIBIDO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_por_conciliar,
+        COALESCE(SUM(monto_bruto) FILTER (WHERE tipo_movimiento = 'ENVIADO' AND (plataforma LIKE 'BINANCE%' OR moneda = 'USDT')), 0)::numeric(14,2) AS binance_enviado,
+        COUNT(*) FILTER (WHERE estado = 'CONCILIADO')::int AS conciliados_count,
+        COUNT(*) FILTER (WHERE estado = 'REVISION_MANUAL')::int AS revision_count,
+        COUNT(*) FILTER (WHERE estado = 'DETECTADO')::int AS detectados_count
+      FROM financial_transactions_reconciliation
+      WHERE negocio_id = $1::uuid;
+    `;
+
+    const [alertsRes, ordersRes, summaryRes] = await Promise.all([
       dbQuery<FinancialTransactionRecord>(alertsSql, params),
       dbQuery<PendingPaymentOrder>(
         pendingOrdersSql,
         scope.negocioId ? [scope.negocioId] : []
       ),
+      dbQuery<{
+        zelle_bruto: number;
+        zelle_comision: number;
+        zelle_neto: number;
+        zelle_por_conciliar: number;
+        zelle_enviado: number;
+        binance_bruto: number;
+        binance_comision: number;
+        binance_neto: number;
+        binance_por_conciliar: number;
+        binance_enviado: number;
+        conciliados_count: number;
+        revision_count: number;
+        detectados_count: number;
+      }>(summarySql, [scope.negocioId]),
     ]);
+
+    const s = summaryRes.rows[0];
+    const summaryMetrics: FinancialSummaryMetrics | null = s
+      ? {
+          zelleBrutoRecibidoUsd: Number(s.zelle_bruto ?? 0),
+          zelleComisionRetenidaUsd: Number(s.zelle_comision ?? 0),
+          zelleNetoLiquidableUsd: Number(s.zelle_neto ?? 0),
+          zellePorConciliarUsd: Number(s.zelle_por_conciliar ?? 0),
+          zelleBrutoEnviadoUsd: Number(s.zelle_enviado ?? 0),
+          binanceRecibidoUsdt: Number(s.binance_bruto ?? 0),
+          binanceComisionRetenidaUsdt: Number(s.binance_comision ?? 0),
+          binanceNetoDisponibleUsdt: Number(s.binance_neto ?? 0),
+          binancePorConciliarUsdt: Number(s.binance_por_conciliar ?? 0),
+          binanceEnviadoUsdt: Number(s.binance_enviado ?? 0),
+          totalBrutoRecibido:
+            Math.round((Number(s.zelle_bruto ?? 0) + Number(s.binance_bruto ?? 0)) * 100) / 100,
+          totalComisionDescontada:
+            Math.round((Number(s.zelle_comision ?? 0) + Number(s.binance_comision ?? 0)) * 100) / 100,
+          totalNetoDisponible:
+            Math.round((Number(s.zelle_neto ?? 0) + Number(s.binance_neto ?? 0)) * 100) / 100,
+          totalBrutoEnviado:
+            Math.round((Number(s.zelle_enviado ?? 0) + Number(s.binance_enviado ?? 0)) * 100) / 100,
+          pagosConciliadosCount: Number(s.conciliados_count ?? 0),
+          pagosRevisionManualCount: Number(s.revision_count ?? 0),
+          pagosDetectadosCount: Number(s.detectados_count ?? 0),
+        }
+      : null;
 
     return NextResponse.json({
       ok: true,
       mode: 'POSTGRESQL_LIVE',
       alerts: alertsRes.rows,
       pendingOrders: ordersRes.rows,
+      summaryMetrics,
     });
   } catch (error: unknown) {
     const message =
@@ -281,8 +351,18 @@ interface SimulateEmailRequestBody {
  * con correos de Citibank, TD Bank o Binance (Pay / P2P / On-Chain).
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = (await request.json()) as SimulateEmailRequestBody;
+    const authorizedNegocioId = resolveAuthorizedNegocioId(
+      auth.session,
+      request,
+      body.negocioId
+    );
     const fromAddress = (body.fromAddress ?? 'alerts@citibank.com').trim();
     const subject = (body.subject ?? 'Citibank Zelle Payment Alert').trim();
     const rawEmailBody = (body.rawEmailBody ?? '').trim();
@@ -314,17 +394,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const isBinance = parsed.plataforma.startsWith('BINANCE');
-    const defaultFee = isBinance
-      ? Number.parseFloat(process.env.BINANCE_DEFAULT_FEE_PERCENT ?? '1.50')
-      : Number.parseFloat(process.env.ZELLE_DEFAULT_FEE_PERCENT ?? '4.00');
-    const feePercentage =
-      parsed.tipo_movimiento === 'RECIBIDO' && Number.isFinite(defaultFee)
-        ? defaultFee
-        : 0.0;
-
-    const feeAmount =
-      Math.round(parsed.monto_bruto * (feePercentage / 100) * 100) / 100;
-    const netAmount = Math.round((parsed.monto_bruto - feeAmount) * 100) / 100;
+    // En detección inicial sin cliente asignado la comisión es 0.00% hasta conciliar
+    const feePercentage = 0.0;
+    const feeAmount = 0.0;
+    const netAmount = parsed.monto_bruto;
 
     const domainHint = isBinance
       ? 'directmail.binance.com'
@@ -427,7 +500,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    const scope = await resolveRequestNegocioScope(request, body.negocioId);
+    const scope = { negocioId: authorizedNegocioId };
     const initialStatus =
       parsed.origen_deteccion === 'EMAIL_AI' || !parsed.remitente_o_destinatario
         ? 'REVISION_MANUAL'

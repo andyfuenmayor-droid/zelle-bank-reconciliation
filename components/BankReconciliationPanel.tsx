@@ -488,6 +488,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<ActiveTab>('ALERTS');
 
   const [alerts, setAlerts] = useState<BankEmailAlertRecord[]>([]);
+  const [serverSummaryMetrics, setServerSummaryMetrics] =
+    useState<FinancialSummaryMetrics | null>(null);
   const [pendingOrders, setPendingOrders] = useState<PendingPaymentOrder[]>([]);
   const [clients, setClients] = useState<ClientAccountRecord[]>([]);
   const [liquidations, setLiquidations] = useState<ClientLiquidationRecord[]>([]);
@@ -703,15 +705,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           cache: 'no-store',
           headers: reqHeaders,
         }),
-        fetch(
-          `/api/auth/business?userId=${encodeURIComponent(currentBusinessUser.id)}`,
-          { cache: 'no-store' }
-        ),
+        fetch('/api/auth/business', { cache: 'no-store' }),
         fetch('/api/reconciliation/liquidations', {
           cache: 'no-store',
           headers: reqHeaders,
         }),
       ]);
+
+      if (alertsRes.status === 401 || authRes.status === 401) {
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem(STORAGE_BUSINESS_USER_KEY);
+          window.localStorage.removeItem(STORAGE_ACTIVE_NEGOCIO_KEY);
+        }
+        setCurrentBusinessUser(null);
+        setIsLoginModalOpen(true);
+        return;
+      }
 
       if (alertsRes.ok) {
         const data = (await alertsRes.json()) as {
@@ -719,9 +728,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           mode?: 'POSTGRESQL_LIVE' | 'DEMO_FALLBACK';
           alerts?: BankEmailAlertRecord[];
           pendingOrders?: PendingPaymentOrder[];
+          summaryMetrics?: FinancialSummaryMetrics | null;
         };
         if (data.ok && Array.isArray(data.alerts)) {
           setAlerts(data.alerts);
+          setServerSummaryMetrics(data.summaryMetrics ?? null);
           if (Array.isArray(data.pendingOrders)) {
             setPendingOrders(data.pendingOrders);
           }
@@ -793,19 +804,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         setIsLoginModalOpen(true);
       }
 
-      const savedUserId = window.localStorage.getItem(STORAGE_BUSINESS_USER_KEY);
-      if (!savedUserId) {
-        if (active) {
-          setIsCheckingAuth(false);
-        }
-        return;
-      }
-
       try {
-        const res = await fetch(
-          `/api/auth/business?userId=${encodeURIComponent(savedUserId)}`,
-          { cache: 'no-store' }
-        );
+        const res = await fetch('/api/auth/business', { cache: 'no-store' });
         if (!res.ok) {
           window.localStorage.removeItem(STORAGE_BUSINESS_USER_KEY);
           window.localStorage.removeItem(STORAGE_ACTIVE_NEGOCIO_KEY);
@@ -1007,16 +1007,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   useEffect(() => {
     if (currentBusinessUser && activeNegocioId) {
       void fetchAllData();
-      void fetchAiSettings();
+      if (currentBusinessUser.rol === 'SUPER_ADMIN') {
+        void fetchAiSettings();
+      }
     }
   }, [currentBusinessUser, activeNegocioId, fetchAllData, fetchAiSettings]);
 
   // Métricas separadas para Bloque Zelle (USD) y Bloque Binance (USDT)
-  // REGLA FINANCIERA: Los totales financieros principales calculan EXCLUSIVAMENTE
-  // los pagos CONCILIADOS (item.estado === 'CONCILIADO' && item.tipo_movimiento === 'RECIBIDO').
-  // Las alertas en DETECTADO o REVISION_MANUAL aún no pertenecen a ningún cliente
-  // y por ende no devengan comisiones ni constituyen fondos acreditables.
+  // Prioriza el agregado exacto calculado en SQL sin truncamiento de LIMIT 250.
   const financialMetrics = useMemo<FinancialSummaryMetrics>(() => {
+    if (serverSummaryMetrics) {
+      return serverSummaryMetrics;
+    }
+
     let zelleBrutoConciliadoUsd = 0;
     let zelleComisionRetenidaUsd = 0;
     let zelleNetoLiquidableUsd = 0;
@@ -1097,55 +1100,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       pagosRevisionManualCount,
       pagosDetectadosCount,
     };
-  }, [alerts]);
+  }, [alerts, serverSummaryMetrics]);
 
-  // Desglose vivo de Titulares / Clientes con Fondos Conciliados Reales
+  // Desglose vivo de Titulares / Clientes usando los totales autoritativos calculados en PostgreSQL (sin truncamiento)
   const clientsWithReconciledFunds = useMemo(() => {
-    return clients.map((c) => {
-      const clientAlerts = alerts.filter(
-        (a) =>
-          a.estado === 'CONCILIADO' &&
-          a.tipo_movimiento === 'RECIBIDO' &&
-          (a.cliente_id === c.id ||
-            (a.cliente_asignado_nombre &&
-              a.cliente_asignado_nombre.trim().toLowerCase() ===
-                c.nombre_titular.trim().toLowerCase()))
-      );
-
-      const brutoUsd = clientAlerts
-        .filter((a) => a.moneda !== 'USDT')
-        .reduce((sum, a) => sum + a.monto_bruto, 0);
-      const comisionUsd = clientAlerts
-        .filter((a) => a.moneda !== 'USDT')
-        .reduce((sum, a) => sum + a.monto_comision, 0);
-      const netoUsd = clientAlerts
-        .filter((a) => a.moneda !== 'USDT')
-        .reduce((sum, a) => sum + a.monto_neto, 0);
-
-      const brutoUsdt = clientAlerts
-        .filter((a) => a.moneda === 'USDT')
-        .reduce((sum, a) => sum + a.monto_bruto, 0);
-      const comisionUsdt = clientAlerts
-        .filter((a) => a.moneda === 'USDT')
-        .reduce((sum, a) => sum + a.monto_comision, 0);
-      const netoUsdt = clientAlerts
-        .filter((a) => a.moneda === 'USDT')
-        .reduce((sum, a) => sum + a.monto_neto, 0);
-
-      const count = clientAlerts.length;
-
-      return {
-        ...c,
-        total_bruto_usd: count > 0 ? Math.round(brutoUsd * 100) / 100 : c.total_bruto_usd,
-        total_comision_usd: count > 0 ? Math.round(comisionUsd * 100) / 100 : c.total_comision_usd,
-        total_neto_usd: count > 0 ? Math.round(netoUsd * 100) / 100 : c.total_neto_usd,
-        total_bruto_usdt: count > 0 ? Math.round(brutoUsdt * 100) / 100 : c.total_bruto_usdt,
-        total_comision_usdt: count > 0 ? Math.round(comisionUsdt * 100) / 100 : c.total_comision_usdt,
-        total_neto_usdt: count > 0 ? Math.round(netoUsdt * 100) / 100 : c.total_neto_usdt,
-        pagos_conciliados_count: count > 0 ? count : c.pagos_conciliados_count,
-      };
-    });
-  }, [clients, alerts]);
+    return clients;
+  }, [clients]);
 
   const filteredAlerts = useMemo<BankEmailAlertRecord[]>(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -2533,10 +2493,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       window.localStorage.removeItem(STORAGE_BUSINESS_USER_KEY);
       window.localStorage.removeItem(STORAGE_ACTIVE_NEGOCIO_KEY);
     }
+    void fetch('/api/auth/business', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'LOGOUT' }),
+    }).catch(() => undefined);
     setCurrentBusinessUser(null);
     setBusinessUsers([]);
     setActiveNegocioId('');
     setAlerts([]);
+    setServerSummaryMetrics(null);
     setPendingOrders([]);
     setClients([]);
     setMailboxes([]);

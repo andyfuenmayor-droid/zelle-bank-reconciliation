@@ -21,13 +21,33 @@ if [ -f /opt/operadora-cms-web/.env ]; then
   [ -n "$PG_DB_ENV" ] && PG_DB="$PG_DB_ENV"
 fi
 
+if [ -z "$PG_PASS" ]; then
+  echo "❌ ERROR: POSTGRES_PASSWORD no encontrado en /opt/operadora-cms-web/.env. Configúralo antes de desplegar."
+  exit 1
+fi
+
+EXISTING_CRON_SECRET=""
+EXISTING_SESSION_SECRET=""
+EXISTING_ENCRYPTION_KEY=""
+if [ -f .env ]; then
+  EXISTING_CRON_SECRET=$(grep -E '^CRON_SECRET=' .env | cut -d'=' -f2- | tr -d '\r"' || true)
+  EXISTING_SESSION_SECRET=$(grep -E '^SESSION_SECRET=' .env | cut -d'=' -f2- | tr -d '\r"' || true)
+  EXISTING_ENCRYPTION_KEY=$(grep -E '^APP_ENCRYPTION_KEY=' .env | cut -d'=' -f2- | tr -d '\r"' || true)
+fi
+
+GEN_CRON_SECRET="${EXISTING_CRON_SECRET:-$(openssl rand -hex 24)}"
+GEN_SESSION_SECRET="${EXISTING_SESSION_SECRET:-$(openssl rand -hex 32)}"
+GEN_ENCRYPTION_KEY="${EXISTING_ENCRYPTION_KEY:-$(openssl rand -hex 32)}"
+
 cat <<EOF > .env
 PORT=${APP_PORT}
 NODE_ENV=production
-DATABASE_URL=postgresql://${PG_USER}:${PG_PASS:-WZjf5eNhdCX4GJSnsAuF2H1t}@127.0.0.1:5432/${PG_DB}
+DATABASE_URL=postgresql://${PG_USER}:${PG_PASS}@127.0.0.1:5432/${PG_DB}
 PG_POOL_MAX=20
 PG_SSL_ENABLED=false
-CRON_SECRET=mbe_cron_zelle_secret_2026
+CRON_SECRET=${GEN_CRON_SECRET}
+SESSION_SECRET=${GEN_SESSION_SECRET}
+APP_ENCRYPTION_KEY=${GEN_ENCRYPTION_KEY}
 DEFAULT_FEE_PERCENTAGE=4.00
 EOF
 chmod 600 .env

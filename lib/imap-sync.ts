@@ -4,6 +4,7 @@ import { ensureDefaultAdminBusinessUser } from '@/lib/business-scope';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
 import { buildDedupKey, parseBankAlertEmail, sanitizeEmailContent } from '@/lib/email-parser';
 import { fetchAllBinanceTransactions } from '@/lib/binance-client';
+import { decryptAtRest } from '@/lib/security';
 import {
   AutoReconciliationResult,
   FinancialTransactionRecord,
@@ -106,13 +107,14 @@ async function syncSingleMailbox(
   skipped: number;
   items: SyncProcessedItem[];
 }> {
+  const decryptedPass = decryptAtRest(mailbox.imap_password) ?? mailbox.imap_password;
   const client = new ImapFlow({
     host: mailbox.imap_host,
     port: Number.isFinite(mailbox.imap_port) ? mailbox.imap_port : 993,
     secure: Boolean(mailbox.imap_secure),
     auth: {
       user: mailbox.email_address,
-      pass: mailbox.imap_password,
+      pass: decryptedPass,
     },
     disableAutoIdle: true,
     connectionTimeout: 12_000,
@@ -606,15 +608,8 @@ export async function executeUnifiedMultiChannelSync(
   const targetNegocioId = onlyNegocioId?.trim() || primaryAdmin?.id || null;
   const monitoringStartDate = getMonitoringStartDate();
 
-  // Limpieza preventiva: eliminar cualquier registro anterior a la fecha de corte configurada (2026-10-19)
-  try {
-    await dbQuery(
-      `DELETE FROM financial_transactions_reconciliation WHERE fecha_transaccion < $1::timestamptz;`,
-      [monitoringStartDate.toISOString()]
-    );
-  } catch {
-    // Ignorar si la tabla aún no ha sido creada
-  }
+  // NOTA DE INTEGRIDAD FINANCIERA: Jamás eliminar registros históricos de financial_transactions_reconciliation
+  // durante el sync; `monitoringStartDate` solo filtra el rango de lectura IMAP/Binance.
 
   const mailboxes: MonitoredMailboxRow[] = [];
 
@@ -776,17 +771,28 @@ export async function executeUnifiedMultiChannelSync(
     }
   }
 
-  // Sincronización Retroactiva Inteligente:
-  // Re-evaluar todas las órdenes de pago pendientes del portal contra la base de correos bancarios acumulada
+  // Sincronización Retroactiva Inteligente (acotada al negocio si aplica):
+  // Re-evaluar las órdenes de pago pendientes del portal contra la base de correos bancarios acumulada
   try {
-    const pendingOrders = await dbQuery<{ id: string }>(
-      `
-      SELECT id
-      FROM ordenes_pago_pendientes
-      WHERE estado = 'PENDIENTE'
-      ORDER BY created_at ASC;
-      `
-    );
+    const pendingOrders = onlyNegocioId
+      ? await dbQuery<{ id: string }>(
+          `
+          SELECT id
+          FROM ordenes_pago_pendientes
+          WHERE estado = 'PENDIENTE'
+            AND negocio_id = $1::uuid
+          ORDER BY created_at ASC;
+          `,
+          [onlyNegocioId]
+        )
+      : await dbQuery<{ id: string }>(
+          `
+          SELECT id
+          FROM ordenes_pago_pendientes
+          WHERE estado = 'PENDIENTE'
+          ORDER BY created_at ASC;
+          `
+        );
     for (const order of pendingOrders.rows) {
       const rec = await dbQuery<{ conciliado: boolean }>(
         'SELECT * FROM fn_conciliar_orden_cliente($1::uuid);',
@@ -797,17 +803,31 @@ export async function executeUnifiedMultiChannelSync(
       }
     }
 
-    const unmatchedRows = await dbQuery<{ id: string }>(
-      `
-      SELECT id
-      FROM financial_transactions_reconciliation
-      WHERE estado IN ('DETECTADO', 'REVISION_MANUAL')
-        AND cliente_id IS NULL
-        AND orden_conciliada_id IS NULL
-        AND tipo_movimiento = 'RECIBIDO'
-      ORDER BY fecha_transaccion DESC;
-      `
-    );
+    const unmatchedRows = onlyNegocioId
+      ? await dbQuery<{ id: string }>(
+          `
+          SELECT id
+          FROM financial_transactions_reconciliation
+          WHERE estado IN ('DETECTADO', 'REVISION_MANUAL')
+            AND negocio_id = $1::uuid
+            AND cliente_id IS NULL
+            AND orden_conciliada_id IS NULL
+            AND tipo_movimiento = 'RECIBIDO'
+          ORDER BY fecha_transaccion DESC;
+          `,
+          [onlyNegocioId]
+        )
+      : await dbQuery<{ id: string }>(
+          `
+          SELECT id
+          FROM financial_transactions_reconciliation
+          WHERE estado IN ('DETECTADO', 'REVISION_MANUAL')
+            AND cliente_id IS NULL
+            AND orden_conciliada_id IS NULL
+            AND tipo_movimiento = 'RECIBIDO'
+          ORDER BY fecha_transaccion DESC;
+          `
+        );
     for (const row of unmatchedRows.rows) {
       const rec = await dbQuery<AutoReconciliationResult>(
         'SELECT * FROM fn_auto_conciliar_transaccion($1::uuid);',

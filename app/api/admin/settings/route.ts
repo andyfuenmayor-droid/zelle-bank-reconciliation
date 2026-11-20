@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { isDatabaseAvailable, dbQuery } from '@/lib/db';
 import { getActiveAiConfig } from '@/lib/receipt-scanner';
+import {
+  checkRateLimit,
+  encryptAtRest,
+  requireSuperAdminSession,
+} from '@/lib/security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +18,12 @@ function maskApiKey(key: string | null | undefined): string {
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
 
-export async function GET(): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireSuperAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   try {
     const config = await getActiveAiConfig();
 
@@ -73,12 +83,9 @@ async function verifyApiKeyLive(
       };
     }
     const testModels = [
-      'gemini-3.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
       'gemini-2.5-flash',
-      'gemini-1.5-flash',
+      'gemini-2.5-flash-lite',
+      'gemini-2.0-flash',
     ];
     let lastError = '';
     let latencyMs = 0;
@@ -163,12 +170,24 @@ async function verifyApiKeyLive(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireSuperAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = (await request.json()) as UpdateSettingsBody;
     const action = body.action || 'SAVE';
 
     // Acción: VERIFY
     if (action === 'VERIFY') {
+      const rl = checkRateLimit(`ai-verify:${auth.session.userId}`, 15, 10 * 60 * 1000);
+      if (!rl.allowed) {
+        return NextResponse.json(
+          { ok: false, error: `Espera ${rl.retryAfterSec}s antes de probar otra clave.` },
+          { status: 429 }
+        );
+      }
       const provider = body.ai_provider || 'gemini';
       const testKey =
         provider === 'gemini'
@@ -278,9 +297,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : current.gemini_api_key;
     const newGeminiModel =
       body.gemini_model?.trim() ||
-      (current.gemini_model && current.gemini_model !== 'gemini-1.5-flash'
+      (current.gemini_model &&
+      !current.gemini_model.startsWith('gemini-3.') &&
+      current.gemini_model !== 'gemini-1.5-flash'
         ? current.gemini_model
-        : 'gemini-3.5-flash-lite');
+        : 'gemini-2.5-flash');
     const newGroqKey =
       body.groq_api_key !== undefined
         ? body.groq_api_key.trim() || null
@@ -300,7 +321,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
          groq_api_key = EXCLUDED.groq_api_key,
          groq_model = EXCLUDED.groq_model,
          updated_at = NOW();`,
-      [newProvider, newOpenAiKey, newOpenAiModel, newGeminiKey, newGeminiModel, newGroqKey, newGroqModel]
+      [
+        newProvider,
+        encryptAtRest(newOpenAiKey),
+        newOpenAiModel,
+        encryptAtRest(newGeminiKey),
+        newGeminiModel,
+        encryptAtRest(newGroqKey),
+        newGroqModel,
+      ]
     );
 
     return NextResponse.json({

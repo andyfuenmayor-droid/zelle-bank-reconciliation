@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { executeUnifiedMultiChannelSync } from '@/lib/imap-sync';
+import { safeEqualStrings } from '@/lib/security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +17,7 @@ function isAuthorizedCronRequest(request: NextRequest): boolean {
     return false;
   }
 
-  return authHeader === `Bearer ${cronSecret}`;
+  return safeEqualStrings(authHeader, `Bearer ${cronSecret}`);
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

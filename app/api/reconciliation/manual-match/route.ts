@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
 import { getDemoStore } from '@/lib/mock-seed-data';
 import {
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
+import {
   FinancialTransactionRecord,
   PendingPaymentOrder,
 } from '@/types/reconciliation';
@@ -18,6 +22,12 @@ interface ManualMatchPayload {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   try {
     const body = (await request.json()) as ManualMatchPayload;
     const action = body.action ?? 'MATCH_TX';
@@ -63,9 +73,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           DELETE FROM ordenes_pago_pendientes
           WHERE id = $1::uuid
             AND estado = 'PENDIENTE'
+            AND (negocio_id = $2::uuid OR negocio_id IS NULL)
           RETURNING id, codigo_orden, cliente_nombre;
           `,
-          [ordenPagoId]
+          [ordenPagoId, authorizedNegocioId]
         );
         if (!res.rows[0]) {
           throw new Error('La orden especificada no existe o ya fue conciliada.');
@@ -186,9 +197,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             SELECT *
             FROM ordenes_pago_pendientes
             WHERE id = $1::uuid
+              AND (negocio_id = $2::uuid OR negocio_id IS NULL)
             FOR UPDATE;
             `,
-            [ordenPagoId]
+            [ordenPagoId, authorizedNegocioId]
           );
 
           const targetOrder = orderLookup.rows[0];
@@ -469,9 +481,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           SELECT id, plataforma, porcentaje_comision, remitente_o_contraparte
           FROM financial_transactions_reconciliation
           WHERE id = $1::uuid
+            AND (negocio_id = $2::uuid OR negocio_id IS NULL)
           FOR UPDATE;
           `,
-          [alertId]
+          [alertId, authorizedNegocioId]
         );
 
         const currentTx = currentTxRes.rows[0];
@@ -495,9 +508,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 conciliado_at = NOW(),
                 updated_at = NOW()
             WHERE id = $2::uuid
+              AND (negocio_id = $3::uuid OR negocio_id IS NULL)
             RETURNING *;
             `,
-            [alertId, ordenPagoId]
+            [alertId, ordenPagoId, authorizedNegocioId]
           );
 
           const matchedOrder = orderRes.rows[0];

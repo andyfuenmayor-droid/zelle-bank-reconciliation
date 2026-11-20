@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveRequestNegocioScope } from '@/lib/business-scope';
 import { dbQuery, isDatabaseAvailable, withTransaction } from '@/lib/db';
+import {
+  generateUniqueCode,
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
 import {
   ClientLiquidationRecord,
   CurrencyType,
@@ -35,6 +39,11 @@ const VALID_PAYMENT_METHODS: ReadonlyArray<LiquidationPaymentMethod> = [
 ];
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
     return NextResponse.json({
@@ -45,7 +54,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const scope = await resolveRequestNegocioScope(request);
+    const scope = { negocioId: resolveAuthorizedNegocioId(auth.session, request) };
     const { searchParams } = new URL(request.url);
     const clienteId = searchParams.get('clienteId')?.trim() || null;
 
@@ -103,6 +112,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
     return NextResponse.json(
@@ -112,7 +126,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const scope = await resolveRequestNegocioScope(request);
+    const scope = { negocioId: resolveAuthorizedNegocioId(auth.session, request) };
     const body = (await request.json()) as CreateLiquidationBody;
 
     const clienteId = (body.cliente_id ?? '').trim();
@@ -155,13 +169,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const result = await withTransaction(async (client) => {
-      // 1. Bloquear cliente para cálculo ACID
+      // 1. Bloquear cliente y verificar aislamiento multi-tenant
       const clientRes = await client.query<{ id: string; nombre_titular: string; negocio_id: string | null }>(
-        `SELECT id, nombre_titular, negocio_id FROM clientes_titulares WHERE id = $1::uuid FOR UPDATE`,
-        [clienteId]
+        `SELECT id, nombre_titular, negocio_id FROM clientes_titulares WHERE id = $1::uuid AND (negocio_id = $2::uuid OR negocio_id IS NULL) FOR UPDATE`,
+        [clienteId, scope.negocioId]
       );
       if (clientRes.rows.length === 0) {
-        throw new Error('El cliente titular especificado no existe.');
+        throw new Error('El cliente titular especificado no existe en este negocio.');
       }
       const clientRow = clientRes.rows[0];
 
@@ -203,9 +217,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const saldoRestante = Math.round((saldoAnterior - montoLiquidado) * 100) / 100;
 
-      // 4. Generar código único de liquidación
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      const codigoLiquidacion = `LIQ-${new Date().getFullYear()}-${randomSuffix}`;
+      // 4. Generar código único de liquidación sin colisiones
+      const codigoLiquidacion = generateUniqueCode('LIQ');
       const negocioId = clientRow.negocio_id ?? scope.negocioId;
 
       // 5. Insertar registro de liquidación
@@ -252,9 +265,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const createdLiq = insertRes.rows[0];
 
-      // 6. Si se solicita archivar comprobantes del ciclo actual
+      // 6. Si se solicita archivar comprobantes del ciclo actual (estrictamente en la moneda liquidada)
       if (archivarComprobantes && createdLiq) {
-        // Actualizar órdenes de pago conciliadas no liquidadas
+        // Actualizar órdenes de pago conciliadas no liquidadas de la moneda liquidada
         await client.query(
           `
           UPDATE ordenes_pago_pendientes
@@ -262,13 +275,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               liquidado_at = NOW(),
               estado = 'LIQUIDADO'
           WHERE cliente_id = $2::uuid
+            AND moneda = $3
             AND estado = 'CONCILIADO'
             AND liquidado_at IS NULL;
           `,
-          [createdLiq.id, clientRow.id]
+          [createdLiq.id, clientRow.id, moneda]
         );
 
-        // Actualizar transacciones financieras bancarias
+        // Actualizar transacciones financieras bancarias de la moneda liquidada
         await client.query(
           `
           UPDATE financial_transactions_reconciliation
@@ -278,10 +292,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             cliente_id = $2::uuid
             OR UPPER(TRIM(COALESCE(cliente_asignado_nombre, ''))) = UPPER(TRIM($3))
           )
+          AND moneda = $4
           AND estado = 'CONCILIADO'
           AND liquidado_at IS NULL;
           `,
-          [createdLiq.id, clientRow.id, clientRow.nombre_titular]
+          [createdLiq.id, clientRow.id, clientRow.nombre_titular, moneda]
         );
       }
 

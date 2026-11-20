@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
+import { decryptAtRest, isAllowedRasterImageDataUrl } from '@/lib/security';
 import {
   AssignedReceivingAccount,
   CurrencyType,
@@ -65,7 +66,7 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
     | 'groq'
     | 'anthropic';
   const envOpenAiModel = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
-  const envGeminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-1.5-flash';
+  const envGeminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
   const envGroqModel =
     process.env.GROQ_MODEL?.trim() || 'llama-3.2-11b-vision-preview';
 
@@ -91,10 +92,10 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
         openai_model: string;
         gemini_api_key: string | null;
         gemini_model: string;
-        groq_api_key?: string | null;
-        groq_model?: string;
+        groq_api_key: string | null;
+        groq_model: string | null;
       }>(
-        `SELECT ai_provider, openai_api_key, openai_model, gemini_api_key, gemini_model
+        `SELECT ai_provider, openai_api_key, openai_model, gemini_api_key, gemini_model, groq_api_key, groq_model
          FROM system_ai_settings
          WHERE id = 'default'
          LIMIT 1;`
@@ -102,18 +103,18 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
 
       if (result.rows.length > 0) {
         const row = result.rows[0];
-        const prov = (row.ai_provider?.toLowerCase() || 'openai') as
+        const prov = (row.ai_provider?.toLowerCase() || 'gemini') as
           | 'openai'
           | 'gemini'
           | 'groq'
           | 'anthropic';
         return {
           ai_provider: prov,
-          openai_api_key: row.openai_api_key?.trim() || null,
+          openai_api_key: decryptAtRest(row.openai_api_key),
           openai_model: row.openai_model?.trim() || 'gpt-4o-mini',
-          gemini_api_key: row.gemini_api_key?.trim() || null,
-          gemini_model: row.gemini_model?.trim() || 'gemini-3.5-flash-lite',
-          groq_api_key: row.groq_api_key?.trim() || null,
+          gemini_api_key: decryptAtRest(row.gemini_api_key),
+          gemini_model: row.gemini_model?.trim() || 'gemini-2.5-flash',
+          groq_api_key: decryptAtRest(row.groq_api_key),
           groq_model: row.groq_model?.trim() || 'llama-3.2-11b-vision-preview',
         };
       }
@@ -127,7 +128,7 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
     openai_api_key: null,
     openai_model: 'gpt-4o-mini',
     gemini_api_key: null,
-    gemini_model: 'gemini-3.5-flash-lite',
+    gemini_model: 'gemini-2.5-flash',
     groq_api_key: null,
     groq_model: 'llama-3.2-11b-vision-preview',
   };
@@ -355,16 +356,22 @@ async function scanWithGeminiVision(
   const mimeType = match[1];
   const base64Data = match[2];
 
+  const validCustomModel =
+    modelName &&
+    !modelName.startsWith('gemini-3.') &&
+    modelName !== 'gemini-1.5-flash'
+      ? modelName
+      : null;
+
   const candidateModels = Array.from(
-    new Set([
-      'gemini-3.5-flash-lite',
-      modelName,
-      'gemini-3.1-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-    ].filter(Boolean) as string[])
+    new Set(
+      [
+        validCustomModel,
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.0-flash',
+      ].filter(Boolean) as string[]
+    )
   );
 
   const payload = {
@@ -552,7 +559,7 @@ export async function scanReceiptWithAi(params: {
 }> {
   const { comprobanteBase64, cuentasAsignadas = [] } = params;
 
-  if (!comprobanteBase64 || !comprobanteBase64.startsWith('data:image/')) {
+  if (!isAllowedRasterImageDataUrl(comprobanteBase64)) {
     return {
       ok: false,
       detected: false,
@@ -565,26 +572,15 @@ export async function scanReceiptWithAi(params: {
         cuenta_destino: null,
         selected_account_id: null,
         confianza: 0,
-        observaciones: 'Imagen no válida o no proporcionada.',
+        observaciones: 'Formato de imagen no permitido. Solo se aceptan capturas PNG, JPG o WEBP.',
         metodo_ia: 'MANUAL_FALLBACK',
       },
-      message: 'Debes proporcionar una imagen válida en formato Data URL.',
+      message: 'Formato de comprobante inválido. Sube una imagen PNG, JPG o WEBP.',
     };
   }
 
-  // 1. Probar extractor SVG / Vectorial
-  const svgResult = tryExtractFromSvgDataUrl(comprobanteBase64);
-  if (svgResult) {
-    autoMatchAssignedAccount(svgResult, cuentasAsignadas);
-    return {
-      ok: true,
-      detected: true,
-      data: svgResult,
-      message: 'Comprobante identificado con éxito mediante análisis vectorial instantáneo.',
-    };
-  }
-
-  // 2. Obtener configuración de IA activa
+  // 1. Obtener configuración de IA activa (se omite SVG por seguridad anti-falsificación)
+  void tryExtractFromSvgDataUrl;
   const config = await getActiveAiConfig();
 
   // Función interna para intentar Gemini

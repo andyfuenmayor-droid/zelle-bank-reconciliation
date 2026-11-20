@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
 import { getDemoStore } from '@/lib/mock-seed-data';
+import {
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
 import { FinancialTransactionRecord } from '@/types/reconciliation';
 
 export const runtime = 'nodejs';
@@ -14,6 +18,12 @@ interface BatchMatchPayload {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   try {
     const body = (await request.json()) as BatchMatchPayload;
     const alertIds = Array.isArray(body.alertIds)
@@ -91,15 +101,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             SELECT id, nombre_titular, porcentaje_comision_zelle, porcentaje_comision_binance, porcentaje_comision
             FROM clientes_titulares
             WHERE id = $1::uuid
+              AND (negocio_id = $2::uuid OR negocio_id IS NULL)
             LIMIT 1;
           `
           : `
             SELECT id, nombre_titular, porcentaje_comision_zelle, porcentaje_comision_binance, porcentaje_comision
             FROM clientes_titulares
             WHERE UPPER(TRIM(nombre_titular)) = UPPER(TRIM($1))
+              AND (negocio_id = $2::uuid OR negocio_id IS NULL)
             LIMIT 1;
           `,
-        clienteId ? [clienteId] : [clienteNombreManual]
+        clienteId ? [clienteId, authorizedNegocioId] : [clienteNombreManual, authorizedNegocioId]
       );
 
       const foundClient = clientLookup.rows[0];
@@ -126,9 +138,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           SELECT *
           FROM financial_transactions_reconciliation
           WHERE id = $1::uuid
+            AND (negocio_id = $2::uuid OR negocio_id IS NULL)
           FOR UPDATE;
           `,
-          [alertId]
+          [alertId, authorizedNegocioId]
         );
 
         const currentTx = txRes.rows[0];
@@ -136,8 +149,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           continue;
         }
 
-        if (currentTx.estado === 'CONCILIADO') {
-          continue; // Ya conciliado previamente, omitir
+        if (currentTx.estado === 'CONCILIADO' || currentTx.tipo_movimiento !== 'RECIBIDO') {
+          continue; // Jamás conciliar egresos (ENVIADO) ni pagos ya conciliados
         }
 
         const isBinance = currentTx.plataforma.startsWith('BINANCE');

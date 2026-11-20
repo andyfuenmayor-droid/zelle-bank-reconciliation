@@ -1,10 +1,18 @@
-import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
 import {
   getActiveMailboxAssignedAccounts,
   resolveClientAssignedAccounts,
 } from '@/lib/assigned-accounts';
+import {
+  attachClientSessionCookie,
+  checkRateLimit,
+  clearClientSessionCookie,
+  getClientIp,
+  getClientSession,
+  hashSecretScrypt,
+  verifySecretHash,
+} from '@/lib/security';
 import {
   computeClientWalletSummary,
   DEMO_DEFAULT_ASSIGNED_ACCOUNTS,
@@ -21,10 +29,6 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function hashPinSha256(pin: string): string {
-  return crypto.createHash('sha256').update(pin.trim()).digest('hex');
-}
 
 interface PortalClientRow {
   id: string;
@@ -329,25 +333,26 @@ function buildDemoSessionResponse(demoClient: DemoClientInternal): {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams } = new URL(request.url);
-  const clienteId = searchParams.get('clienteId')?.trim() ?? '';
-
-  if (!clienteId) {
+  const clientSession = getClientSession(request);
+  if (!clientSession) {
     return NextResponse.json(
-      { ok: false, error: 'El parámetro clienteId es obligatorio.' },
-      { status: 400 }
+      { ok: false, error: 'No existe una sesión activa en el portal.' },
+      { status: 401 }
     );
   }
+
+  const clienteId = clientSession.clienteId;
 
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
     const store = getDemoStore();
     const demoClient = store.clients.find((c) => c.id === clienteId);
     if (!demoClient) {
-      return NextResponse.json(
+      const res = NextResponse.json(
         { ok: false, error: 'Cliente no encontrado en modo Demo.' },
-        { status: 404 }
+        { status: 401 }
       );
+      return clearClientSessionCookie(res, request);
     }
 
     const session = buildDemoSessionResponse(demoClient);
@@ -379,6 +384,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         created_at
       FROM clientes_titulares
       WHERE id = $1::uuid
+        AND activo = TRUE
       LIMIT 1;
       `,
       [clienteId]
@@ -386,10 +392,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const row = clientRes.rows[0];
     if (!row) {
-      return NextResponse.json(
-        { ok: false, error: 'Cuenta de cliente no encontrada.' },
-        { status: 404 }
+      const res = NextResponse.json(
+        { ok: false, error: 'Cuenta de cliente no encontrada o inactiva.' },
+        { status: 401 }
       );
+      return clearClientSessionCookie(res, request);
     }
 
     const session = await loadPostgresPortalSession(row);
@@ -406,7 +413,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 interface PortalAuthPostBody {
-  action?: 'REGISTER' | 'LOGIN';
+  action?: 'REGISTER' | 'LOGIN' | 'LOGOUT';
   email?: string;
   pin?: string;
 }
@@ -415,6 +422,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = (await request.json()) as PortalAuthPostBody;
     const action = body.action ?? 'LOGIN';
+
+    if (action === 'LOGOUT') {
+      const res = NextResponse.json({ ok: true });
+      return clearClientSessionCookie(res, request);
+    }
 
     if (action === 'REGISTER') {
       return NextResponse.json(
@@ -429,6 +441,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const email = (body.email ?? '').trim().toLowerCase();
     const pin = (body.pin ?? '').trim();
+
+    const ip = getClientIp(request);
+    const rl = checkRateLimit(`portal-login:${ip}:${email}`, 8, 15 * 60 * 1000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Demasiados intentos fallidos. Espera ${rl.retryAfterSec} segundos antes de intentar de nuevo.`,
+        },
+        { status: 429 }
+      );
+    }
 
     if (!email || !email.includes('@')) {
       return NextResponse.json(
@@ -445,7 +469,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const dbConnected = await isDatabaseAvailable();
-    const pinHash = hashPinSha256(pin);
 
     if (!dbConnected) {
       const store = getDemoStore();
@@ -467,11 +490,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       const session = buildDemoSessionResponse(matched);
-      return NextResponse.json({
+      const res = NextResponse.json({
         ok: true,
         mode: 'DEMO_FALLBACK',
         ...session,
       });
+      return attachClientSessionCookie(
+        res,
+        { clienteId: matched.id, negocioId: matched.negocio_id ?? null },
+        request
+      );
     }
 
     const loginRes = await dbQuery<PortalClientRow>(
@@ -494,27 +522,44 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         created_at
       FROM clientes_titulares
       WHERE LOWER(COALESCE(email, email_contacto, '')) = LOWER($1)
-        AND pin_acceso_hash = $2
         AND activo = TRUE
       LIMIT 1;
       `,
-      [email, pinHash]
+      [email]
     );
 
     const row = loginRes.rows[0];
-    if (!row) {
+    const verified = row
+      ? verifySecretHash(pin, row.pin_acceso_hash)
+      : { valid: false, needsUpgrade: false };
+
+    if (!row || !verified.valid) {
       return NextResponse.json(
         { ok: false, error: 'Credenciales inválidas. Verifica tu correo y PIN.' },
         { status: 401 }
       );
     }
 
+    // Actualizar transparentemente PIN heredado SHA-256 a scrypt con salt
+    if (verified.needsUpgrade) {
+      const upgradedHash = hashSecretScrypt(pin);
+      await dbQuery(
+        'UPDATE clientes_titulares SET pin_acceso_hash = $2 WHERE id = $1::uuid;',
+        [row.id, upgradedHash]
+      );
+    }
+
     const session = await loadPostgresPortalSession(row);
-    return NextResponse.json({
+    const res = NextResponse.json({
       ok: true,
       mode: 'POSTGRESQL_LIVE',
       ...session,
     });
+    return attachClientSessionCookie(
+      res,
+      { clienteId: row.id, negocioId: row.negocio_id ?? null },
+      request
+    );
   } catch (error: unknown) {
     const msg =
       error instanceof Error ? error.message : 'Error en autenticación de portal.';

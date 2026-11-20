@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
 import { getDemoStore } from '@/lib/mock-seed-data';
+import {
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
 import { FinancialTransactionRecord } from '@/types/reconciliation';
 
 export const runtime = 'nodejs';
@@ -12,6 +16,12 @@ interface RevertReconciliationPayload {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   try {
     const body = (await request.json()) as RevertReconciliationPayload;
     const alertId = body.alertId?.trim() ?? '';
@@ -86,9 +96,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             nota_auditoria
           FROM financial_transactions_reconciliation
           WHERE id = $1::uuid
+            AND (negocio_id = $2::uuid OR negocio_id IS NULL)
           FOR UPDATE;
           `,
-          [alertId]
+          [alertId, authorizedNegocioId]
         );
 
         const currentTx = txRes.rows[0];

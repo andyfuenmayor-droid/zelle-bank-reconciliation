@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS ordenes_pago_pendientes (
     comprobante_base64 TEXT NOT NULL DEFAULT '',
     comprobante_mime VARCHAR(60),
     datos_ocr_extraidos JSONB NOT NULL DEFAULT '{}'::jsonb,
-    estado VARCHAR(25) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE', 'CONCILIADO', 'EXPIRADO', 'CANCELADO')),
+    estado VARCHAR(25) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE', 'CONCILIADO', 'LIQUIDADO', 'EXPIRADO', 'CANCELADO')),
     transaccion_conciliada_id UUID,
     alerta_conciliada_id UUID,
     conciliado_por VARCHAR(64),
@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS ordenes_pago_pendientes (
 
 -- Migración idempotente si `ordenes_pago_pendientes` existía de la versión anterior
 ALTER TABLE ordenes_pago_pendientes DROP CONSTRAINT IF EXISTS ordenes_pago_pendientes_banco_destino_check;
+ALTER TABLE ordenes_pago_pendientes DROP CONSTRAINT IF EXISTS ordenes_pago_pendientes_estado_check;
+ALTER TABLE ordenes_pago_pendientes ADD CONSTRAINT ordenes_pago_pendientes_estado_check CHECK (estado IN ('PENDIENTE', 'CONCILIADO', 'LIQUIDADO', 'EXPIRADO', 'CANCELADO'));
+ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS fecha_transferencia VARCHAR(50);
 ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS negocio_id UUID REFERENCES usuarios_negocios(id) ON DELETE CASCADE;
 ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS plataforma_esperada VARCHAR(30) DEFAULT 'CITIBANK';
 ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS banco_destino VARCHAR(32) DEFAULT 'CITIBANK';

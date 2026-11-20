@@ -1,11 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
 import { getDemoStore } from '@/lib/mock-seed-data';
+import {
+  getAdminSession,
+  getClientSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const adminSession = getAdminSession(request);
+  const clientSession = getClientSession(request);
+
+  if (!adminSession && !clientSession) {
+    return NextResponse.json(
+      { ok: false, error: 'Debes iniciar sesión para visualizar comprobantes.' },
+      { status: 401 }
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const orderId = searchParams.get('orderId')?.trim();
   const txId = searchParams.get('txId')?.trim();
@@ -16,6 +31,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       { status: 400 }
     );
   }
+
+  const authorizedNegocioId = adminSession
+    ? resolveAuthorizedNegocioId(adminSession, request)
+    : null;
 
   const dbConnected = await isDatabaseAvailable();
 
@@ -33,6 +52,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(
         { ok: false, error: 'Comprobante no disponible en modo Demo.' },
         { status: 404 }
+      );
+    }
+
+    if (!adminSession && clientSession && order.cliente_id !== clientSession.clienteId) {
+      return NextResponse.json(
+        { ok: false, error: 'No autorizado para visualizar este comprobante.' },
+        { status: 403 }
       );
     }
 
@@ -54,37 +80,72 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     } | undefined;
 
     if (orderId) {
-      const res = await dbQuery<{
-        id: string;
-        codigo_orden: string;
-        comprobante_base64: string;
-        comprobante_mime: string | null;
-      }>(
-        `
-        SELECT id, codigo_orden, comprobante_base64, comprobante_mime
-        FROM ordenes_pago_pendientes
-        WHERE id = $1::uuid
-        LIMIT 1;
-        `,
-        [orderId]
-      );
+      const res = adminSession
+        ? await dbQuery<{
+            id: string;
+            codigo_orden: string;
+            comprobante_base64: string;
+            comprobante_mime: string | null;
+          }>(
+            `
+            SELECT id, codigo_orden, comprobante_base64, comprobante_mime
+            FROM ordenes_pago_pendientes
+            WHERE id = $1::uuid
+              AND (negocio_id = $2::uuid OR negocio_id IS NULL)
+            LIMIT 1;
+            `,
+            [orderId, authorizedNegocioId]
+          )
+        : await dbQuery<{
+            id: string;
+            codigo_orden: string;
+            comprobante_base64: string;
+            comprobante_mime: string | null;
+          }>(
+            `
+            SELECT id, codigo_orden, comprobante_base64, comprobante_mime
+            FROM ordenes_pago_pendientes
+            WHERE id = $1::uuid
+              AND cliente_id = $2::uuid
+            LIMIT 1;
+            `,
+            [orderId, clientSession!.clienteId]
+          );
       orderRow = res.rows[0];
     } else if (txId) {
-      const res = await dbQuery<{
-        id: string;
-        codigo_orden: string;
-        comprobante_base64: string;
-        comprobante_mime: string | null;
-      }>(
-        `
-        SELECT o.id, o.codigo_orden, o.comprobante_base64, o.comprobante_mime
-        FROM financial_transactions_reconciliation t
-        JOIN ordenes_pago_pendientes o ON o.id = t.orden_conciliada_id
-        WHERE t.id = $1::uuid
-        LIMIT 1;
-        `,
-        [txId]
-      );
+      const res = adminSession
+        ? await dbQuery<{
+            id: string;
+            codigo_orden: string;
+            comprobante_base64: string;
+            comprobante_mime: string | null;
+          }>(
+            `
+            SELECT o.id, o.codigo_orden, o.comprobante_base64, o.comprobante_mime
+            FROM financial_transactions_reconciliation t
+            JOIN ordenes_pago_pendientes o ON o.id = t.orden_conciliada_id
+            WHERE t.id = $1::uuid
+              AND (t.negocio_id = $2::uuid OR t.negocio_id IS NULL)
+            LIMIT 1;
+            `,
+            [txId, authorizedNegocioId]
+          )
+        : await dbQuery<{
+            id: string;
+            codigo_orden: string;
+            comprobante_base64: string;
+            comprobante_mime: string | null;
+          }>(
+            `
+            SELECT o.id, o.codigo_orden, o.comprobante_base64, o.comprobante_mime
+            FROM financial_transactions_reconciliation t
+            JOIN ordenes_pago_pendientes o ON o.id = t.orden_conciliada_id
+            WHERE t.id = $1::uuid
+              AND o.cliente_id = $2::uuid
+            LIMIT 1;
+            `,
+            [txId, clientSession!.clienteId]
+          );
       orderRow = res.rows[0];
     }
 

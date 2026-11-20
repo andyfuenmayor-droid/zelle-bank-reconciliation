@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ImapFlow } from 'imapflow';
-import { resolveRequestNegocioScope } from '@/lib/business-scope';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
+import {
+  encryptAtRest,
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+  validateSafeImapTarget,
+} from '@/lib/security';
 import {
   AssignedReceivingAccount,
   CurrencyType,
@@ -92,6 +97,11 @@ async function syncClientsAssignedAccountFromMailbox(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
     return NextResponse.json({
@@ -101,7 +111,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const scope = await resolveRequestNegocioScope(request);
+    const scope = { negocioId: resolveAuthorizedNegocioId(auth.session, request) };
     const res = scope.negocioId
       ? await dbQuery<ImapMailboxRecord>(
           `
@@ -183,8 +193,18 @@ interface CreateMailboxPayload {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = (await request.json()) as CreateMailboxPayload;
+    const authorizedNegocioId = resolveAuthorizedNegocioId(
+      auth.session,
+      request,
+      body.negocioId
+    );
     const mailboxId = (body.mailboxId ?? '').trim();
     const alias = (body.alias ?? 'Bandeja Principal Zelle').trim();
     const emailAddress = (body.emailAddress ?? '').trim().toLowerCase();
@@ -208,6 +228,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           error:
             'El correo electrónico y el servidor IMAP (Host) son obligatorios.',
         },
+        { status: 400 }
+      );
+    }
+
+    // Protección anti-SSRF: validar host y puerto IMAP antes de conectar o guardar
+    const ssrfCheck = await validateSafeImapTarget(
+      imapHost,
+      Number.isFinite(imapPort) ? imapPort : 993
+    );
+    if (!ssrfCheck.ok) {
+      return NextResponse.json(
+        { ok: false, error: ssrfCheck.error ?? 'Servidor IMAP no permitido.' },
         { status: 400 }
       );
     }
@@ -257,7 +289,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     let savedMailbox: ImapMailboxRecord | undefined;
-    const scope = await resolveRequestNegocioScope(request, body.negocioId);
+    const scope = { negocioId: authorizedNegocioId };
+    const encryptedImapPassword = imapPassword ? encryptAtRest(imapPassword) ?? imapPassword : '';
 
     if (mailboxId) {
       const updateRes = await dbQuery<ImapMailboxRecord>(
@@ -279,6 +312,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               ELSE last_sync_status
             END
         WHERE id = $1::uuid
+          AND (negocio_id = $14::uuid OR negocio_id IS NULL)
         RETURNING
           id,
           negocio_id,
@@ -304,13 +338,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           imapHost,
           Number.isFinite(imapPort) ? imapPort : 993,
           imapSecure,
-          imapPassword,
+          encryptedImapPassword,
           mailboxFolder,
           bancosMonitoreados,
           plataforma,
           cuentaReceptora,
           moneda,
           statusMessage,
+          scope.negocioId,
         ]
       );
 
@@ -399,7 +434,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           imapHost,
           Number.isFinite(imapPort) ? imapPort : 993,
           imapSecure,
-          imapPassword,
+          encryptedImapPassword,
           mailboxFolder,
           bancosMonitoreados,
           plataforma,
@@ -428,6 +463,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id')?.trim() ?? '';
 
@@ -439,9 +480,10 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await dbQuery('DELETE FROM imap_monitored_accounts WHERE id = $1::uuid;', [
-      id,
-    ]);
+    await dbQuery(
+      'DELETE FROM imap_monitored_accounts WHERE id = $1::uuid AND (negocio_id = $2::uuid OR negocio_id IS NULL);',
+      [id, authorizedNegocioId]
+    );
     return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     const message =

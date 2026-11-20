@@ -1,12 +1,17 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { resolveRequestNegocioScope } from '@/lib/business-scope';
 import { dbQuery, isDatabaseAvailable, withTransaction } from '@/lib/db';
 import {
   getActiveMailboxAssignedAccounts,
   normalizeAssignedAccounts,
   resolveClientAssignedAccounts,
 } from '@/lib/assigned-accounts';
+import {
+  generateUniqueCode,
+  hashSecretScrypt,
+  requireAdminSession,
+  resolveAuthorizedNegocioId,
+} from '@/lib/security';
 import {
   buildSampleReceiptBase64,
   DEMO_DEFAULT_ASSIGNED_ACCOUNTS,
@@ -27,18 +32,17 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function hashPinSha256(pin: string): string {
-  return crypto.createHash('sha256').update(pin.trim()).digest('hex');
-}
-
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
     const store = getDemoStore();
-    const headerNegocioId =
-      request.headers.get('x-negocio-id')?.trim() ||
-      store.businessUsers[0]?.id ||
-      '';
+    const headerNegocioId = authorizedNegocioId || store.businessUsers[0]?.id || '';
     const allClients = getDemoClientsWithTotals()
       .filter((c) => !headerNegocioId || (c.negocio_id ?? store.businessUsers[0]?.id) === headerNegocioId)
       .map((c) => {
@@ -62,7 +66,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const scope = await resolveRequestNegocioScope(request);
+    const scope = { negocioId: authorizedNegocioId };
     const filterByNegocio = scope.negocioId !== null;
     const queryParams = filterByNegocio ? [scope.negocioId] : [];
     const clientWhere = filterByNegocio ? 'WHERE c.negocio_id = $1::uuid' : '';
@@ -132,10 +136,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         COALESCE(banco_destino, plataforma_esperada, 'CITIBANK') AS banco_destino,
         COALESCE(moneda, 'USD') AS moneda,
         monto_esperado,
+        fecha_transferencia,
         COALESCE(remitente_reportado, nombre_remitente_reportado, cliente_nombre) AS remitente_reportado,
         COALESCE(nombre_remitente_reportado, remitente_reportado, cliente_nombre) AS nombre_remitente_reportado,
         referencia_reportada,
-        comprobante_base64,
+        (CASE WHEN comprobante_base64 IS NOT NULL AND LENGTH(comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
+        NULL::text AS comprobante_base64,
         comprobante_mime,
         datos_ocr_extraidos,
         estado,
@@ -207,8 +213,18 @@ interface ClientOrOrderPostBody {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+
   try {
     const body = (await request.json()) as ClientOrOrderPostBody;
+    const authorizedNegocioId = resolveAuthorizedNegocioId(
+      auth.session,
+      request,
+      body.negocioId
+    );
     const action = body.action ?? 'CREATE_CLIENT';
     const dbConnected = await isDatabaseAvailable();
 
@@ -263,7 +279,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const pinHash = hashPinSha256(pin);
+      const pinHash = hashSecretScrypt(pin);
       const normalizedAssignedInput = normalizeAssignedAccounts(
         body.cuentasAsignadas
       );
@@ -350,7 +366,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const scope = await resolveRequestNegocioScope(request, body.negocioId);
+      const scope = { negocioId: authorizedNegocioId };
       const activeMailboxAccounts = await getActiveMailboxAssignedAccounts(
         scope.negocioId
       );
@@ -545,8 +561,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const scope = await resolveRequestNegocioScope(request, body.negocioId);
-      const pinHash = pin.length > 0 ? hashPinSha256(pin) : null;
+      const scope = { negocioId: authorizedNegocioId };
+      const pinHash = pin.length > 0 ? hashSecretScrypt(pin) : null;
       const activeMailboxAccounts = await getActiveMailboxAssignedAccounts(
         scope.negocioId
       );
@@ -575,6 +591,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             remitentes_zelle_habituales = $9,
             cuentas_asignadas = COALESCE($10::jsonb, cuentas_asignadas)
         WHERE id = $1::uuid
+          AND (negocio_id = $11::uuid OR negocio_id IS NULL)
         RETURNING
           id,
           nombre_titular,
@@ -612,6 +629,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           [],
           null,
           accountsJsonParam,
+          scope.negocioId,
         ]
       );
 
@@ -689,9 +707,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const codigoOrden = `ORD-${new Date().getFullYear()}-${Math.floor(
-        1000 + Math.random() * 9000
-      )}`;
+      const codigoOrden = generateUniqueCode('ORD');
 
       const comprobanteBase64 =
         body.comprobanteBase64?.trim() ||
@@ -784,7 +800,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         });
       }
 
-      const scope = await resolveRequestNegocioScope(request, body.negocioId);
+      const scope = { negocioId: authorizedNegocioId };
 
       const result = await withTransaction(async (client) => {
         let resolvedClientId = body.clienteId?.trim() || '';
@@ -912,6 +928,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const auth = requireAdminSession(request);
+  if (auth.errorResponse) {
+    return auth.errorResponse;
+  }
+  const authorizedNegocioId = resolveAuthorizedNegocioId(auth.session, request);
+
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id')?.trim() ?? '';
 
@@ -930,7 +952,10 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await dbQuery('DELETE FROM clientes_titulares WHERE id = $1::uuid;', [id]);
+    await dbQuery(
+      'DELETE FROM clientes_titulares WHERE id = $1::uuid AND (negocio_id = $2::uuid OR negocio_id IS NULL);',
+      [id, authorizedNegocioId]
+    );
     return NextResponse.json({ ok: true, mode: 'POSTGRESQL_LIVE' });
   } catch (error: unknown) {
     const message =

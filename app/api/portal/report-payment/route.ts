@@ -1,7 +1,12 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { isDatabaseAvailable, withTransaction } from '@/lib/db';
-import { verifyReceiptWithVisionOcr } from '@/lib/email-parser';
+import { scanReceiptWithAi } from '@/lib/receipt-scanner';
+import {
+  generateUniqueCode,
+  getClientSession,
+  isAllowedRasterImageDataUrl,
+} from '@/lib/security';
 import {
   buildDemoOcrFallback,
   computeClientWalletSummary,
@@ -13,6 +18,7 @@ import {
   CurrencyType,
   ExpectedPlatformType,
   FinancialTransactionRecord,
+  OcrExtractionData,
   PendingPaymentOrder,
 } from '@/types/reconciliation';
 
@@ -53,8 +59,19 @@ function extractMimeFromDataUrl(dataUrl: string, explicitMime?: string): string 
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    const clientSession = getClientSession(request);
+    if (!clientSession) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Tu sesión del portal expiró. Inicia sesión nuevamente para reportar un pago.',
+        },
+        { status: 401 }
+      );
+    }
+
     const body = (await request.json()) as ReportPaymentBody;
-    const clienteId = (body.clienteId ?? '').trim();
+    const clienteId = clientSession.clienteId;
     const rawPlatform = (body.plataforma_esperada ?? '').trim().toUpperCase();
     const rawCurrency = (body.moneda ?? '').trim().toUpperCase();
     const montoEsperado = Number(body.monto_esperado ?? 0);
@@ -119,16 +136,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (
-      !comprobanteBase64 ||
-      comprobanteBase64.length < 100 ||
-      !comprobanteBase64.startsWith('data:image/')
-    ) {
+    if (!isAllowedRasterImageDataUrl(comprobanteBase64)) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            'La captura de pantalla del comprobante de pago es obligatoria. Debes adjuntar la imagen del comprobante para enviar el reporte.',
+            'La captura de pantalla del comprobante de pago es obligatoria en formato PNG, JPG o WEBP. Debes adjuntar una imagen real para enviar el reporte.',
         },
         { status: 400 }
       );
@@ -139,9 +152,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body.comprobante_mime
     );
     const normalizedAmount = Math.round(montoEsperado * 100) / 100;
-    const codigoOrden = `ORD-${new Date().getFullYear()}-${Math.floor(
-      1000 + Math.random() * 9000
-    )}`;
+    const codigoOrden = generateUniqueCode('ORD');
 
     const dbConnected = await isDatabaseAvailable();
 
@@ -155,22 +166,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const ocrData = process.env.OPENAI_API_KEY
-        ? await verifyReceiptWithVisionOcr({
-            comprobanteBase64,
-            plataformaEsperada: plataforma,
-            moneda,
-            montoEsperado: normalizedAmount,
-            remitenteReportado,
-            referenciaReportada,
-          })
-        : buildDemoOcrFallback({
-            plataforma,
-            moneda,
-            monto: normalizedAmount,
-            referencia: referenciaReportada,
-            remitente: remitenteReportado,
-          });
+      const ocrData = buildDemoOcrFallback({
+        plataforma,
+        moneda,
+        monto: normalizedAmount,
+        referencia: referenciaReportada,
+        remitente: remitenteReportado,
+      });
 
       const newOrder: PendingPaymentOrder = {
         id: crypto.randomUUID(),
@@ -214,15 +216,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Validación opcional con OpenAI Vision antes de abrir la transacción SQL
-    const ocrResult = await verifyReceiptWithVisionOcr({
-      comprobanteBase64,
-      plataformaEsperada: plataforma,
-      moneda,
-      montoEsperado: normalizedAmount,
-      remitenteReportado,
-      referenciaReportada,
-    });
+    // Validación OCR unificada usando el motor IA configurado (Gemini / Groq / OpenAI)
+    let ocrResult: OcrExtractionData;
+    try {
+      const aiScan = await scanReceiptWithAi({ comprobanteBase64 });
+      ocrResult = {
+        plataforma_detectada: aiScan.data.plataforma,
+        moneda_detectada: aiScan.data.moneda,
+        monto_detectado: aiScan.data.monto ?? normalizedAmount,
+        remitente_detectado: remitenteReportado,
+        referencia_detectada: aiScan.data.referencia || referenciaReportada,
+        confianza_ocr: aiScan.data.confianza,
+        coincide_con_reporte:
+          aiScan.data.monto === null ||
+          Math.abs(aiScan.data.monto - normalizedAmount) < 0.01,
+        observaciones: aiScan.data.observaciones,
+      };
+    } catch {
+      ocrResult = buildDemoOcrFallback({
+        plataforma,
+        moneda,
+        monto: normalizedAmount,
+        referencia: referenciaReportada,
+        remitente: remitenteReportado,
+      });
+    }
 
     const txOutcome = await withTransaction<{
       order: PendingPaymentOrder;
@@ -241,6 +259,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         SELECT id, negocio_id, nombre_titular, email, email_contacto
         FROM clientes_titulares
         WHERE id = $1::uuid
+          AND activo = TRUE
         LIMIT 1;
         `,
         [clienteId]
@@ -248,17 +267,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const clientRow = clientRes.rows[0];
       if (!clientRow) {
-        throw new Error('La cuenta de cliente especificada no existe.');
+        throw new Error('La cuenta de cliente especificada no existe o está inactiva.');
       }
 
       const clientEmail =
         clientRow.email ??
         clientRow.email_contacto ??
         'cliente@conciliarcuenta.com';
-
-      await client.query(`
-        ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS fecha_transferencia VARCHAR(50);
-      `);
 
       // Validación anti-duplicados: evitar que un cliente suba dos veces el mismo código de confirmación real
       const cleanRefCheck = referenciaReportada
@@ -437,7 +452,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }
 
-      const [aggRes, pendingRes] = await Promise.all([
+      const [aggRes, liqAggRes, pendingRes] = await Promise.all([
         client.query<{
           moneda: string;
           total_bruto: number;
@@ -462,6 +477,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           GROUP BY moneda;
           `,
           [clientRow.id, clientRow.nombre_titular]
+        ),
+        client.query<{ moneda: string; total_liquidado: number }>(
+          `
+          SELECT
+            moneda,
+            COALESCE(SUM(monto_liquidado), 0)::numeric(12,2) AS total_liquidado
+          FROM liquidaciones_clientes
+          WHERE cliente_id = $1::uuid
+          GROUP BY moneda;
+          `,
+          [clientRow.id]
         ),
         client.query<{ pending_count: number }>(
           `
@@ -494,13 +520,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }
 
+      let totalLiquidadoUsd = 0;
+      let totalLiquidadoUsdt = 0;
+      for (const liq of liqAggRes.rows) {
+        if (liq.moneda === 'USDT') {
+          totalLiquidadoUsdt += Number(liq.total_liquidado);
+        } else {
+          totalLiquidadoUsd += Number(liq.total_liquidado);
+        }
+      }
+
+      const saldoDisponibleUsd = Math.max(
+        0,
+        Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100
+      );
+      const saldoDisponibleUsdt = Math.max(
+        0,
+        Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100
+      );
+
       const wallet: ClientPortalWalletSummary = {
-        saldoNetoUsd: Math.round(saldoNetoUsd * 100) / 100,
+        saldoNetoUsd: saldoDisponibleUsd,
         totalBrutoUsd: Math.round(totalBrutoUsd * 100) / 100,
         totalComisionUsd: Math.round(totalComisionUsd * 100) / 100,
-        saldoNetoUsdt: Math.round(saldoNetoUsdt * 100) / 100,
+        saldoNetoUsdt: saldoDisponibleUsdt,
         totalBrutoUsdt: Math.round(totalBrutoUsdt * 100) / 100,
         totalComisionUsdt: Math.round(totalComisionUsdt * 100) / 100,
+        totalLiquidadoUsd: Math.round(totalLiquidadoUsd * 100) / 100,
+        totalLiquidadoUsdt: Math.round(totalLiquidadoUsdt * 100) / 100,
+        totalAcreditadoUsd: Math.round(saldoNetoUsd * 100) / 100,
+        totalAcreditadoUsdt: Math.round(saldoNetoUsdt * 100) / 100,
         pagosConciliadosCount,
         pagosPendientesCount: pendingRes.rows[0]?.pending_count ?? 0,
       };

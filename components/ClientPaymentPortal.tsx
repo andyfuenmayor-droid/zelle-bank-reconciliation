@@ -251,13 +251,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   }, []);
 
   const loadSessionById = useCallback(
-    async (clienteId: string) => {
+    async (_clienteId?: string) => {
+      void _clienteId;
       setIsRefreshing(true);
       try {
-        const response = await fetch(
-          `/api/portal/auth?clienteId=${encodeURIComponent(clienteId)}`,
-          { cache: 'no-store' }
-        );
+        const response = await fetch('/api/portal/auth', { cache: 'no-store' });
         if (!response.ok) {
           window.localStorage.removeItem(STORAGE_CLIENT_KEY);
           setClient(null);
@@ -303,15 +301,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   );
 
   useEffect(() => {
-    const savedId =
-      typeof window !== 'undefined'
-        ? window.localStorage.getItem(STORAGE_CLIENT_KEY)
-        : null;
-    if (savedId) {
-      void loadSessionById(savedId);
-    } else {
-      setIsCheckingSession(false);
-    }
+    void loadSessionById();
   }, [loadSessionById]);
 
   const handleCopyReceivingAccount = async (
@@ -382,6 +372,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
 
   const handleLogout = (): void => {
     window.localStorage.removeItem(STORAGE_CLIENT_KEY);
+    void fetch('/api/portal/auth', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'LOGOUT' }),
+    }).catch(() => undefined);
     setClient(null);
     setWallet(null);
     setOrders([]);

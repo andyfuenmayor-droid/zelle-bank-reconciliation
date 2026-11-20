@@ -3,9 +3,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbQuery, isDatabaseAvailable } from '@/lib/db';
 import {
   ensureDefaultAdminBusinessUser,
-  hashPasswordSha256,
   listBusinessUsersWithCounts,
 } from '@/lib/business-scope';
+import {
+  attachAdminSessionCookie,
+  checkRateLimit,
+  clearAdminSessionCookie,
+  getAdminSession,
+  getClientIp,
+  hashSecretScrypt,
+  requireSuperAdminSession,
+  verifySecretHash,
+} from '@/lib/security';
 import { DemoBusinessUserInternal, getDemoStore } from '@/lib/mock-seed-data';
 import { BusinessUserRecord, BusinessUserRole } from '@/types/reconciliation';
 
@@ -32,15 +41,15 @@ function mapDemoBusinessUserWithCounts(
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const { searchParams } = new URL(request.url);
-  const userId = searchParams.get('userId')?.trim() ?? '';
-
-  if (!userId) {
+  const session = getAdminSession(request);
+  if (!session) {
     return NextResponse.json(
-      { ok: false, error: 'El parámetro userId es obligatorio.' },
-      { status: 400 }
+      { ok: false, error: 'No existe una sesión administrativa activa.' },
+      { status: 401 }
     );
   }
+
+  const userId = session.userId;
 
   const dbConnected = await isDatabaseAvailable();
   if (!dbConnected) {
@@ -49,10 +58,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       (u) => u.id === userId && u.activo
     );
     if (!matched) {
-      return NextResponse.json(
+      const res = NextResponse.json(
         { ok: false, error: 'Sesión de negocio no encontrada.' },
-        { status: 404 }
+        { status: 401 }
       );
+      return clearAdminSessionCookie(res, request);
     }
 
     const mappedUser = mapDemoBusinessUserWithCounts(matched);
@@ -73,10 +83,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const matched = allUsers.find((u) => u.id === userId && u.activo);
 
     if (!matched) {
-      return NextResponse.json(
+      const res = NextResponse.json(
         { ok: false, error: 'Cuenta de negocio no encontrada o inactiva.' },
-        { status: 404 }
+        { status: 401 }
       );
+      return clearAdminSessionCookie(res, request);
     }
 
     return NextResponse.json({
@@ -95,7 +106,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 interface BusinessAuthPostBody {
-  action?: 'LOGIN' | 'CREATE_BUSINESS_USER' | 'UPDATE_BUSINESS_USER';
+  action?: 'LOGIN' | 'LOGOUT' | 'CREATE_BUSINESS_USER' | 'UPDATE_BUSINESS_USER';
   userId?: string;
   email?: string;
   password?: string;
@@ -110,11 +121,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body = (await request.json()) as BusinessAuthPostBody;
     const action = body.action ?? 'LOGIN';
+
+    if (action === 'LOGOUT') {
+      const res = NextResponse.json({ ok: true });
+      return clearAdminSessionCookie(res, request);
+    }
+
     const dbConnected = await isDatabaseAvailable();
 
     if (action === 'LOGIN') {
       const email = (body.email ?? '').trim().toLowerCase();
       const password = (body.password ?? '').trim();
+
+      const ip = getClientIp(request);
+      const rl = checkRateLimit(`admin-login:${ip}:${email}`, 10, 15 * 60 * 1000);
+      if (!rl.allowed) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `Demasiados intentos de inicio de sesión. Intenta nuevamente en ${rl.retryAfterSec} segundos.`,
+          },
+          { status: 429 }
+        );
+      }
 
       if (!email || !email.includes('@')) {
         return NextResponse.json(
@@ -156,32 +185,43 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const mappedUser = mapDemoBusinessUserWithCounts(matched);
         const allMapped = store.businessUsers.map(mapDemoBusinessUserWithCounts);
 
-        return NextResponse.json({
+        const res = NextResponse.json({
           ok: true,
           mode: 'DEMO_FALLBACK',
           user: mappedUser,
           businessUsers:
             mappedUser.rol === 'SUPER_ADMIN' ? allMapped : [mappedUser],
         });
+        return attachAdminSessionCookie(
+          res,
+          { userId: mappedUser.id, rol: mappedUser.rol, negocioId: mappedUser.id },
+          request
+        );
       }
 
       await ensureDefaultAdminBusinessUser();
-      const passwordHash = hashPasswordSha256(password);
 
-      const authRes = await dbQuery<{ id: string }>(
+      const lookupRes = await dbQuery<{
+        id: string;
+        rol: BusinessUserRole;
+        password_hash: string;
+      }>(
         `
-        UPDATE usuarios_negocios
-        SET last_login_at = NOW()
+        SELECT id, rol, password_hash
+        FROM usuarios_negocios
         WHERE LOWER(email) = LOWER($1)
-          AND password_hash = $2
           AND activo = TRUE
-        RETURNING id;
+        LIMIT 1;
         `,
-        [email, passwordHash]
+        [email]
       );
 
-      const userId = authRes.rows[0]?.id;
-      if (!userId) {
+      const account = lookupRes.rows[0];
+      const verified = account
+        ? verifySecretHash(password, account.password_hash)
+        : { valid: false, needsUpgrade: false };
+
+      if (!account || !verified.valid) {
         return NextResponse.json(
           {
             ok: false,
@@ -192,8 +232,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
+      // Actualizar último acceso y migrar transparentemente SHA-256 heredado a scrypt con salt
+      if (verified.needsUpgrade) {
+        const upgradedHash = hashSecretScrypt(password);
+        await dbQuery(
+          'UPDATE usuarios_negocios SET last_login_at = NOW(), password_hash = $2 WHERE id = $1::uuid;',
+          [account.id, upgradedHash]
+        );
+      } else {
+        await dbQuery(
+          'UPDATE usuarios_negocios SET last_login_at = NOW() WHERE id = $1::uuid;',
+          [account.id]
+        );
+      }
+
       const allUsers = await listBusinessUsersWithCounts();
-      const loggedUser = allUsers.find((u) => u.id === userId);
+      const loggedUser = allUsers.find((u) => u.id === account.id);
       if (!loggedUser) {
         return NextResponse.json(
           { ok: false, error: 'Usuario de negocio no disponible.' },
@@ -201,16 +255,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      return NextResponse.json({
+      const res = NextResponse.json({
         ok: true,
         mode: 'POSTGRESQL_LIVE',
         user: loggedUser,
         businessUsers:
           loggedUser.rol === 'SUPER_ADMIN' ? allUsers : [loggedUser],
       });
+      return attachAdminSessionCookie(
+        res,
+        { userId: loggedUser.id, rol: loggedUser.rol, negocioId: loggedUser.id },
+        request
+      );
     }
 
     if (action === 'CREATE_BUSINESS_USER') {
+      const superAuth = requireSuperAdminSession(request);
+      if (superAuth.errorResponse) {
+        return superAuth.errorResponse;
+      }
       const nombreNegocio = (body.nombreNegocio ?? '').trim();
       const nombreUsuario = (body.nombreUsuario ?? '').trim();
       const email = (body.email ?? '').trim().toLowerCase();
@@ -294,7 +357,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      const passwordHash = hashPasswordSha256(password);
+      const passwordHash = hashSecretScrypt(password);
       const insertRes = await dbQuery<{ id: string }>(
         `
         INSERT INTO usuarios_negocios (
@@ -325,6 +388,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (action === 'UPDATE_BUSINESS_USER') {
+      const superAuth = requireSuperAdminSession(request);
+      if (superAuth.errorResponse) {
+        return superAuth.errorResponse;
+      }
       const userId = (body.userId ?? '').trim();
       const nombreNegocio = (body.nombreNegocio ?? '').trim();
       const nombreUsuario = (body.nombreUsuario ?? '').trim();
@@ -423,7 +490,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       const passwordHash =
-        password.length > 0 ? hashPasswordSha256(password) : null;
+        password.length > 0 ? hashSecretScrypt(password) : null;
       const rolParam =
         body.rol === 'SUPER_ADMIN' || body.rol === 'NEGOCIO' ? body.rol : null;
 
@@ -484,6 +551,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
+  const superAuth = requireSuperAdminSession(request);
+  if (superAuth.errorResponse) {
+    return superAuth.errorResponse;
+  }
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id')?.trim() ?? '';
 

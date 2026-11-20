@@ -1,9 +1,12 @@
 import crypto from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { dbQuery } from '@/lib/db';
+import { hashSecretScrypt } from '@/lib/security';
 import { BusinessUserRecord } from '@/types/reconciliation';
 
 let schemaEnsured = false;
+let cachedPrimaryAdmin: BusinessUserRecord | null = null;
+let primaryAdminEnsuredAt = 0;
 
 export function hashPasswordSha256(password: string): string {
   return crypto.createHash('sha256').update(password.trim()).digest('hex');
@@ -50,6 +53,11 @@ async function ensureMultiTenantColumnsAndTable(): Promise<void> {
  * su `negocio_id` a cualquier registro existente sin negocio asignado.
  */
 export async function ensureDefaultAdminBusinessUser(): Promise<BusinessUserRecord | null> {
+  // Evitar ejecutar 4 UPDATEs completos en cada petición HTTP (cache de 10 minutos por proceso)
+  if (cachedPrimaryAdmin && Date.now() - primaryAdminEnsuredAt < 10 * 60 * 1000) {
+    return cachedPrimaryAdmin;
+  }
+
   try {
     await ensureMultiTenantColumnsAndTable();
 
@@ -61,7 +69,7 @@ export async function ensureDefaultAdminBusinessUser(): Promise<BusinessUserReco
     const defaultPassword = (
       process.env.ADMIN_PASSWORD ?? 'admin1234'
     ).trim();
-    const defaultHash = hashPasswordSha256(defaultPassword);
+    const defaultHash = hashSecretScrypt(defaultPassword);
 
     const existingCount = await dbQuery<{ total: number }>(
       'SELECT COUNT(*)::int AS total FROM usuarios_negocios;'
@@ -113,24 +121,28 @@ export async function ensureDefaultAdminBusinessUser(): Promise<BusinessUserReco
 
     const primaryAdmin = adminRes.rows[0] ?? null;
     if (primaryAdmin) {
-      await Promise.all([
-        dbQuery(
-          'UPDATE imap_monitored_accounts SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
-          [primaryAdmin.id]
-        ),
-        dbQuery(
-          'UPDATE clientes_titulares SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
-          [primaryAdmin.id]
-        ),
-        dbQuery(
-          'UPDATE ordenes_pago_pendientes SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
-          [primaryAdmin.id]
-        ),
-        dbQuery(
-          'UPDATE financial_transactions_reconciliation SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
-          [primaryAdmin.id]
-        ),
-      ]);
+      if (primaryAdminEnsuredAt === 0) {
+        await Promise.all([
+          dbQuery(
+            'UPDATE imap_monitored_accounts SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
+            [primaryAdmin.id]
+          ),
+          dbQuery(
+            'UPDATE clientes_titulares SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
+            [primaryAdmin.id]
+          ),
+          dbQuery(
+            'UPDATE ordenes_pago_pendientes SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
+            [primaryAdmin.id]
+          ),
+          dbQuery(
+            'UPDATE financial_transactions_reconciliation SET negocio_id = $1::uuid WHERE negocio_id IS NULL;',
+            [primaryAdmin.id]
+          ),
+        ]);
+      }
+      cachedPrimaryAdmin = primaryAdmin;
+      primaryAdminEnsuredAt = Date.now();
     }
 
     return primaryAdmin;
