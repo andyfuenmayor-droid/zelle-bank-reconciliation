@@ -3696,8 +3696,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           (a) =>
                             a.estado !== 'CONCILIADO' &&
                             a.tipo_movimiento === 'RECIBIDO' &&
+                            a.plataforma === order.plataforma_esperada &&
                             a.moneda === order.moneda &&
                             Math.abs(a.monto_bruto - order.monto_esperado) < 0.01
+                        );
+                        const orderPlatformBadge = getPlatformBadgeMeta(
+                          order.plataforma_esperada
                         );
 
                         return (
@@ -3709,11 +3713,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               {idx + 1}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5">
-                              <div className="font-mono font-bold text-sky-300">
-                                {order.codigo_orden}
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-sky-300">
+                                  {order.codigo_orden}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center rounded border px-1.5 py-0.2 text-[10px] font-bold ${orderPlatformBadge.badgeClass}`}
+                                >
+                                  {orderPlatformBadge.label}
+                                </span>
                               </div>
-                              <div className="text-[11px] text-slate-400">
-                                {formatDateTime(order.created_at)}
+                              {order.fecha_transferencia ? (
+                                <div className="text-[11px] font-semibold text-amber-300">
+                                  Fecha captura: {order.fecha_transferencia}
+                                </div>
+                              ) : null}
+                              <div className="text-[10px] text-slate-400">
+                                Subido: {formatDateTime(order.created_at)}
                               </div>
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-emerald-300">
@@ -3727,7 +3743,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             <td className="whitespace-nowrap px-3 py-2.5 font-mono font-semibold text-amber-300">
                               {order.referencia_reportada || 'SIN-REF'}
                             </td>
-                            <td className="px-3 py-2.5">
+                            <td className="px-3 py-2.5 max-w-[300px]">
                               {alreadyReconciledTx ? (
                                 <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-950/60 px-2 py-0.5 text-[11px] font-semibold text-rose-200">
                                   <AlertTriangle className="h-3 w-3 shrink-0 text-rose-400" />
@@ -3737,6 +3753,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-950/60 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
                                   <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
                                   Ref. repetida en otra orden pendiente
+                                </span>
+                              ) : order.notas_cliente ? (
+                                <span className="inline-flex items-start gap-1.5 rounded-md border border-sky-500/35 bg-sky-950/40 px-2 py-1 text-[11px] leading-snug text-sky-200">
+                                  <Clock className="h-3.5 w-3.5 shrink-0 text-sky-400 mt-0.5" />
+                                  <span>{order.notas_cliente}</span>
                                 </span>
                               ) : detectedSameAmountTx ? (
                                 <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-950/60 px-2 py-0.5 text-[11px] font-semibold text-sky-200">

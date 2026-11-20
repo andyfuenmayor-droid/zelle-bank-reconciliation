@@ -260,6 +260,83 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ALTER TABLE ordenes_pago_pendientes ADD COLUMN IF NOT EXISTS fecha_transferencia VARCHAR(50);
       `);
 
+      // Validación anti-duplicados: evitar que un cliente suba dos veces el mismo código de confirmación real
+      const cleanRefCheck = referenciaReportada
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+      const isSpecificBankRef =
+        cleanRefCheck.length >= 6 &&
+        !/^[0-9]+$/.test(cleanRefCheck) &&
+        ![
+          'SINREF',
+          'NOREF',
+          'BANKOFAMERICA',
+          'CITIBANK',
+          'TDBANK',
+          'WELLSFARGO',
+          'TRANSFERENCIA',
+          'COMPROBANTE',
+        ].includes(cleanRefCheck);
+
+      if (isSpecificBankRef) {
+        const dupOrderRes = await client.query<{
+          codigo_orden: string;
+          estado: string;
+          remitente_reportado: string;
+          monto_esperado: number;
+        }>(
+          `
+          SELECT codigo_orden, estado, remitente_reportado, monto_esperado
+          FROM ordenes_pago_pendientes
+          WHERE estado IN ('CONCILIADO', 'PENDIENTE')
+            AND UPPER(REGEXP_REPLACE(COALESCE(referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = $1
+          LIMIT 1;
+          `,
+          [cleanRefCheck]
+        );
+        const dupOrder = dupOrderRes.rows[0];
+        if (dupOrder) {
+          throw new Error(
+            `Comprobante duplicado: La referencia "${referenciaReportada}" ya fue registrada anteriormente en la orden ${dupOrder.codigo_orden} (${dupOrder.estado} · ${dupOrder.remitente_reportado} · $${Number(
+              dupOrder.monto_esperado
+            ).toFixed(2)}). No se permite subir el mismo comprobante dos veces.`
+          );
+        }
+
+        const dupTxRes = await client.query<{
+          referencia: string;
+          remitente_o_contraparte: string;
+          monto_bruto: number;
+          cliente_asignado_nombre: string | null;
+        }>(
+          `
+          SELECT referencia, remitente_o_contraparte, monto_bruto, cliente_asignado_nombre
+          FROM financial_transactions_reconciliation
+          WHERE estado = 'CONCILIADO'
+            AND tipo_movimiento = 'RECIBIDO'
+            AND monto_bruto = $2
+            AND (
+              UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $1
+              OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $1 || '%'
+            )
+          LIMIT 1;
+          `,
+          [cleanRefCheck, normalizedAmount]
+        );
+        const dupTx = dupTxRes.rows[0];
+        if (dupTx) {
+          throw new Error(
+            `Comprobante ya acreditado: La referencia bancaria "${dupTx.referencia}" (${dupTx.remitente_o_contraparte} · $${Number(
+              dupTx.monto_bruto
+            ).toFixed(2)}) ya fue conciliada y acreditada anteriormente${
+              dupTx.cliente_asignado_nombre
+                ? ` a favor de ${dupTx.cliente_asignado_nombre}`
+                : ''
+            }.`
+          );
+        }
+      }
+
       const insertOrderRes = await client.query<PendingPaymentOrder>(
         `
         INSERT INTO ordenes_pago_pendientes (
