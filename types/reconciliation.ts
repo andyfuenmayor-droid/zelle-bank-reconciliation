@@ -198,6 +198,14 @@ export interface PendingPaymentOrder {
   notas_cliente: string | null;
   created_at: string;
   updated_at?: string;
+  // Datos enriquecidos del correo bancario conciliado para el resumen corto
+  tx_fecha_correo?: string | null;
+  tx_remitente_correo?: string | null;
+  tx_referencia_correo?: string | null;
+  tx_monto_bruto?: number | null;
+  tx_porcentaje_comision?: number | null;
+  tx_monto_comision?: number | null;
+  tx_monto_neto?: number | null;
 }
 
 /**

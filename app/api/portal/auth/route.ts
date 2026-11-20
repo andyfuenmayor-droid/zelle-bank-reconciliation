@@ -135,34 +135,43 @@ async function loadPostgresPortalSession(
     dbQuery<PendingPaymentOrder>(
       `
       SELECT
-        id,
-        codigo_orden,
-        cliente_id,
-        cliente_nombre,
-        cliente_email,
-        COALESCE(plataforma_esperada, banco_destino, 'CITIBANK') AS plataforma_esperada,
-        COALESCE(banco_destino, plataforma_esperada, 'CITIBANK') AS banco_destino,
-        COALESCE(moneda, 'USD') AS moneda,
-        monto_esperado,
-        COALESCE(remitente_reportado, nombre_remitente_reportado, cliente_nombre) AS remitente_reportado,
-        COALESCE(nombre_remitente_reportado, remitente_reportado, cliente_nombre) AS nombre_remitente_reportado,
-        referencia_reportada,
-        (CASE WHEN comprobante_base64 IS NOT NULL AND LENGTH(comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
+        o.id,
+        o.codigo_orden,
+        o.cliente_id,
+        o.cliente_nombre,
+        o.cliente_email,
+        COALESCE(o.plataforma_esperada, o.banco_destino, 'CITIBANK') AS plataforma_esperada,
+        COALESCE(o.banco_destino, o.plataforma_esperada, 'CITIBANK') AS banco_destino,
+        COALESCE(o.moneda, 'USD') AS moneda,
+        o.monto_esperado,
+        COALESCE(o.remitente_reportado, o.nombre_remitente_reportado, o.cliente_nombre) AS remitente_reportado,
+        COALESCE(o.nombre_remitente_reportado, o.remitente_reportado, o.cliente_nombre) AS nombre_remitente_reportado,
+        o.referencia_reportada,
+        (CASE WHEN o.comprobante_base64 IS NOT NULL AND LENGTH(o.comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
         NULL::text AS comprobante_base64,
-        comprobante_mime,
-        datos_ocr_extraidos,
-        estado,
-        COALESCE(transaccion_conciliada_id, alerta_conciliada_id) AS transaccion_conciliada_id,
-        liquidacion_id,
-        liquidado_at,
-        notas_cliente,
-        created_at,
-        updated_at
-      FROM ordenes_pago_pendientes
-      WHERE cliente_id = $1::uuid
-        AND liquidado_at IS NULL
-      ORDER BY created_at DESC
-      LIMIT 50;
+        o.comprobante_mime,
+        o.datos_ocr_extraidos,
+        o.estado,
+        COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id) AS transaccion_conciliada_id,
+        o.liquidacion_id,
+        o.liquidado_at,
+        o.notas_cliente,
+        o.created_at,
+        o.updated_at,
+        t.fecha_transaccion AS tx_fecha_correo,
+        t.remitente_o_contraparte AS tx_remitente_correo,
+        t.referencia AS tx_referencia_correo,
+        t.monto_bruto AS tx_monto_bruto,
+        t.porcentaje_comision AS tx_porcentaje_comision,
+        t.monto_comision AS tx_monto_comision,
+        t.monto_neto AS tx_monto_neto
+      FROM ordenes_pago_pendientes o
+      LEFT JOIN financial_transactions_reconciliation t
+        ON t.id = COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id)
+      WHERE o.cliente_id = $1::uuid
+        AND o.liquidado_at IS NULL
+      ORDER BY COALESCE(t.fecha_transaccion, o.created_at) DESC, o.created_at DESC
+      LIMIT 1000;
       `,
       [clientRow.id]
     ),

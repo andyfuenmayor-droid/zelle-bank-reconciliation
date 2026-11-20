@@ -242,6 +242,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
 
   // Modal preview de captura en historial
   const [previewOrder, setPreviewOrder] = useState<PendingPaymentOrder | null>(null);
+  const [showAllRecentCards, setShowAllRecentCards] = useState<boolean>(true);
+  const [reportFilterStatus, setReportFilterStatus] = useState<'TODOS' | 'CONCILIADO' | 'PENDIENTE'>('TODOS');
+  const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
+  const [copiedSummaryReport, setCopiedSummaryReport] = useState<boolean>(false);
 
   const applySelectedAccount = useCallback((acc: AssignedReceivingAccount) => {
     setSelectedAccountId(acc.id);
@@ -1590,13 +1594,24 @@ export default function ClientPaymentPortal(): React.JSX.Element {
 
               {/* Historial de Reportes del Cliente */}
               <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl lg:col-span-5">
-                <div className="mb-4 flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
                   <div className="flex items-center gap-2">
                     <Building2 className="h-5 w-5 text-sky-400" />
                     <h3 className="text-base font-bold text-white">
-                      Mis Reportes Recientes ({orders.length})
+                      Mis Reportes ({orders.length})
                     </h3>
                   </div>
+                  {orders.length > 50 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRecentCards((prev) => !prev)}
+                      className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] font-semibold text-sky-300 hover:bg-sky-500/20"
+                    >
+                      {showAllRecentCards
+                        ? `Mostrando Todos (${orders.length}) · Ver 50`
+                        : `Ver Todos (${orders.length})`}
+                    </button>
+                  )}
                 </div>
 
                 {orders.length === 0 ? (
@@ -1613,9 +1628,24 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     )}
                   </div>
                 ) : (
-                  <div className="max-h-[640px] space-y-3 overflow-y-auto pr-1">
-                    {orders.map((order) => {
+                  <div className="max-h-[680px] space-y-3 overflow-y-auto pr-1">
+                    {(showAllRecentCards ? orders : orders.slice(0, 50)).map((order, idx) => {
                       const isConciliado = order.estado === 'CONCILIADO';
+                      const feePct = Number(
+                        order.tx_porcentaje_comision ??
+                          client.porcentaje_comision_zelle ??
+                          4
+                      );
+                      const brutoVal = Number(order.tx_monto_bruto ?? order.monto_esperado);
+                      const comisionVal = Number(
+                        order.tx_monto_comision ??
+                          Math.round(((brutoVal * feePct) / 100) * 100) / 100
+                      );
+                      const netoVal = Number(
+                        order.tx_monto_neto ??
+                          Math.round((brutoVal - comisionVal) * 100) / 100
+                      );
+
                       return (
                         <div
                           key={order.id}
@@ -1623,6 +1653,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div>
+                              <span className="mr-1.5 font-mono text-[10px] font-bold text-slate-500">
+                                #{idx + 1}
+                              </span>
                               <span className="font-mono text-xs font-bold text-sky-300">
                                 {order.codigo_orden}
                               </span>
@@ -1634,12 +1667,12 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             {isConciliado ? (
                               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
                                 <CheckCircle2 className="h-3 w-3" />
-                                CONCILIADO AUTOMÁTICAMENTE
+                                CONCILIADO
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
                                 <Clock className="h-3 w-3" />
-                                VERIFICANDO EN BANCO/BINANCE
+                                PENDIENTE
                               </span>
                             )}
                           </div>
@@ -1658,10 +1691,30 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                               De: {order.remitente_reportado}
                             </span>
                             <span>
-                              {order.fecha_transferencia
-                                ? `Fecha pago: ${order.fecha_transferencia}`
-                                : formatDateTime(order.created_at)}
+                              {order.tx_fecha_correo
+                                ? `Correo: ${formatDateTime(order.tx_fecha_correo)}`
+                                : order.fecha_transferencia
+                                  ? `Fecha pago: ${order.fecha_transferencia}`
+                                  : formatDateTime(order.created_at)}
                             </span>
+                          </div>
+
+                          {/* Resumen corto en 1 línea dentro de cada tarjeta */}
+                          <div className="mt-2 rounded-lg border border-slate-800/80 bg-slate-900/70 px-2.5 py-1.5 text-[11px]">
+                            {isConciliado ? (
+                              <div className="flex flex-wrap items-center justify-between gap-1 text-slate-300">
+                                <span>
+                                  Bruto: <strong className="font-mono text-white">${brutoVal.toFixed(2)}</strong> · Com: <strong className="font-mono text-rose-300">-${comisionVal.toFixed(2)}</strong>
+                                </span>
+                                <span className="font-mono font-bold text-emerald-400">
+                                  Neto: +${netoVal.toFixed(2)} {order.moneda}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="text-amber-300/90">
+                                En espera de correo bancario para acreditar saldo neto
+                              </div>
+                            )}
                           </div>
 
                           {(order.has_capture || order.comprobante_base64) && (
@@ -1698,6 +1751,363 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 )}
               </section>
             </div>
+
+            {/* Reporte Adicional: Resumen Corto de Cada Comprobante Enviado (Todos los Registros) */}
+            {(() => {
+              const feeDefault = Number(client.porcentaje_comision_zelle ?? 4);
+              const filteredReportOrders = orders.filter((o) => {
+                if (reportFilterStatus === 'CONCILIADO' && o.estado !== 'CONCILIADO') {
+                  return false;
+                }
+                if (reportFilterStatus === 'PENDIENTE' && o.estado === 'CONCILIADO') {
+                  return false;
+                }
+                if (reportSearchQuery.trim()) {
+                  const q = reportSearchQuery.trim().toLowerCase();
+                  return (
+                    o.codigo_orden.toLowerCase().includes(q) ||
+                    (o.remitente_reportado || '').toLowerCase().includes(q) ||
+                    (o.tx_remitente_correo || '').toLowerCase().includes(q) ||
+                    (o.referencia_reportada || '').toLowerCase().includes(q) ||
+                    (o.tx_referencia_correo || '').toLowerCase().includes(q)
+                  );
+                }
+                return true;
+              });
+
+              const conciliadosTotalCount = orders.filter((o) => o.estado === 'CONCILIADO').length;
+              const pendientesTotalCount = orders.length - conciliadosTotalCount;
+
+              let sumBruto = 0;
+              let sumComision = 0;
+              let sumNeto = 0;
+              for (const o of filteredReportOrders) {
+                if (o.estado === 'CONCILIADO') {
+                  const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                  const f = Number(o.tx_porcentaje_comision ?? feeDefault);
+                  const c = Number(
+                    o.tx_monto_comision ?? Math.round(((b * f) / 100) * 100) / 100
+                  );
+                  const n = Number(
+                    o.tx_monto_neto ?? Math.round((b - c) * 100) / 100
+                  );
+                  sumBruto += b;
+                  sumComision += c;
+                  sumNeto += n;
+                }
+              }
+
+              const handleCopyShortSummary = async (): Promise<void> => {
+                const lines: string[] = [
+                  `📊 RESUMEN DE PAGOS REPORTADOS - ${client.nombre_titular.toUpperCase()}`,
+                  `Total registros: ${filteredReportOrders.length} (${conciliadosTotalCount} conciliados, ${pendientesTotalCount} pendientes)`,
+                  `Bruto Conciliado: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto Acreditado: $${sumNeto.toFixed(2)} USD`,
+                  `------------------------------------------------------------`,
+                ];
+                filteredReportOrders.forEach((o, i) => {
+                  const isConc = o.estado === 'CONCILIADO';
+                  const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                  const f = Number(o.tx_porcentaje_comision ?? feeDefault);
+                  const c = Number(
+                    o.tx_monto_comision ?? Math.round(((b * f) / 100) * 100) / 100
+                  );
+                  const n = Number(
+                    o.tx_monto_neto ?? Math.round((b - c) * 100) / 100
+                  );
+                  const dateLabel = formatDateTime(o.tx_fecha_correo ?? o.created_at);
+                  const refLabel = o.referencia_reportada || o.tx_referencia_correo || 'SIN-REF';
+                  lines.push(
+                    `${i + 1}. ${o.codigo_orden} | ${dateLabel} | De: ${o.remitente_reportado} | Ref: ${refLabel} | Bruto: $${b.toFixed(2)} | Neto: ${isConc ? `$${n.toFixed(2)}` : 'PENDIENTE'} (${o.estado})`
+                  );
+                });
+                try {
+                  await navigator.clipboard.writeText(lines.join('\n'));
+                  setCopiedSummaryReport(true);
+                  window.setTimeout(() => setCopiedSummaryReport(false), 2500);
+                } catch {
+                  // ignore
+                }
+              };
+
+              return (
+                <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-sky-400" />
+                        <h3 className="text-base font-bold text-white">
+                          Reporte General y Resumen Corto de Cada Captura ({orders.length} enviados)
+                        </h3>
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        Vista completa de todos tus comprobantes enviados con su resumen corto individual (fecha del correo, remitente, referencia, comisión y neto acreditado).
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyShortSummary()}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
+                    >
+                      {copiedSummaryReport ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-400" />
+                          ¡Resumen Copiado!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5 text-sky-400" />
+                          Copiar Resumen Corto ({filteredReportOrders.length})
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Tarjetas de Totales Rápidos del Reporte */}
+                  <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      <span className="text-[11px] font-semibold uppercase text-slate-400">
+                        Total Capturas
+                      </span>
+                      <p className="mt-1 font-mono text-lg font-bold text-white">
+                        {orders.length}
+                      </p>
+                      <span className="text-[11px] text-slate-400">
+                        {conciliadosTotalCount} conciliadas · {pendientesTotalCount} pendientes
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      <span className="text-[11px] font-semibold uppercase text-slate-400">
+                        Bruto Conciliado
+                      </span>
+                      <p className="mt-1 font-mono text-lg font-bold text-slate-100">
+                        ${sumBruto.toFixed(2)} USD
+                      </p>
+                      <span className="text-[11px] text-slate-400">
+                        Suma de pagos verificados
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                      <span className="text-[11px] font-semibold uppercase text-slate-400">
+                        Comisión Retenida ({feeDefault}%)
+                      </span>
+                      <p className="mt-1 font-mono text-lg font-bold text-rose-400">
+                        -${sumComision.toFixed(2)} USD
+                      </p>
+                      <span className="text-[11px] text-slate-400">
+                        Descuento sobre conciliados
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3">
+                      <span className="text-[11px] font-semibold uppercase text-emerald-300">
+                        Neto Acreditado
+                      </span>
+                      <p className="mt-1 font-mono text-lg font-bold text-emerald-400">
+                        +${sumNeto.toFixed(2)} USD
+                      </p>
+                      <span className="text-[11px] text-emerald-300/80">
+                        Saldo líquido de estos reportes
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Controles de Filtro y Búsqueda del Reporte */}
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setReportFilterStatus('TODOS')}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          reportFilterStatus === 'TODOS'
+                            ? 'bg-sky-600 text-white'
+                            : 'bg-slate-950 text-slate-400 hover:bg-slate-800'
+                        }`}
+                      >
+                        Todos ({orders.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReportFilterStatus('CONCILIADO')}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          reportFilterStatus === 'CONCILIADO'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-950 text-emerald-300/80 hover:bg-slate-800'
+                        }`}
+                      >
+                        Conciliados ({conciliadosTotalCount})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReportFilterStatus('PENDIENTE')}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                          reportFilterStatus === 'PENDIENTE'
+                            ? 'bg-amber-600 text-white'
+                            : 'bg-slate-950 text-amber-300/80 hover:bg-slate-800'
+                        }`}
+                      >
+                        Pendientes ({pendientesTotalCount})
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={reportSearchQuery}
+                      onChange={(e) => setReportSearchQuery(e.target.value)}
+                      placeholder="Filtrar por nombre, referencia u orden..."
+                      className="w-full max-w-xs rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Tabla Compacta con el Resumen Corto de Cada Comprobante */}
+                  <div className="max-h-[640px] overflow-auto rounded-xl border border-slate-800">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                        <tr>
+                          <th className="px-3 py-2.5">#</th>
+                          <th className="px-3 py-2.5">Orden &amp; Fecha Correo</th>
+                          <th className="px-3 py-2.5">Remitente (Reporte / Correo)</th>
+                          <th className="px-3 py-2.5">Referencia</th>
+                          <th className="px-3 py-2.5">Resumen Corto de Operación</th>
+                          <th className="px-3 py-2.5 text-right">Bruto</th>
+                          <th className="px-3 py-2.5 text-right">Comisión</th>
+                          <th className="px-3 py-2.5 text-right">Neto</th>
+                          <th className="px-3 py-2.5 text-center">Estado</th>
+                          <th className="px-3 py-2.5 text-right">Captura</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/70 bg-slate-950/60">
+                        {filteredReportOrders.length === 0 ? (
+                          <tr>
+                            <td colSpan={10} className="px-6 py-8 text-center text-slate-400">
+                              No hay comprobantes que coincidan con el filtro seleccionado.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredReportOrders.map((o, idx) => {
+                            const isConc = o.estado === 'CONCILIADO';
+                            const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                            const f = Number(o.tx_porcentaje_comision ?? feeDefault);
+                            const c = Number(
+                              o.tx_monto_comision ?? Math.round(((b * f) / 100) * 100) / 100
+                            );
+                            const n = Number(
+                              o.tx_monto_neto ?? Math.round((b - c) * 100) / 100
+                            );
+
+                            return (
+                              <tr key={o.id} className="hover:bg-slate-800/40">
+                                <td className="px-3 py-2.5 font-mono text-slate-500">
+                                  {idx + 1}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5">
+                                  <span className="font-mono font-bold text-sky-300">
+                                    {o.codigo_orden}
+                                  </span>
+                                  <div className="text-[11px] text-slate-400">
+                                    {formatDateTime(o.tx_fecha_correo ?? o.created_at)}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5">
+                                  <div className="font-semibold text-white">
+                                    {o.remitente_reportado}
+                                  </div>
+                                  {o.tx_remitente_correo &&
+                                    o.tx_remitente_correo.toLowerCase() !==
+                                      (o.remitente_reportado || '').toLowerCase() && (
+                                      <div className="text-[11px] text-slate-400">
+                                        Correo: {o.tx_remitente_correo}
+                                      </div>
+                                    )}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 font-mono">
+                                  <div className="text-slate-200">
+                                    {o.referencia_reportada || 'SIN-REF'}
+                                  </div>
+                                  {o.tx_referencia_correo &&
+                                    o.tx_referencia_correo !== o.referencia_reportada && (
+                                      <div className="text-[10px] text-slate-400">
+                                        Banco: {o.tx_referencia_correo}
+                                      </div>
+                                    )}
+                                </td>
+                                <td className="px-3 py-2.5 text-slate-300">
+                                  {isConc ? (
+                                    <span>
+                                      Pago Zelle verificado (${b.toFixed(2)} - ${c.toFixed(2)} fee ={' '}
+                                      <strong className="text-emerald-400">+${n.toFixed(2)}</strong>)
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-300/90">
+                                      Comprobante recibido; esperando correo del banco
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-semibold text-white">
+                                  ${b.toFixed(2)}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-rose-300">
+                                  {isConc ? `-$${c.toFixed(2)}` : '$0.00'}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold">
+                                  {isConc ? (
+                                    <span className="text-emerald-400">+${n.toFixed(2)}</span>
+                                  ) : (
+                                    <span className="text-slate-500">—</span>
+                                  )}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-center">
+                                  {isConc ? (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                                      Conciliado
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                                      Pendiente
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                                  {(o.has_capture || o.comprobante_base64) && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        if (!o.comprobante_base64) {
+                                          try {
+                                            const res = await fetch(
+                                              `/api/reconciliation/capture?orderId=${encodeURIComponent(o.id)}`
+                                            );
+                                            if (res.ok) {
+                                              const capData = await res.json();
+                                              if (capData.comprobante_base64) {
+                                                o.comprobante_base64 = capData.comprobante_base64;
+                                              }
+                                            }
+                                          } catch {
+                                            // ignore
+                                          }
+                                        }
+                                        setPreviewOrder({ ...o });
+                                      }}
+                                      className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-slate-800"
+                                    >
+                                      <Eye className="h-3 w-3" />
+                                      Ver
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              );
+            })()}
 
             {/* Historial de Liquidaciones Recibidas por el Cliente */}
             <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl">
