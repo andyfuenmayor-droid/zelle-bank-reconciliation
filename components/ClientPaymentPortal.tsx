@@ -160,7 +160,6 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   const [wallet, setWallet] = useState<ClientPortalWalletSummary | null>(null);
   const [orders, setOrders] = useState<PendingPaymentOrder[]>([]);
   const [liquidations, setLiquidations] = useState<ClientLiquidationRecord[]>([]);
-  const [sourceMode, setSourceMode] = useState<'POSTGRESQL_LIVE' | 'DEMO_FALLBACK'>('DEMO_FALLBACK');
   const [isCheckingSession, setIsCheckingSession] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
@@ -277,9 +276,6 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           setWallet(data.wallet);
           setOrders(data.orders ?? []);
           setLiquidations(data.liquidaciones ?? []);
-          if (data.mode) {
-            setSourceMode(data.mode);
-          }
           const assigned = data.client.cuentas_asignadas ?? [];
           if (assigned.length > 0) {
             setSelectedAccountId((prevId) => {
@@ -369,9 +365,6 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         applySelectedAccount(assigned[0]);
       } else {
         setSelectedAccountId('');
-      }
-      if (data.mode) {
-        setSourceMode(data.mode);
       }
     } catch (err: unknown) {
       setAuthError(err instanceof Error ? err.message : 'Error de autenticación.');
