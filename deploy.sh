@@ -84,10 +84,15 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name $DOMAIN www.$DOMAIN;
     client_max_body_size 20M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types application/json text/plain text/css application/javascript text/xml application/xml;
 
     ssl_certificate $CERT_DIR/fullchain.pem;
     ssl_certificate_key $CERT_DIR/privkey.pem;

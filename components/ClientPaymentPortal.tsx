@@ -255,7 +255,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
       void _clienteId;
       setIsRefreshing(true);
       try {
-        const response = await fetch('/api/portal/auth', { cache: 'no-store' });
+        const response = await fetch('/api/portal/auth', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
         if (!response.ok) {
           window.localStorage.removeItem(STORAGE_CLIENT_KEY);
           setClient(null);
@@ -322,16 +325,29 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     setIsAuthSubmitting(true);
     setAuthError(null);
     try {
-      const response = await fetch('/api/portal/auth', {
+      const requestInit: RequestInit = {
         method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           action: 'LOGIN',
           email: emailValue,
           pin: pinValue,
         }),
-      });
-      const data = (await response.json()) as {
+      };
+
+      let response: Response;
+      try {
+        response = await fetch('/api/portal/auth', requestInit);
+      } catch {
+        // Reintento automático ante corte momentáneo de red o reconexión del servidor
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        response = await fetch('/api/portal/auth', requestInit);
+      }
+
+      const rawText = await response.text();
+      let data: {
         ok: boolean;
         mode?: 'POSTGRESQL_LIVE' | 'DEMO_FALLBACK';
         client?: ClientAccountRecord;
@@ -340,6 +356,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         liquidaciones?: ClientLiquidationRecord[];
         error?: string;
       };
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        throw new Error(
+          response.status >= 500
+            ? 'El servidor está reiniciando o temporalmente ocupado. Intenta nuevamente en unos segundos.'
+            : 'Respuesta inesperada del servidor al iniciar sesión.'
+        );
+      }
+
       if (!response.ok || !data.ok || !data.client || !data.wallet) {
         throw new Error(data.error ?? 'Error al iniciar sesión.');
       }
@@ -357,7 +383,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         setSelectedAccountId('');
       }
     } catch (err: unknown) {
-      setAuthError(err instanceof Error ? err.message : 'Error de autenticación.');
+      const msg = err instanceof Error ? err.message : 'Error de autenticación.';
+      const isNetworkError =
+        msg.toLowerCase().includes('failed to fetch') ||
+        msg.toLowerCase().includes('networkerror') ||
+        msg.toLowerCase().includes('load failed');
+      setAuthError(
+        isNetworkError
+          ? 'No se pudo conectar con el servidor. Recarga la página o intenta nuevamente en unos segundos.'
+          : msg
+      );
     } finally {
       setIsAuthSubmitting(false);
     }

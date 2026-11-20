@@ -684,8 +684,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     [activeNegocioId]
   );
 
+  const currentBusinessUserId = currentBusinessUser?.id ?? '';
+  const currentBusinessUserRol = currentBusinessUser?.rol ?? '';
+
   const fetchAllData = useCallback(async () => {
-    if (!currentBusinessUser || !activeNegocioId) {
+    if (!currentBusinessUserId || !activeNegocioId) {
       return;
     }
 
@@ -695,19 +698,26 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       const [alertsRes, clientsRes, mailboxesRes, authRes, liqRes] = await Promise.all([
         fetch('/api/reconciliation/alerts', {
           cache: 'no-store',
+          credentials: 'same-origin',
           headers: reqHeaders,
         }),
         fetch('/api/reconciliation/clients', {
           cache: 'no-store',
+          credentials: 'same-origin',
           headers: reqHeaders,
         }),
         fetch('/api/reconciliation/mailboxes', {
           cache: 'no-store',
+          credentials: 'same-origin',
           headers: reqHeaders,
         }),
-        fetch('/api/auth/business', { cache: 'no-store' }),
+        fetch('/api/auth/business', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        }),
         fetch('/api/reconciliation/liquidations', {
           cache: 'no-store',
+          credentials: 'same-origin',
           headers: reqHeaders,
         }),
       ]);
@@ -769,7 +779,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           businessUsers?: BusinessUserRecord[];
         };
         if (aData.ok && aData.user) {
-          setCurrentBusinessUser(aData.user);
+          const nextUser = aData.user;
+          setCurrentBusinessUser((prev) => {
+            if (
+              prev &&
+              prev.id === nextUser.id &&
+              prev.email === nextUser.email &&
+              prev.nombre_negocio === nextUser.nombre_negocio &&
+              prev.rol === nextUser.rol &&
+              prev.activo === nextUser.activo
+            ) {
+              return prev;
+            }
+            return nextUser;
+          });
           if (Array.isArray(aData.businessUsers)) {
             setBusinessUsers(aData.businessUsers);
           }
@@ -790,7 +813,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [activeNegocioId, buildScopeHeaders, currentBusinessUser]);
+  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId]);
 
   // Restaurar sesión de negocio desde localStorage y revisar ?login=1
   useEffect(() => {
@@ -1005,13 +1028,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   };
 
   useEffect(() => {
-    if (currentBusinessUser && activeNegocioId) {
+    if (currentBusinessUserId && activeNegocioId) {
       void fetchAllData();
-      if (currentBusinessUser.rol === 'SUPER_ADMIN') {
+      if (currentBusinessUserRol === 'SUPER_ADMIN') {
         void fetchAiSettings();
       }
     }
-  }, [currentBusinessUser, activeNegocioId, fetchAllData, fetchAiSettings]);
+  }, [
+    currentBusinessUserId,
+    currentBusinessUserRol,
+    activeNegocioId,
+    fetchAllData,
+    fetchAiSettings,
+  ]);
 
   // Métricas separadas para Bloque Zelle (USD) y Bloque Binance (USDT)
   // Prioriza el agregado exacto calculado en SQL sin truncamiento de LIMIT 250.

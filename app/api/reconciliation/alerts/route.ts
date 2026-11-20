@@ -152,7 +152,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         t.referencia,
         t.fecha_transaccion,
         t.origen_deteccion,
-        t.raw_payload,
+        (COALESCE(t.raw_payload, '{}'::jsonb) - 'raw_body' - 'raw_html') AS raw_payload,
         t.estado,
         t.cliente_id,
         t.cliente_asignado_nombre,
@@ -173,7 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         t.external_unique_id AS message_id,
         t.plataforma AS banco,
         t.remitente_o_contraparte AS remitente_o_destinatario,
-        COALESCE(t.raw_payload->>'raw_body', t.raw_payload::text) AS raw_body,
+        LEFT(COALESCE(t.raw_payload->>'raw_body', (COALESCE(t.raw_payload, '{}'::jsonb) - 'raw_html')::text), 1800) AS raw_body,
         CASE
           WHEN t.origen_deteccion = 'EMAIL_AI' THEN 'AI_FALLBACK'
           WHEN t.origen_deteccion = 'BINANCE_API' THEN 'BINANCE_API'
@@ -578,7 +578,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         t.external_unique_id AS message_id,
         t.plataforma AS banco,
         t.remitente_o_contraparte AS remitente_o_destinatario,
-        COALESCE(t.raw_payload->>'raw_body', t.raw_payload::text) AS raw_body,
+        LEFT(COALESCE(t.raw_payload->>'raw_body', (COALESCE(t.raw_payload, '{}'::jsonb) - 'raw_html')::text), 1800) AS raw_body,
         CASE
           WHEN t.origen_deteccion = 'EMAIL_AI' THEN 'AI_FALLBACK'
           WHEN t.origen_deteccion = 'BINANCE_API' THEN 'BINANCE_API'
