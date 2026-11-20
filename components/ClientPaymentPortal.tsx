@@ -33,8 +33,10 @@ import {
   ExpectedPlatformType,
   FinancialTransactionRecord,
   PendingPaymentOrder,
+  SenderNameVerification,
 } from '@/types/reconciliation';
 import { ReceiptAiScanResult } from '@/lib/receipt-scanner';
+import { computeNameMatchScore } from '@/lib/name-similarity';
 
 const STORAGE_CLIENT_KEY = 'fintech_portal_client_id';
 
@@ -209,6 +211,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     type: 'instant' | 'pending' | 'error';
     title: string;
     detail: string;
+    nameVerification?: SenderNameVerification | null;
   } | null>(null);
 
   // Modal emergente de confirmación de carga exitosa
@@ -216,6 +219,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     order: PendingPaymentOrder;
     instant: boolean;
     tx?: FinancialTransactionRecord | null;
+    nameVerification?: SenderNameVerification | null;
   } | null>(null);
 
   // Toast flotante de notificación rápida
@@ -623,6 +627,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
     try {
       const response = await fetch('/api/portal/report-payment', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           clienteId: client.id,
@@ -643,6 +648,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         instantReconciled?: boolean;
         order?: PendingPaymentOrder;
         reconciledTransaction?: FinancialTransactionRecord | null;
+        nameVerification?: SenderNameVerification | null;
         wallet?: ClientPortalWalletSummary;
         error?: string;
       };
@@ -656,6 +662,12 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         setWallet(data.wallet);
       }
 
+      const nv = data.nameVerification ?? null;
+      const nameMatchSummary =
+        nv && nv.bankEmailFound
+          ? ` Coincidencia de nombre con correo del banco: ${nv.similarityPercent}% (${nv.bankSenderName ?? ''}).`
+          : '';
+
       if (data.instantReconciled && data.reconciledTransaction) {
         const tx = data.reconciledTransaction;
         setReportFeedback({
@@ -664,25 +676,30 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           detail: `Tu reporte ${data.order.codigo_orden} coincidió de inmediato con el movimiento confirmado en ${tx.plataforma}. Acreditado: ${formatAmount(
             tx.monto_neto,
             tx.moneda
-          )} netos (Comisión ${tx.porcentaje_comision}%).`,
+          )} netos (Comisión ${tx.porcentaje_comision}%).${nameMatchSummary}`,
+          nameVerification: nv,
         });
         setShowToast({
           type: 'instant',
           title: '¡Pago Conciliado Instantáneamente!',
-          message: `Reporte ${data.order.codigo_orden} acreditado a tu saldo disponible.`,
+          message: nv?.bankEmailFound
+            ? `Reporte ${data.order.codigo_orden} acreditado · Nombre ${nv.similarityPercent}% compatible.`
+            : `Reporte ${data.order.codigo_orden} acreditado a tu saldo disponible.`,
           codigo: data.order.codigo_orden,
         });
       } else {
         setReportFeedback({
           type: 'pending',
           title: `¡Reporte ${data.order.codigo_orden} Registrado con Éxito!`,
-          detail:
-            'Tu comprobante ha sido recibido correctamente. El motor conciliará y acreditará tu saldo automáticamente en cuanto ingrese la alerta del banco o Binance.',
+          detail: `Tu comprobante ha sido recibido correctamente. El motor conciliará y acreditará tu saldo automáticamente en cuanto ingrese la alerta del banco o Binance.${nameMatchSummary}`,
+          nameVerification: nv,
         });
         setShowToast({
           type: 'success',
           title: '¡Carga Registrada con Éxito!',
-          message: `Orden ${data.order.codigo_orden} en verificación bancaria.`,
+          message: nv?.bankEmailFound
+            ? `Orden ${data.order.codigo_orden} guardada · Coincidencia de nombre: ${nv.similarityPercent}%.`
+            : `Orden ${data.order.codigo_orden} en verificación bancaria.`,
           codigo: data.order.codigo_orden,
         });
       }
@@ -691,6 +708,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
         order: data.order as PendingPaymentOrder,
         instant: Boolean(data.instantReconciled),
         tx: data.reconciledTransaction,
+        nameVerification: nv,
       });
 
       setMonto('');
@@ -2093,13 +2111,41 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                   <div className="font-semibold text-white">
                                     {o.remitente_reportado}
                                   </div>
-                                  {o.tx_remitente_correo &&
-                                    o.tx_remitente_correo.toLowerCase() !==
-                                      (o.remitente_reportado || '').toLowerCase() && (
-                                      <div className="text-[11px] text-slate-400">
-                                        Correo: {o.tx_remitente_correo}
+                                  {o.tx_remitente_correo && (() => {
+                                    const savedNv =
+                                      o.datos_ocr_extraidos?.verificacion_nombre;
+                                    const pct =
+                                      savedNv?.bankEmailFound
+                                        ? savedNv.similarityPercent
+                                        : computeNameMatchScore(
+                                            o.remitente_reportado,
+                                            o.tx_remitente_correo
+                                          ).similarityPercent;
+                                    const diffName =
+                                      o.tx_remitente_correo.toLowerCase() !==
+                                      (o.remitente_reportado || '').toLowerCase();
+                                    const badgeCls =
+                                      pct >= 85
+                                        ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300'
+                                        : pct >= 55
+                                          ? 'border-amber-500/35 bg-amber-500/10 text-amber-300'
+                                          : 'border-rose-500/40 bg-rose-500/15 text-rose-300';
+                                    return (
+                                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+                                        {diffName && (
+                                          <span className="text-slate-400">
+                                            Correo: {o.tx_remitente_correo}
+                                          </span>
+                                        )}
+                                        <span
+                                          className={`inline-flex items-center rounded border px-1.5 py-0.2 font-mono text-[10px] font-semibold ${badgeCls}`}
+                                          title={`Coincidencia de nombre vs correo bancario (${o.tx_remitente_correo}): ${pct}%`}
+                                        >
+                                          Nombre {pct}%
+                                        </span>
                                       </div>
-                                    )}
+                                    );
+                                  })()}
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5 font-mono">
                                   <div className="text-slate-200">
@@ -2416,6 +2462,79 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         <span className="font-mono text-slate-300">
                           {successOrderModal.order.referencia_reportada}
                         </span>
+                      </div>
+                    )}
+
+                    {successOrderModal.nameVerification && (
+                      <div
+                        className={`rounded-lg border p-3 ${
+                          !successOrderModal.nameVerification.bankEmailFound
+                            ? 'border-slate-700 bg-slate-900/70'
+                            : successOrderModal.nameVerification.similarityPercent >= 85
+                              ? 'border-emerald-500/40 bg-emerald-950/30'
+                              : successOrderModal.nameVerification.similarityPercent >= 55
+                                ? 'border-amber-500/40 bg-amber-950/30'
+                                : 'border-rose-500/45 bg-rose-950/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-300">
+                            Verificación de Nombre vs. Correo
+                          </span>
+                          {successOrderModal.nameVerification.bankEmailFound ? (
+                            <span
+                              className={`rounded-full px-2 py-0.5 font-mono text-xs font-extrabold ${
+                                successOrderModal.nameVerification.similarityPercent >= 85
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : successOrderModal.nameVerification.similarityPercent >= 55
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : 'bg-rose-500/20 text-rose-300'
+                              }`}
+                            >
+                              {successOrderModal.nameVerification.similarityPercent}% coincidencia
+                            </span>
+                          ) : (
+                            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-300">
+                              Sin correo aún
+                            </span>
+                          )}
+                        </div>
+
+                        {successOrderModal.nameVerification.bankEmailFound && (
+                          <>
+                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                              <div
+                                className={`h-full rounded-full transition-all ${
+                                  successOrderModal.nameVerification.similarityPercent >= 85
+                                    ? 'bg-emerald-400'
+                                    : successOrderModal.nameVerification.similarityPercent >= 55
+                                      ? 'bg-amber-400'
+                                      : 'bg-rose-400'
+                                }`}
+                                style={{
+                                  width: `${Math.max(4, successOrderModal.nameVerification.similarityPercent)}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="mt-2 space-y-1 text-[11px]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-400">Escrito por ti:</span>
+                                <span className="font-semibold text-white">
+                                  {successOrderModal.nameVerification.reportedName}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-400">En correo del banco:</span>
+                                <span className="font-semibold text-sky-300">
+                                  {successOrderModal.nameVerification.bankSenderName}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                        <p className="mt-1.5 text-[11px] leading-snug text-slate-300">
+                          {successOrderModal.nameVerification.detail}
+                        </p>
                       </div>
                     )}
 
