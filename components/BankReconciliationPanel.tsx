@@ -3362,20 +3362,29 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
                         />
                       </th>
-                      <th className="px-3 py-3">Canal &amp; Fecha Correo</th>
-                      <th className="px-2.5 py-3">Flujo</th>
-                      <th className="px-3 py-3">
-                        Enviado Por (Correo)
+                      <th className="px-2.5 py-3">Canal</th>
+                      <th className="px-2.5 py-3">Fecha y Hora Correo</th>
+                      <th className="px-2 py-3">Flujo</th>
+                      <th className="px-2.5 py-3">
+                        Enviado por (Correo)
                       </th>
-                      <th className="px-3 py-3">
-                        Reportado Como (Cliente)
+                      <th className="px-2.5 py-3">
+                        Referencia correo
                       </th>
-                      <th className="px-3 py-3">Referencia &amp; Origen</th>
-                      <th className="px-3 py-3 text-right">Monto Bruto</th>
-                      <th className="px-3 py-3 text-right">Comisión</th>
-                      <th className="px-3 py-3 text-right">Monto Neto</th>
-                      <th className="px-2.5 py-3">Estado</th>
-                      <th className="px-3 py-3 text-right">
+                      <th className="px-2.5 py-3">
+                        Titular / Subdetalle Correo
+                      </th>
+                      <th className="px-2.5 py-3">
+                        Reportado como (Cliente) / Alerta
+                      </th>
+                      <th className="px-2.5 py-3">
+                        Referencia Reportada
+                      </th>
+                      <th className="px-2.5 py-3 text-right">Monto Bruto ($)</th>
+                      <th className="px-2.5 py-3 text-right">Comisión</th>
+                      <th className="px-2.5 py-3 text-right">Monto Neto ($)</th>
+                      <th className="px-2 py-3">Estado</th>
+                      <th className="px-2.5 py-3 text-right">
                         Captura &amp; Acciones
                       </th>
                     </tr>
@@ -3384,7 +3393,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     {filteredAlerts.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={11}
+                          colSpan={14}
                           className="px-6 py-12 text-center text-slate-400"
                         >
                           No se encontraron transacciones con los filtros
@@ -3433,7 +3442,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               isSelected ? 'bg-emerald-950/25' : ''
                             }`}
                           >
-                            <td className="w-10 px-2.5 py-3 text-center">
+                            <td className="w-9 px-2 py-3 text-center">
                               {alert.estado !== 'CONCILIADO' &&
                               alert.tipo_movimiento === 'RECIBIDO' ? (
                                 <input
@@ -3446,43 +3455,43 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <span className="inline-block h-4 w-4 text-slate-700">-</span>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3">
+
+                            {/* 1. Canal */}
+                            <td className="whitespace-nowrap px-2.5 py-3">
                               <span
                                 className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
                               >
                                 {badge.label}
                               </span>
-                              <p
-                                className="mt-1 text-xs font-medium text-slate-300"
-                                title="Fecha y hora exacta entregada por el correo bancario"
-                              >
-                                <span className="text-[10px] uppercase text-slate-500">
-                                  Correo:{' '}
-                                </span>
-                                {formatDateTime(alert.fecha_transaccion)}
-                              </p>
                             </td>
 
-                            <td className="whitespace-nowrap px-2.5 py-3">
+                            {/* 2. Fecha y Hora Correo */}
+                            <td
+                              className="whitespace-nowrap px-2.5 py-3 text-xs font-medium text-slate-300"
+                              title="Fecha y hora exacta entregada por el correo bancario"
+                            >
+                              {formatDateTime(alert.fecha_transaccion)}
+                            </td>
+
+                            {/* 3. Flujo */}
+                            <td className="whitespace-nowrap px-2 py-3">
                               {alert.tipo_movimiento === 'RECIBIDO' ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                                  <ArrowDownLeft className="h-3.5 w-3.5" />
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                                  <ArrowDownLeft className="h-3 w-3" />
                                   Recibido
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-400">
-                                  <ArrowUpRight className="h-3.5 w-3.5" />
+                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-400">
+                                  <ArrowUpRight className="h-3 w-3" />
                                   Enviado
                                 </span>
                               )}
                             </td>
 
-                            <td className="px-3 py-3 max-w-[220px] 2xl:max-w-xs">
-                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-                                Enviado por:
-                              </div>
+                            {/* 4. Enviado por (Correo) */}
+                            <td className="px-2.5 py-3 max-w-[180px] 2xl:max-w-[220px]">
                               <div
-                                className="font-semibold text-white truncate"
+                                className="font-semibold text-white truncate text-xs"
                                 title={alert.remitente_o_contraparte || ''}
                               >
                                 {alert.remitente_o_contraparte || (
@@ -3491,100 +3500,83 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   </span>
                                 )}
                               </div>
+                            </td>
+
+                            {/* 5. Referencia correo */}
+                            <td className="whitespace-nowrap px-2.5 py-3 font-mono text-xs font-semibold text-slate-200">
+                              {alert.referencia || 'SIN-REF'}
+                            </td>
+
+                            {/* 6. Titular / Subdetalle Correo */}
+                            <td className="px-2.5 py-3 max-w-[180px]">
                               {alert.cliente_asignado_nombre ? (
-                                <div className="mt-1 flex items-center gap-1 text-xs text-emerald-400">
+                                <div className="flex items-center gap-1 text-xs text-emerald-400">
                                   <UserCheck className="h-3.5 w-3.5 shrink-0" />
                                   <span className="truncate font-semibold">
                                     Titular: {alert.cliente_asignado_nombre}
                                   </span>
                                 </div>
                               ) : (
-                                <div className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
-                                  <Clock className="h-3 w-3 shrink-0 text-slate-600" />
+                                <div className="flex items-center gap-1 text-[11px] text-slate-400">
+                                  <Clock className="h-3 w-3 shrink-0 text-slate-500" />
                                   <span className="truncate">Sin cliente (En espera de orden)</span>
                                 </div>
                               )}
                             </td>
 
-                            <td className="px-3 py-3 max-w-[230px] 2xl:max-w-xs">
+                            {/* 7. Reportado como (Cliente) / Alerta */}
+                            <td className="px-2.5 py-3 max-w-[240px] 2xl:max-w-xs">
                               {reportedSender ? (
-                                <div>
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-sky-400/90">
-                                    Reportado como:
-                                  </div>
-                                  <div
-                                    className={`font-semibold truncate ${
-                                      hasNameDisparity
-                                        ? 'text-amber-300'
-                                        : 'text-sky-200'
-                                    }`}
-                                    title={reportedSender}
-                                  >
-                                    {reportedSender}
-                                  </div>
-                                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400">
+                                <div className="text-xs">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span
+                                      className={`font-semibold truncate ${
+                                        hasNameDisparity
+                                          ? 'text-amber-300'
+                                          : 'text-sky-200'
+                                      }`}
+                                      title={reportedSender}
+                                    >
+                                      {reportedSender}
+                                    </span>
                                     {reportedCode && (
                                       <span className="font-mono text-[10px] font-semibold text-sky-400">
-                                        {reportedCode}
-                                      </span>
-                                    )}
-                                    {reportedRef && (
-                                      <span className="font-mono text-[10px] text-slate-400 truncate">
-                                        · Ref: {reportedRef}
+                                        | {reportedCode}
                                       </span>
                                     )}
                                   </div>
                                   {hasNameDisparity && (
                                     <span className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
                                       <AlertTriangle className="h-2.5 w-2.5" />
-                                      Nombre distinto al correo
+                                      Alerta: Nombre distinto al correo
                                     </span>
                                   )}
                                 </div>
-                              ) : alert.estado === 'CONCILIADO' ? (
-                                <div className="text-xs text-slate-400">
-                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/80 block">
-                                    Reportado como:
-                                  </span>
-                                  <span className="text-slate-300">
-                                    Remitente autorizado ({alert.cliente_asignado_nombre})
-                                  </span>
-                                </div>
                               ) : (
-                                <div className="text-xs text-slate-500">
-                                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-600 block">
-                                    Reportado como:
-                                  </span>
-                                  <span className="italic">
-                                    Sin reporte del cliente aún
-                                  </span>
-                                </div>
+                                <span className="text-xs italic text-slate-500">
+                                  Sin reporte del cliente aún
+                                </span>
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-3 py-3">
-                              <div className="font-mono text-xs font-medium text-slate-200">
-                                {alert.referencia || 'SIN-REF'}
-                              </div>
-                              <span
-                                className={`mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-                                  alert.origen_deteccion === 'BINANCE_API'
-                                    ? 'border border-amber-500/30 bg-amber-500/15 text-amber-300'
-                                    : alert.origen_deteccion === 'EMAIL_AI'
-                                      ? 'border border-purple-500/30 bg-purple-500/15 text-purple-300'
-                                      : 'bg-slate-800 text-slate-300'
-                                }`}
-                              >
-                                <Cpu className="h-3 w-3" />
-                                {alert.origen_deteccion}
-                              </span>
+                            {/* 8. Referencia Reportada */}
+                            <td className="whitespace-nowrap px-2.5 py-3 font-mono text-xs">
+                              {reportedRef ? (
+                                <span className="font-semibold text-sky-300">
+                                  {reportedRef}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500">—</span>
+                              )}
                             </td>
 
-                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono font-semibold text-slate-100">
+                            {/* 9. Monto Bruto ($) */}
+                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono font-semibold text-slate-100">
                               {formatMoney(alert.monto_bruto, alert.moneda)}
                             </td>
 
-                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-xs">
+                            {/* 10. Comisión */}
+                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-xs">
                               {alert.estado === 'CONCILIADO' ? (
                                 <span className="text-violet-300">
                                   {alert.monto_comision > 0
@@ -3592,26 +3584,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     : formatMoney(0, alert.moneda)}
                                 </span>
                               ) : (
-                                <span
-                                  className="text-slate-500 font-normal cursor-help"
-                                  title="Sin comisión calculada: aún no está asignado ni conciliado a un cliente"
-                                >
-                                  —
+                                <span className="text-slate-400">
+                                  {formatMoney(0, alert.moneda)}
                                 </span>
                               )}
                             </td>
 
-                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono font-bold">
+                            {/* 11. Monto Neto ($) */}
+                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono font-bold">
                               {alert.estado === 'CONCILIADO' ? (
                                 <span className="text-emerald-400">
                                   {formatMoney(alert.monto_neto, alert.moneda)}
                                 </span>
                               ) : (
-                                <span
-                                  className="text-slate-500 text-xs font-normal cursor-help"
-                                  title="Monto neto pendiente de conciliación con cliente"
-                                >
-                                  —
+                                <span className="text-slate-300 font-normal">
+                                  {formatMoney(alert.monto_bruto, alert.moneda)}
                                 </span>
                               )}
                             </td>

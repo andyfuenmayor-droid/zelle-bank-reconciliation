@@ -436,6 +436,11 @@ BEGIN
                   AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
                   AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
               )
+              OR (
+                  LENGTH(v_clean_order_ref) >= 8
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 8
+                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 8) = RIGHT(v_clean_order_ref, 8)
+              )
           )
         ORDER BY t.fecha_transaccion ASC
         LIMIT 1
@@ -487,7 +492,8 @@ BEGIN
           AND t.moneda = v_orden.moneda
           AND t.monto_bruto = v_orden.monto_esperado
           AND (t.negocio_id IS NOT DISTINCT FROM v_orden.negocio_id OR t.negocio_id IS NULL OR v_orden.negocio_id IS NULL)
-          -- Compatibilidad de referencias
+          -- Compatibilidad estricta de referencias: si la orden reporta una referencia alfanumérica específica,
+          -- jamás se permite cruzar por nombre con un correo que tenga una referencia bancaria diferente.
           AND (
               v_is_order_ref_generic
               OR v_is_order_ref_numeric_conf
@@ -495,11 +501,10 @@ BEGIN
               OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
               OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
               OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
-              OR NOT (
-                  -- Solo bloquear si ambos tienen identificadores bancarios alfanuméricos incompatibles del mismo formato
-                  v_clean_order_ref ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
-                  AND UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
-                  AND SUBSTRING(v_clean_order_ref FROM 1 FOR 3) = SUBSTRING(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) FROM 1 FOR 3)
+              OR (
+                  LENGTH(v_clean_order_ref) >= 6
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
               )
           )
           AND (
@@ -679,18 +684,18 @@ BEGIN
           AND o.moneda = v_tx.moneda
           AND o.monto_esperado = v_tx.monto_bruto
           AND (o.negocio_id IS NOT DISTINCT FROM v_tx.negocio_id OR o.negocio_id IS NULL OR v_tx.negocio_id IS NULL)
-          -- Sin referencias bancarias contradictorias
+          -- Sin referencias bancarias contradictorias: jamás cruzar por nombre si la orden tiene una referencia alfanumérica distinta
           AND (
               v_is_ref_generic
               OR o.referencia_reportada IS NULL
-              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL', 'BANKOFAMERICA', 'CHASE', 'CITIBANK', 'WELLSFARGO')
               OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) ~ '^[0-9]{8,14}$'
               OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) || '%'
               OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
-              OR NOT (
-                  v_norm_ref ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
-                  AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) ~ '^[A-Z]{3,4}[0-9A-Z]{5,}$'
-                  AND SUBSTRING(v_norm_ref FROM 1 FOR 3) = SUBSTRING(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) FROM 1 FOR 3)
+              OR (
+                  LENGTH(v_norm_ref) >= 6
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(v_norm_ref, 6) = RIGHT(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')), 6)
               )
           )
           AND (
