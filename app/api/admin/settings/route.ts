@@ -83,9 +83,10 @@ async function verifyApiKeyLive(
       };
     }
     const testModels = [
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-      'gemini-2.0-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-3-flash-preview',
+      'gemini-flash-lite-latest',
     ];
     let lastError = '';
     let latencyMs = 0;
@@ -295,13 +296,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body.gemini_api_key !== undefined
         ? body.gemini_api_key.trim() || null
         : current.gemini_api_key;
+    const deprecatedGeminiModels = new Set([
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+    ]);
     const newGeminiModel =
       body.gemini_model?.trim() ||
       (current.gemini_model &&
-      !current.gemini_model.startsWith('gemini-3.') &&
-      current.gemini_model !== 'gemini-1.5-flash'
-        ? current.gemini_model
-        : 'gemini-2.5-flash');
+      !deprecatedGeminiModels.has(current.gemini_model.trim())
+        ? current.gemini_model.trim()
+        : 'gemini-3.5-flash-lite');
     const newGroqKey =
       body.groq_api_key !== undefined
         ? body.groq_api_key.trim() || null

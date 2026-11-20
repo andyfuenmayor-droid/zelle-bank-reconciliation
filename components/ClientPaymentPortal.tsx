@@ -433,6 +433,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
       try {
         const response = await fetch('/api/portal/scan-receipt', {
           method: 'POST',
+          credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             comprobante_base64: base64Image,

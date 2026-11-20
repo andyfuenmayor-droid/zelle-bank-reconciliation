@@ -66,7 +66,7 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
     | 'groq'
     | 'anthropic';
   const envOpenAiModel = process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini';
-  const envGeminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
+  const envGeminiModel = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
   const envGroqModel =
     process.env.GROQ_MODEL?.trim() || 'llama-3.2-11b-vision-preview';
 
@@ -113,7 +113,7 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
           openai_api_key: decryptAtRest(row.openai_api_key),
           openai_model: row.openai_model?.trim() || 'gpt-4o-mini',
           gemini_api_key: decryptAtRest(row.gemini_api_key),
-          gemini_model: row.gemini_model?.trim() || 'gemini-2.5-flash',
+          gemini_model: row.gemini_model?.trim() || 'gemini-3.5-flash-lite',
           groq_api_key: decryptAtRest(row.groq_api_key),
           groq_model: row.groq_model?.trim() || 'llama-3.2-11b-vision-preview',
         };
@@ -128,7 +128,7 @@ export async function getActiveAiConfig(): Promise<SystemAiConfig> {
     openai_api_key: null,
     openai_model: 'gpt-4o-mini',
     gemini_api_key: null,
-    gemini_model: 'gemini-2.5-flash',
+    gemini_model: 'gemini-3.5-flash-lite',
     groq_api_key: null,
     groq_model: 'llama-3.2-11b-vision-preview',
   };
@@ -356,20 +356,26 @@ async function scanWithGeminiVision(
   const mimeType = match[1];
   const base64Data = match[2];
 
+  const deprecatedModels = new Set([
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+  ]);
   const validCustomModel =
-    modelName &&
-    !modelName.startsWith('gemini-3.') &&
-    modelName !== 'gemini-1.5-flash'
-      ? modelName
+    modelName && !deprecatedModels.has(modelName.trim())
+      ? modelName.trim()
       : null;
 
   const candidateModels = Array.from(
     new Set(
       [
         validCustomModel,
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-        'gemini-2.0-flash',
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3-flash-preview',
+        'gemini-flash-lite-latest',
+        'gemini-flash-latest',
       ].filter(Boolean) as string[]
     )
   );
@@ -380,18 +386,28 @@ async function scanWithGeminiVision(
         role: 'user',
         parts: [
           {
-            text: `Eres un auditor FinTech de comprobantes bancarios Zelle y Binance. Analiza esta captura de pantalla de comprobante de pago y responde ÚNICAMENTE con un JSON con los siguientes campos:
+            text: `Eres un auditor FinTech de alta precisión especializado en comprobantes de pago Zelle (Bank of America, Chase, Wells Fargo, Citibank, TD Bank, Capital One, Truist, PNC, Zelle app) y Binance (Pay, P2P, On-Chain).
+
+Analiza esta captura de pantalla y responde ÚNICAMENTE con un objeto JSON válido con exactamente estos campos:
 {
   "monto": 20.00,
   "moneda": "USD",
   "plataforma": "CITIBANK",
-  "fecha": "2026-11-15",
+  "fecha": "2026-11-20",
   "remitente": "",
-  "referencia": "Codigo de confirmacion o TxID",
-  "cuenta_destino": "correo o telefono receptor",
+  "referencia": "codigo de confirmacion exacto o cadena vacia si no aparece",
+  "cuenta_destino": "correo o telefono receptor si aparece visible o null",
   "confianza": 0.95,
-  "observaciones": "Comprobante identificado con exito"
-}`,
+  "observaciones": "Resumen breve en español de lo detectado"
+}
+
+Reglas estrictas:
+- "monto": número decimal positivo exacto del pago (ej. 10.00, 40.00, 125.50). Sin símbolo $ ni comas.
+- "moneda": "USD" para Zelle/bancos USA, "USDT" para Binance/cripto, "VES" para bolívares.
+- "plataforma": usa "CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN" (para Zelle usa "CITIBANK" salvo que el destinatario/comprobante indique TD Bank).
+- "fecha": fecha visible de la transferencia en formato YYYY-MM-DD (o null si no es visible).
+- "remitente": deja siempre cadena vacía "".
+- "referencia": extrae el Confirmation Number / Confirmation Code / Reference / Transaction ID / Order ID / TxID exacto tal cual aparece (ej. "ee3j9bfv7", "WFCT22...", "JPM99...", "22N0..."). No inventes códigos; si no existe en la imagen, devuelve "".`,
           },
           {
             inlineData: {
@@ -408,11 +424,11 @@ async function scanWithGeminiVision(
     },
   };
 
-  let lastError = '';
+  const errors: string[] = [];
   let jsonResponse: {
     candidates?: Array<{
       content?: {
-        parts?: Array<{ text?: string }>;
+        parts?: Array<{ text?: string; thought?: boolean }>;
       };
     }>;
   } | null = null;
@@ -427,30 +443,39 @@ async function scanWithGeminiVision(
           'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000),
       });
 
       if (response.ok) {
         jsonResponse = (await response.json()) as {
           candidates?: Array<{
             content?: {
-              parts?: Array<{ text?: string }>;
+              parts?: Array<{ text?: string; thought?: boolean }>;
             };
           }>;
         };
         break;
       }
       const errText = await response.text();
-      lastError = `Error en Gemini Vision ${targetModel} (${response.status}): ${errText.slice(0, 150)}`;
+      errors.push(`${targetModel} (${response.status}): ${errText.slice(0, 140)}`);
     } catch (e) {
-      lastError = e instanceof Error ? e.message : 'Error de red con Gemini';
+      errors.push(`${targetModel}: ${e instanceof Error ? e.message : 'Error de red'}`);
     }
   }
 
   if (!jsonResponse) {
-    throw new Error(lastError || 'Gemini Vision no pudo procesar la imagen con ninguno de los modelos.');
+    throw new Error(
+      errors.length > 0
+        ? `Error en Gemini Vision -> ${errors.join(' | ')}`
+        : 'Gemini Vision no pudo procesar la imagen con ninguno de los modelos.'
+    );
   }
 
-  const textOutput = jsonResponse.candidates?.[0]?.content?.parts?.[0]?.text;
+  const parts = jsonResponse.candidates?.[0]?.content?.parts ?? [];
+  const textPart =
+    parts.find((p) => typeof p.text === 'string' && !p.thought) ??
+    parts.find((p) => typeof p.text === 'string');
+  const textOutput = textPart?.text;
   if (!textOutput) {
     throw new Error('Gemini no devolvió texto en su respuesta.');
   }
