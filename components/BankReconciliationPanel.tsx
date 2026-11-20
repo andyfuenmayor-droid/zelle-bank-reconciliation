@@ -201,42 +201,132 @@ function normalizeCleanText(text: string): string {
     .trim();
 }
 
+function levenshteinDistance(s1: string, s2: string): number {
+  const m = s1.length;
+  const n = s2.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array<number>(n + 1).fill(0)
+  );
+  for (let i = 0; i <= m; i++) dp[i]![0] = i;
+  for (let j = 0; j <= n; j++) dp[0]![j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+      dp[i]![j] = Math.min(
+        dp[i - 1]![j]! + 1,
+        dp[i]![j - 1]! + 1,
+        dp[i - 1]![j - 1]! + cost
+      );
+      if (
+        i > 1 &&
+        j > 1 &&
+        s1[i - 1] === s2[j - 2] &&
+        s1[i - 2] === s2[j - 1]
+      ) {
+        dp[i]![j] = Math.min(dp[i]![j]!, dp[i - 2]![j - 2]! + 1);
+      }
+    }
+  }
+  return dp[m]![n]!;
+}
+
+const CORPORATE_STOP_WORDS = new Set([
+  'corp',
+  'corporation',
+  'llc',
+  'inc',
+  'ca',
+  'sa',
+  'ltd',
+  'cia',
+  'co',
+]);
+
+function tokenSimilarityScore(t1: string, t2: string): number {
+  if (!t1 || !t2) return 0;
+  if (t1 === t2) return 1.0;
+
+  // Inicial de 1 letra (ej. "J" en "J Fernandez" concuerda con "Jaison", "A" en "Roberto A" o "Juan A")
+  if (t1.length === 1 && t2.length >= 2 && t2.startsWith(t1)) return 0.9;
+  if (t2.length === 1 && t1.length >= 2 && t1.startsWith(t2)) return 0.9;
+
+  // Prefijo o plural (ej. "solution" vs "solutions", "sarai" vs "sarais")
+  if (
+    t1.length >= 3 &&
+    t2.length >= 3 &&
+    (t2.startsWith(t1) || t1.startsWith(t2))
+  ) {
+    return 0.92;
+  }
+
+  // Transposición exacta de letras (ej. "jhon" vs "john")
+  if (
+    t1.length === t2.length &&
+    t1.length >= 3 &&
+    t1.split('').sort().join('') === t2.split('').sort().join('')
+  ) {
+    return 0.95;
+  }
+
+  // Variación fonética o de tipeo (ej. "enderbeth" vs "enderberth", "johandry" vs "jhandry",
+  // "wuilliams" vs "william", "arima" vs "aroma"/"arina", "lfs" vs "les", "haber" vs "hebert")
+  const maxLen = Math.max(t1.length, t2.length);
+  if (maxLen >= 3) {
+    const dist = levenshteinDistance(t1, t2);
+    const ratio = 1 - dist / maxLen;
+    if (maxLen === 3 && dist === 1) return 0.78;
+    if (ratio >= 0.66) return ratio;
+  }
+
+  return 0;
+}
+
 function calculateSenderSimilarity(a: string, b: string): number {
-  const normA = normalizeCleanText(a);
-  const normB = normalizeCleanText(b);
+  const normA = normalizeCleanText(a).replace(/[^a-z0-9\s]/g, ' ');
+  const normB = normalizeCleanText(b).replace(/[^a-z0-9\s]/g, ' ');
   if (!normA || !normB) return 0;
   if (normA === normB) return 1;
-  if (normA.includes(normB) || normB.includes(normA)) return 0.85;
+  if (normA.includes(normB) || normB.includes(normA)) return 0.9;
 
-  const tokensA = normA.split(/\s+/).filter(Boolean);
-  const tokensB = normB.split(/\s+/).filter(Boolean);
-  if (tokensA.length === 0 || tokensB.length === 0) return 0;
+  const rawTokensA = normA.split(/\s+/).filter(Boolean);
+  const rawTokensB = normB.split(/\s+/).filter(Boolean);
+  const tokensA = rawTokensA.filter((t) => !CORPORATE_STOP_WORDS.has(t));
+  const tokensB = rawTokensB.filter((t) => !CORPORATE_STOP_WORDS.has(t));
+  const listA = tokensA.length > 0 ? tokensA : rawTokensA;
+  const listB = tokensB.length > 0 ? tokensB : rawTokensB;
+  if (listA.length === 0 || listB.length === 0) return 0;
 
-  const tokensMatch = (t1: string, t2: string): boolean =>
-    t1 === t2 || (t1.length >= 4 && t2.length >= 4 && (t2.startsWith(t1) || t1.startsWith(t2)));
-
-  let sharedCount = 0;
-  for (const tA of tokensA) {
-    if (tokensB.some((tB) => tokensMatch(tA, tB))) {
-      sharedCount++;
+  let matchedScoreSum = 0;
+  let strongMatchedTokens = 0;
+  for (const tA of listA) {
+    let bestForToken = 0;
+    for (const tB of listB) {
+      const s = tokenSimilarityScore(tA, tB);
+      if (s > bestForToken) bestForToken = s;
+    }
+    if (bestForToken >= 0.66) {
+      matchedScoreSum += bestForToken;
+      strongMatchedTokens++;
     }
   }
 
-  // Si ambos nombres tienen nombre + apellido (>=2 palabras) y solo comparten 1 apellido,
-  // pero el primer nombre es distinto (ej. "Yeilyn Villalobos" vs "Andry Villalobos"),
-  // no son la misma persona.
+  const firstTokenScore =
+    listA[0] && listB[0] ? tokenSimilarityScore(listA[0], listB[0]) : 0;
+
+  // Si ambos nombres tienen >=2 palabras, solo comparten 1 apellido y el primer nombre no tiene ninguna similitud
+  // (ej. "Yeilyn Villalobos" vs "Andry Villalobos"), devolver 0.45 (coincide 1 apellido, pero requiere validar referencia)
   if (
-    tokensA.length >= 2 &&
-    tokensB.length >= 2 &&
-    sharedCount === 1 &&
-    tokensA[0] &&
-    tokensB[0] &&
-    !tokensMatch(tokensA[0], tokensB[0])
+    listA.length >= 2 &&
+    listB.length >= 2 &&
+    strongMatchedTokens === 1 &&
+    firstTokenScore < 0.66
   ) {
-    return 0.2;
+    return 0.45;
   }
 
-  return (2 * sharedCount) / (tokensA.length + tokensB.length);
+  return Math.min(1, (2 * matchedScoreSum) / (listA.length + listB.length));
 }
 
 function referencesMatch(
@@ -257,19 +347,36 @@ function referencesMatch(
     'ZELLE',
     'PAGO',
     'TRANSFERENCIA',
+    'BANKOFAMERICA',
   ];
   if (genericList.includes(cleanOrder) || genericList.includes(cleanTx)) {
     return false;
   }
 
-  return (
+  if (
     cleanOrder === cleanTx ||
     cleanTx.includes(cleanOrder) ||
     cleanOrder.includes(cleanTx) ||
     (cleanOrder.length >= 6 &&
       cleanTx.length >= 6 &&
-      cleanTx.endsWith(cleanOrder.slice(-6)))
-  );
+      cleanTx.endsWith(cleanOrder.slice(-6))) ||
+    (cleanOrder.length >= 8 &&
+      cleanTx.length >= 8 &&
+      cleanTx.endsWith(cleanOrder.slice(-8)))
+  ) {
+    return true;
+  }
+
+  // Tolerancia de 1 carácter por lectura OCR en códigos de confirmación de 8-9 caracteres
+  // (ej. "Ik9lpx0ib" vs "BACLK9LPX0IB", "Ibllortmf" vs "BACLBLLORTMF", "rjsnfkdk9" vs "BACRJSNFKDQ9")
+  if (cleanOrder.length >= 8 && cleanTx.length >= cleanOrder.length) {
+    const txSuffix = cleanTx.slice(-cleanOrder.length);
+    if (levenshteinDistance(cleanOrder, txSuffix) <= 1) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 const SAMPLE_TEMPLATES: ReadonlyArray<{
@@ -1234,8 +1341,26 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         return refMatch;
       }
 
-      // 2b. Prioridad 2: Coincidencia de remitente legítima (similitud >= 0.35)
+      // 2b. Prioridad 2: Coincidencia de remitente legítima (similitud >= 0.70),
+      // SOLO si la orden pendiente NO tiene una referencia bancaria alfanumérica que contradiga la del correo
+      // (evita que una orden pendiente de otra fecha como n2gukw9y9 del 21/10 aparezca en un correo DETECTADO del 06/11)
       const senderCandidates = sameAmountOrders
+        .filter((o) => {
+          const cleanOrdRef = (o.referencia_reportada || '')
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, '');
+          const isGenericOrNumeric =
+            !cleanOrdRef ||
+            cleanOrdRef.length < 4 ||
+            /^[0-9]{8,14}$/.test(cleanOrdRef) ||
+            ['SINREF', 'NOREF', 'NA', 'NONE', 'NULL', 'BANKOFAMERICA'].includes(
+              cleanOrdRef
+            );
+          return (
+            isGenericOrNumeric ||
+            referencesMatch(o.referencia_reportada, tx.referencia)
+          );
+        })
         .map((o) => ({
           order: o,
           similarity: calculateSenderSimilarity(
@@ -1243,7 +1368,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             tx.remitente_o_contraparte || ''
           ),
         }))
-        .filter((c) => c.similarity >= 0.35)
+        .filter((c) => c.similarity >= 0.7)
         .sort((a, b) => b.similarity - a.similarity);
 
       if (senderCandidates.length > 0 && senderCandidates[0]) {
@@ -3429,10 +3554,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 alert.remitente_o_contraparte
                               )
                             : 1;
+                        const isRefVerified = referencesMatch(
+                          reportedRef,
+                          alert.referencia
+                        );
+                        // Solo marcar disparidad real si la similitud fonética/token es baja (< 0.65)
+                        // Y tampoco está respaldada por coincidencia de referencia + al menos 1 nombre/apellido (>= 0.40)
                         const hasNameDisparity = Boolean(
                           reportedSender &&
                             alert.remitente_o_contraparte &&
-                            senderSimilarity < 0.35
+                            senderSimilarity < 0.65 &&
+                            !(isRefVerified && senderSimilarity >= 0.4)
                         );
 
                         return (
@@ -3525,7 +3657,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             </td>
 
                             {/* 7. Reportado como (Cliente) / Alerta */}
-                            <td className="px-2.5 py-3 max-w-[240px] 2xl:max-w-xs">
+                            <td className="px-2.5 py-3 max-w-[250px] 2xl:max-w-xs">
                               {reportedSender ? (
                                 <div className="text-xs">
                                   <div className="flex flex-wrap items-center gap-1">
@@ -3546,9 +3678,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     )}
                                   </div>
                                   {hasNameDisparity && (
-                                    <span className="mt-1 inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
-                                      <AlertTriangle className="h-2.5 w-2.5" />
-                                      Alerta: Nombre distinto al correo
+                                    <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-amber-950/90 px-2 py-0.5 text-[11px] font-semibold text-amber-200 shadow-sm">
+                                      <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
+                                      Diferencia de nombre
                                     </span>
                                   )}
                                 </div>
