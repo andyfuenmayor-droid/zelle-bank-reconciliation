@@ -2105,37 +2105,62 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      {liquidations.length > 0 && (
-                        <div className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/35 bg-slate-950 px-3 py-1.5">
-                          <span className="text-[11px] font-semibold text-indigo-300">
-                            Ciclo:
-                          </span>
-                          <select
-                            value={selectedReportCycleId}
-                            onChange={(e) =>
-                              void handleSelectReportCycle(e.target.value)
+                      {liquidations.length > 0 && (() => {
+                        const activeCycleNeto = Math.round(
+                          orders.reduce((acc, o) => {
+                            if (o.estado !== 'CONCILIADO' && o.estado !== 'LIQUIDADO') {
+                              return acc;
                             }
-                            className="bg-slate-950 text-xs font-semibold text-slate-100 focus:outline-none cursor-pointer"
-                          >
-                            <option value="ACTIVO">
-                              Ciclo #{liquidations.length + 1} (Actual · {orders.length})
-                            </option>
-                            {liquidations.map((liq) => (
-                              <option key={liq.id} value={liq.id}>
-                                {liq.numero_ciclo
-                                  ? `Ciclo #${liq.numero_ciclo}`
-                                  : 'Ciclo Cerrado'}{' '}
-                                · {liq.codigo_liquidacion} (
-                                {new Date(liq.created_at).toLocaleDateString('es-ES', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                })}
-                                )
+                            const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                            const f = Number(o.tx_porcentaje_comision ?? feeDefault);
+                            const c = Number(
+                              o.tx_monto_comision ?? Math.round(((b * f) / 100) * 100) / 100
+                            );
+                            const n = Number(
+                              o.tx_monto_neto ?? Math.round((b - c) * 100) / 100
+                            );
+                            return acc + n;
+                          }, 0) * 100
+                        ) / 100;
+
+                        return (
+                          <div className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/35 bg-slate-950 px-3 py-1.5">
+                            <span className="text-[11px] font-semibold text-indigo-300">
+                              Ciclo:
+                            </span>
+                            <select
+                              value={selectedReportCycleId}
+                              onChange={(e) =>
+                                void handleSelectReportCycle(e.target.value)
+                              }
+                              className="bg-slate-950 text-xs font-semibold text-slate-100 focus:outline-none cursor-pointer"
+                            >
+                              <option value="ACTIVO">
+                                Ciclo #{liquidations.length + 1} (Actual · {orders.length} reg. · Neto ${activeCycleNeto.toFixed(2)})
                               </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
+                              {liquidations.map((liq) => {
+                                const pagosCount = Number(liq.ciclo_pagos_count ?? 0);
+                                const netoTotal = Number(liq.ciclo_neto_total ?? 0);
+                                return (
+                                  <option key={liq.id} value={liq.id}>
+                                    {liq.numero_ciclo
+                                      ? `Ciclo #${liq.numero_ciclo}`
+                                      : 'Ciclo Cerrado'}{' '}
+                                    · {pagosCount} pagos · Neto{' '}
+                                    {formatAmount(netoTotal, liq.moneda)} · Liq -
+                                    {formatAmount(Number(liq.monto_liquidado ?? 0), liq.moneda)} (
+                                    {new Date(liq.created_at).toLocaleDateString('es-ES', {
+                                      day: '2-digit',
+                                      month: 'short',
+                                    })}
+                                    )
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        );
+                      })()}
 
                       <button
                         type="button"
@@ -2163,6 +2188,46 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       Cargando registros del ciclo seleccionado...
                     </div>
                   ) : null}
+
+                  {/* Resumen de Cierre cuando se consulta un Ciclo Liquidado */}
+                  {isViewingArchivedCycle && activeSelectedLiq && (
+                    <div className="mb-4 grid grid-cols-1 gap-2.5 rounded-xl border border-indigo-500/35 bg-indigo-950/25 p-3.5 sm:grid-cols-3">
+                      <div className="rounded-lg border border-slate-800/80 bg-slate-950/70 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-indigo-300">
+                          Saldo al Cierre ({activeSelectedLiq.numero_ciclo ? `Ciclo #${activeSelectedLiq.numero_ciclo}` : activeSelectedLiq.codigo_liquidacion})
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                          {formatAmount(Number(activeSelectedLiq.saldo_anterior ?? 0), activeSelectedLiq.moneda)}
+                        </p>
+                        <span className="text-[10px] text-slate-400">
+                          {Number(activeSelectedLiq.ciclo_pagos_count ?? reportSourceOrders.length)} pagos · Neto ciclo{' '}
+                          {formatAmount(Number(activeSelectedLiq.ciclo_neto_total ?? sumNeto), activeSelectedLiq.moneda)}
+                        </span>
+                      </div>
+                      <div className="rounded-lg border border-rose-500/25 bg-rose-950/20 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-rose-300">
+                          Monto Liquidado en este Ciclo
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-rose-400">
+                          -{formatAmount(Number(activeSelectedLiq.monto_liquidado ?? 0), activeSelectedLiq.moneda)}
+                        </p>
+                        <span className="text-[10px] text-slate-400">
+                          {activeSelectedLiq.codigo_liquidacion} · {formatDateTime(activeSelectedLiq.created_at)}
+                        </span>
+                      </div>
+                      <div className="rounded-lg border border-emerald-500/40 bg-emerald-950/35 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                          Saldo Restante tras Cierre
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                          {formatAmount(Number(activeSelectedLiq.saldo_restante ?? 0), activeSelectedLiq.moneda)}
+                        </p>
+                        <span className="text-[10px] text-emerald-300/80">
+                          Transferido como saldo inicial al siguiente ciclo
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Resumen de Balance Acumulado: Conciliado - Liquidado = Saldo Pendiente */}
                   {!isViewingArchivedCycle && walletTotalLiquidadoUsd > 0 && (
@@ -2484,6 +2549,31 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           })
                         )}
                       </tbody>
+                      {filteredReportOrders.length > 0 && (
+                        <tfoot>
+                          <tr className="border-t-2 border-slate-700 bg-slate-950/90 text-xs font-bold">
+                            <td colSpan={5} className="px-3 py-3 text-slate-300">
+                              TOTALES {activeCycleLabel.toUpperCase()} ({filteredReportOrders.length} registro
+                              {filteredReportOrders.length === 1 ? '' : 's'} · {filteredConciliadosCount} conciliado
+                              {filteredConciliadosCount === 1 ? '' : 's'})
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-white">
+                              ${sumBruto.toFixed(2)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-rose-300">
+                              -${sumComision.toFixed(2)}
+                            </td>
+                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-emerald-400">
+                              +${sumNeto.toFixed(2)}
+                            </td>
+                            <td colSpan={2} className="px-3 py-3 text-right text-[11px] font-normal text-slate-400">
+                              {filteredReportOrders.length - filteredConciliadosCount > 0
+                                ? `${filteredReportOrders.length - filteredConciliadosCount} pend.`
+                                : '100% verificado'}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      )}
                     </table>
                   </div>
                 </section>
@@ -2519,6 +2609,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         <th className="px-4 py-2.5">Destinatario / Beneficiario</th>
                         <th className="px-4 py-2.5">Motivo / Concepto</th>
                         <th className="px-4 py-2.5">Método &amp; Referencia</th>
+                        <th className="px-4 py-2.5 text-right">Totales del Ciclo</th>
                         <th className="px-4 py-2.5 text-right">Monto Liquidado</th>
                         <th className="px-4 py-2.5 text-right">Saldo Restante</th>
                         <th className="px-4 py-2.5 text-right">Ciclo / Capturas</th>
@@ -2557,6 +2648,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                                 Ref: {liq.referencia_salida}
                               </div>
                             )}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-xs">
+                            <div className="font-bold text-emerald-400">
+                              Neto: {formatAmount(Number(liq.ciclo_neto_total ?? 0), liq.moneda)}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {Number(liq.ciclo_pagos_count ?? 0)} pagos · Bruto{' '}
+                              {formatAmount(Number(liq.ciclo_bruto_total ?? 0), liq.moneda)} · Com -
+                              {formatAmount(Number(liq.ciclo_comision_total ?? 0), liq.moneda)}
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-right font-mono font-bold text-rose-400 text-sm">
                             -{formatAmount(liq.monto_liquidado, liq.moneda)}

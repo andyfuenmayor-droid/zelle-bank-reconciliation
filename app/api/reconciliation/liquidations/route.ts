@@ -93,10 +93,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           l.comprobante_salida_base64,
           l.saldo_anterior,
           l.saldo_restante,
+          COALESCE(tx_agg.ciclo_pagos_count, 0)::int AS ciclo_pagos_count,
+          COALESCE(tx_agg.ciclo_bruto_total, 0)::numeric(12,2) AS ciclo_bruto_total,
+          COALESCE(tx_agg.ciclo_comision_total, 0)::numeric(12,2) AS ciclo_comision_total,
+          COALESCE(tx_agg.ciclo_neto_total, 0)::numeric(12,2) AS ciclo_neto_total,
           l.liquidado_por,
           l.notas_operador,
           l.created_at
         FROM liquidaciones_clientes l
+        LEFT JOIN (
+          SELECT
+            liquidacion_id,
+            COUNT(*)::int AS ciclo_pagos_count,
+            COALESCE(SUM(monto_bruto), 0)::numeric(12,2) AS ciclo_bruto_total,
+            COALESCE(SUM(monto_comision), 0)::numeric(12,2) AS ciclo_comision_total,
+            COALESCE(SUM(monto_neto), 0)::numeric(12,2) AS ciclo_neto_total
+          FROM financial_transactions_reconciliation
+          WHERE liquidacion_id IS NOT NULL
+            AND estado = 'CONCILIADO'
+            AND tipo_movimiento = 'RECIBIDO'
+          GROUP BY liquidacion_id
+        ) tx_agg ON tx_agg.liquidacion_id = l.id
       ) l
       ${whereClause}
       ORDER BY l.created_at DESC

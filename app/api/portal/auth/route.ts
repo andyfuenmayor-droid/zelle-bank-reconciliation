@@ -250,23 +250,40 @@ async function loadPostgresPortalSession(
       SELECT *
       FROM (
         SELECT
-          id,
-          codigo_liquidacion,
-          ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo,
-          cliente_id,
-          cliente_nombre,
-          monto_liquidado,
-          moneda,
-          destinatario_beneficiario,
-          motivo_concepto,
-          metodo_pago_salida,
-          referencia_salida,
-          saldo_anterior,
-          saldo_restante,
-          liquidado_por,
-          created_at
-        FROM liquidaciones_clientes
-        WHERE cliente_id = $1::uuid
+          l.id,
+          l.codigo_liquidacion,
+          ROW_NUMBER() OVER (PARTITION BY l.cliente_id ORDER BY l.created_at ASC, l.id ASC)::int AS numero_ciclo,
+          l.cliente_id,
+          l.cliente_nombre,
+          l.monto_liquidado,
+          l.moneda,
+          l.destinatario_beneficiario,
+          l.motivo_concepto,
+          l.metodo_pago_salida,
+          l.referencia_salida,
+          l.saldo_anterior,
+          l.saldo_restante,
+          COALESCE(tx_agg.ciclo_pagos_count, 0)::int AS ciclo_pagos_count,
+          COALESCE(tx_agg.ciclo_bruto_total, 0)::numeric(12,2) AS ciclo_bruto_total,
+          COALESCE(tx_agg.ciclo_comision_total, 0)::numeric(12,2) AS ciclo_comision_total,
+          COALESCE(tx_agg.ciclo_neto_total, 0)::numeric(12,2) AS ciclo_neto_total,
+          l.liquidado_por,
+          l.created_at
+        FROM liquidaciones_clientes l
+        LEFT JOIN (
+          SELECT
+            liquidacion_id,
+            COUNT(*)::int AS ciclo_pagos_count,
+            COALESCE(SUM(monto_bruto), 0)::numeric(12,2) AS ciclo_bruto_total,
+            COALESCE(SUM(monto_comision), 0)::numeric(12,2) AS ciclo_comision_total,
+            COALESCE(SUM(monto_neto), 0)::numeric(12,2) AS ciclo_neto_total
+          FROM financial_transactions_reconciliation
+          WHERE liquidacion_id IS NOT NULL
+            AND estado = 'CONCILIADO'
+            AND tipo_movimiento = 'RECIBIDO'
+          GROUP BY liquidacion_id
+        ) tx_agg ON tx_agg.liquidacion_id = l.id
+        WHERE l.cliente_id = $1::uuid
       ) ranked_liq
       ORDER BY created_at DESC
       LIMIT 50;

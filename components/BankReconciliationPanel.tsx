@@ -1288,6 +1288,76 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     });
   }, [alerts, platformFilter, movementFilter, statusFilter, searchQuery, selectedClientFilter, clients]);
 
+  const visibleTableTotals = useMemo(() => {
+    let conciliadosCount = 0;
+    let pendientesCount = 0;
+    let brutoAllUsd = 0;
+    let brutoConciliadoUsd = 0;
+    let comisionUsd = 0;
+    let netoUsd = 0;
+    let brutoPendienteUsd = 0;
+
+    let brutoAllUsdt = 0;
+    let brutoConciliadoUsdt = 0;
+    let comisionUsdt = 0;
+    let netoUsdt = 0;
+    let brutoPendienteUsdt = 0;
+
+    for (const item of filteredAlerts) {
+      if (item.estado === 'DESCARTADO') {
+        continue;
+      }
+      const isUsdt =
+        item.moneda === 'USDT' || item.plataforma.startsWith('BINANCE');
+      const bruto = Number(item.monto_bruto ?? 0);
+      const com = Number(item.monto_comision ?? 0);
+      const neto = Number(item.monto_neto ?? 0);
+
+      if (isUsdt) {
+        brutoAllUsdt += bruto;
+      } else {
+        brutoAllUsd += bruto;
+      }
+
+      if (item.estado === 'CONCILIADO') {
+        conciliadosCount += 1;
+        if (isUsdt) {
+          brutoConciliadoUsdt += bruto;
+          comisionUsdt += com;
+          netoUsdt += neto;
+        } else {
+          brutoConciliadoUsd += bruto;
+          comisionUsd += com;
+          netoUsd += neto;
+        }
+      } else {
+        pendientesCount += 1;
+        if (isUsdt) {
+          brutoPendienteUsdt += bruto;
+        } else {
+          brutoPendienteUsd += bruto;
+        }
+      }
+    }
+
+    const r = (v: number) => Math.round(v * 100) / 100;
+    return {
+      totalRows: filteredAlerts.length,
+      conciliadosCount,
+      pendientesCount,
+      brutoAllUsd: r(brutoAllUsd),
+      brutoConciliadoUsd: r(brutoConciliadoUsd),
+      comisionUsd: r(comisionUsd),
+      netoUsd: r(netoUsd),
+      brutoPendienteUsd: r(brutoPendienteUsd),
+      brutoAllUsdt: r(brutoAllUsdt),
+      brutoConciliadoUsdt: r(brutoConciliadoUsdt),
+      comisionUsdt: r(comisionUsdt),
+      netoUsdt: r(netoUsdt),
+      brutoPendienteUsdt: r(brutoPendienteUsdt),
+    };
+  }, [filteredAlerts]);
+
   const receivedAlertsCount = useMemo(
     () => alerts.filter((a) => a.tipo_movimiento === 'RECIBIDO').length,
     [alerts]
@@ -3920,7 +3990,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       }}
                       className="bg-slate-950 text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer"
                     >
-                      <option value="ACTIVO">Ciclo Actual (Activo)</option>
+                      <option value="ACTIVO">
+                        Ciclo Actual (Activo) · {financialMetrics.pagosConciliadosCount} conc. · Neto{' '}
+                        {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')}
+                      </option>
                       <option value="TODOS">Todos los Ciclos (Activo + Historial)</option>
                       {liquidations
                         .filter(
@@ -3929,17 +4002,24 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             selectedClientFilter === 'SIN_ASIGNAR' ||
                             l.cliente_id === selectedClientFilter
                         )
-                        .map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {l.numero_ciclo ? `Ciclo #${l.numero_ciclo}` : 'Ciclo'} ·{' '}
-                            {l.cliente_nombre} · {l.codigo_liquidacion} (
-                            {new Date(l.created_at).toLocaleDateString('es-ES', {
-                              day: '2-digit',
-                              month: 'short',
-                            })}
-                            )
-                          </option>
-                        ))}
+                        .map((l) => {
+                          const pagosCount = Number(l.ciclo_pagos_count ?? 0);
+                          const netoTotal = Number(l.ciclo_neto_total ?? 0);
+                          const liqTotal = Number(l.monto_liquidado ?? 0);
+                          return (
+                            <option key={l.id} value={l.id}>
+                              {l.numero_ciclo ? `Ciclo #${l.numero_ciclo}` : 'Ciclo'} ·{' '}
+                              {l.cliente_nombre} · {pagosCount} pagos · Neto{' '}
+                              {formatMoney(netoTotal, l.moneda)} · Liq -
+                              {formatMoney(liqTotal, l.moneda)} (
+                              {new Date(l.created_at).toLocaleDateString('es-ES', {
+                                day: '2-digit',
+                                month: 'short',
+                              })}
+                              )
+                            </option>
+                          );
+                        })}
                     </select>
                   </div>
 
@@ -3988,6 +4068,178 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </button>
                 </div>
               </div>
+
+              {/* Resumen de Totales del Ciclo Seleccionado (y subtotal filtrado en vista) */}
+              {(() => {
+                const selectedCycleLiq =
+                  selectedCycleFilter !== 'ACTIVO' &&
+                  selectedCycleFilter !== 'TODOS'
+                    ? liquidations.find((l) => l.id === selectedCycleFilter) ?? null
+                    : null;
+
+                if (selectedCycleLiq) {
+                  const isUsdtCycle = selectedCycleLiq.moneda === 'USDT';
+                  const cyclePagos =
+                    Number(selectedCycleLiq.ciclo_pagos_count ?? 0) || alerts.length;
+                  const cycleBruto = Number(selectedCycleLiq.ciclo_bruto_total ?? 0);
+                  const cycleComision = Number(selectedCycleLiq.ciclo_comision_total ?? 0);
+                  const cycleNeto = Number(selectedCycleLiq.ciclo_neto_total ?? 0);
+                  const viewBruto = isUsdtCycle
+                    ? visibleTableTotals.brutoConciliadoUsdt
+                    : visibleTableTotals.brutoConciliadoUsd;
+                  const viewCom = isUsdtCycle
+                    ? visibleTableTotals.comisionUsdt
+                    : visibleTableTotals.comisionUsd;
+                  const viewNeto = isUsdtCycle
+                    ? visibleTableTotals.netoUsdt
+                    : visibleTableTotals.netoUsd;
+                  const isSubFiltered = visibleTableTotals.totalRows !== cyclePagos;
+
+                  return (
+                    <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-indigo-500/25 pt-3 sm:grid-cols-5">
+                      <div className="rounded-lg border border-indigo-500/35 bg-indigo-950/30 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-indigo-300">
+                          {selectedCycleLiq.numero_ciclo
+                            ? `Ciclo #${selectedCycleLiq.numero_ciclo} · ${selectedCycleLiq.cliente_nombre}`
+                            : selectedCycleLiq.cliente_nombre}
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                          {cyclePagos} pagos
+                        </p>
+                        <span className="text-[10px] text-indigo-200/80">
+                          {isSubFiltered
+                            ? `En vista: ${visibleTableTotals.totalRows} de ${cyclePagos}`
+                            : selectedCycleLiq.codigo_liquidacion}
+                        </span>
+                      </div>
+
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-slate-400">
+                          Bruto del Ciclo
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-slate-100">
+                          {formatMoney(cycleBruto, selectedCycleLiq.moneda)}
+                        </p>
+                        {isSubFiltered && (
+                          <span className="text-[10px] text-amber-300">
+                            En vista: {formatMoney(viewBruto, selectedCycleLiq.moneda)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-slate-400">
+                          Comisión del Ciclo
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-violet-300">
+                          -{formatMoney(cycleComision, selectedCycleLiq.moneda)}
+                        </p>
+                        {isSubFiltered && (
+                          <span className="text-[10px] text-amber-300">
+                            En vista: -{formatMoney(viewCom, selectedCycleLiq.moneda)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                          Neto del Ciclo
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                          {formatMoney(cycleNeto, selectedCycleLiq.moneda)}
+                        </p>
+                        {isSubFiltered && (
+                          <span className="text-[10px] text-amber-300">
+                            En vista: {formatMoney(viewNeto, selectedCycleLiq.moneda)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-rose-500/30 bg-rose-950/20 px-3 py-2">
+                        <span className="text-[10px] font-semibold uppercase text-rose-300">
+                          Liquidado / Restante
+                        </span>
+                        <p className="mt-0.5 font-mono text-sm font-bold text-rose-400">
+                          -{formatMoney(Number(selectedCycleLiq.monto_liquidado ?? 0), selectedCycleLiq.moneda)}
+                        </p>
+                        <span className="text-[10px] font-mono text-emerald-300">
+                          Restante: {formatMoney(Number(selectedCycleLiq.saldo_restante ?? 0), selectedCycleLiq.moneda)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const hasUsdtRows =
+                  visibleTableTotals.brutoAllUsdt > 0 ||
+                  visibleTableTotals.netoUsdt > 0;
+                const activeCycleTitle =
+                  selectedCycleFilter === 'TODOS'
+                    ? 'Todos los Ciclos (En Vista)'
+                    : 'Ciclo Actual (En Vista)';
+
+                return (
+                  <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-slate-800/70 pt-3 sm:grid-cols-4">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                      <span className="text-[10px] font-semibold uppercase text-slate-400">
+                        {activeCycleTitle}
+                      </span>
+                      <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                        {visibleTableTotals.conciliadosCount} conciliados
+                      </p>
+                      <span className="text-[10px] text-slate-400">
+                        {visibleTableTotals.totalRows} filas · {visibleTableTotals.pendientesCount} por conciliar
+                      </span>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                      <span className="text-[10px] font-semibold uppercase text-slate-400">
+                        Bruto Conciliado (Vista)
+                      </span>
+                      <p className="mt-0.5 font-mono text-sm font-bold text-slate-100">
+                        {formatMoney(visibleTableTotals.brutoConciliadoUsd, 'USD')}
+                      </p>
+                      {hasUsdtRows ? (
+                        <span className="text-[10px] font-mono text-amber-300">
+                          {formatMoney(visibleTableTotals.brutoConciliadoUsdt, 'USDT')}
+                        </span>
+                      ) : visibleTableTotals.brutoPendienteUsd > 0 ? (
+                        <span className="text-[10px] text-sky-300">
+                          Sin conciliar: {formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
+                      <span className="text-[10px] font-semibold uppercase text-slate-400">
+                        Comisión Retenida (Vista)
+                      </span>
+                      <p className="mt-0.5 font-mono text-sm font-bold text-violet-300">
+                        -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
+                      </p>
+                      {hasUsdtRows && (
+                        <span className="text-[10px] font-mono text-violet-300/80">
+                          -{formatMoney(visibleTableTotals.comisionUsdt, 'USDT')}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
+                      <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                        Neto Acreditado (Vista)
+                      </span>
+                      <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                        {formatMoney(visibleTableTotals.netoUsd, 'USD')}
+                      </p>
+                      {hasUsdtRows && (
+                        <span className="text-[10px] font-mono text-amber-300">
+                          {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </section>
 
             {/* Barra de Acciones Masivas por Lote (Bulk Actions) */}
@@ -4677,6 +4929,47 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       })
                     )}
                   </tbody>
+                  {filteredAlerts.length > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-slate-700 bg-slate-950/90 text-xs font-bold">
+                        <td colSpan={9} className="px-3 py-3 text-slate-300">
+                          TOTALES EN VISTA ({visibleTableTotals.totalRows} registro
+                          {visibleTableTotals.totalRows === 1 ? '' : 's'} ·{' '}
+                          {visibleTableTotals.conciliadosCount} conciliado
+                          {visibleTableTotals.conciliadosCount === 1 ? '' : 's'})
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-white">
+                          <div>{formatMoney(visibleTableTotals.brutoAllUsd, 'USD')}</div>
+                          {visibleTableTotals.brutoAllUsdt > 0 && (
+                            <div className="text-[11px] text-amber-300">
+                              {formatMoney(visibleTableTotals.brutoAllUsdt, 'USDT')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-violet-300">
+                          <div>-{formatMoney(visibleTableTotals.comisionUsd, 'USD')}</div>
+                          {visibleTableTotals.comisionUsdt > 0 && (
+                            <div className="text-[11px] text-violet-300/80">
+                              -{formatMoney(visibleTableTotals.comisionUsdt, 'USDT')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-emerald-400">
+                          <div>{formatMoney(visibleTableTotals.netoUsd, 'USD')}</div>
+                          {visibleTableTotals.netoUsdt > 0 && (
+                            <div className="text-[11px] text-amber-300">
+                              {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
+                            </div>
+                          )}
+                        </td>
+                        <td colSpan={2} className="px-2.5 py-3 text-right text-[11px] font-normal text-slate-400">
+                          {visibleTableTotals.brutoPendienteUsd > 0
+                            ? `Por conciliar: ${formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}`
+                            : '100% conciliado en vista'}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             </section>
@@ -5262,6 +5555,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <th className="px-4 py-3">Destinatario / Beneficiario</th>
                       <th className="px-4 py-3">Motivo / Concepto</th>
                       <th className="px-4 py-3">Método &amp; Referencia</th>
+                      <th className="px-4 py-3 text-right">Totales del Ciclo</th>
                       <th className="px-4 py-3 text-right">Monto Liquidado</th>
                       <th className="px-4 py-3 text-right">Saldo Antes → Después</th>
                       <th className="px-4 py-3 text-center">Operador</th>
@@ -5272,7 +5566,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     {filteredLiquidations.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={9}
+                          colSpan={10}
                           className="px-6 py-12 text-center text-slate-400"
                         >
                           No se encontraron liquidaciones registradas. Haz clic en &quot;+ Registrar Liquidación&quot; para liquidar el saldo de un cliente.
@@ -5317,6 +5611,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 Ref: {liq.referencia_salida}
                               </div>
                             )}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3.5 text-right font-mono text-xs">
+                            <div className="font-bold text-emerald-400">
+                              Neto: {formatMoney(Number(liq.ciclo_neto_total ?? 0), liq.moneda)}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {Number(liq.ciclo_pagos_count ?? 0)} pagos · Bruto{' '}
+                              {formatMoney(Number(liq.ciclo_bruto_total ?? 0), liq.moneda)} · Com -
+                              {formatMoney(Number(liq.ciclo_comision_total ?? 0), liq.moneda)}
+                            </div>
                           </td>
                           <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-400 text-sm">
                             -{formatMoney(liq.monto_liquidado, liq.moneda)}

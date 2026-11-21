@@ -303,6 +303,10 @@ export interface ClientLiquidationRecord {
   comprobante_salida_base64?: string | null;
   saldo_anterior: number;
   saldo_restante: number;
+  ciclo_pagos_count?: number;
+  ciclo_bruto_total?: number;
+  ciclo_comision_total?: number;
+  ciclo_neto_total?: number;
   liquidado_por: string;
   notas_operador?: string | null;
   created_at: string;
