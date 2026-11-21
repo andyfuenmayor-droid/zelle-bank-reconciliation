@@ -439,6 +439,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           codigo_liquidacion: string | null;
           liquidacion_fecha: string | null;
           codigo_orden: string | null;
+          orden_referencia_reportada: string | null;
+          orden_remitente_reportado: string | null;
         }>(
           `
           SELECT
@@ -452,7 +454,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             t.liquidado_at,
             l.codigo_liquidacion,
             l.created_at AS liquidacion_fecha,
-            o.codigo_orden
+            o.codigo_orden,
+            o.referencia_reportada AS orden_referencia_reportada,
+            COALESCE(o.remitente_reportado, o.nombre_remitente_reportado) AS orden_remitente_reportado
           FROM financial_transactions_reconciliation t
           LEFT JOIN liquidaciones_clientes l
             ON l.id = t.liquidacion_id
@@ -498,7 +502,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             }.`,
           ];
           if (dupTx.codigo_orden) {
-            details.push(`• Orden asociada: ${dupTx.codigo_orden}`);
+            const extraOrderMeta: string[] = [];
+            if (
+              dupTx.orden_referencia_reportada &&
+              dupTx.orden_referencia_reportada.toUpperCase() !==
+                dupTx.referencia.toUpperCase()
+            ) {
+              extraOrderMeta.push(`Ref. en orden: ${dupTx.orden_referencia_reportada}`);
+            }
+            if (dupTx.orden_remitente_reportado) {
+              extraOrderMeta.push(`Remitente: ${dupTx.orden_remitente_reportado}`);
+            }
+            details.push(
+              `• Orden asociada: ${dupTx.codigo_orden}${
+                extraOrderMeta.length > 0 ? ` (${extraOrderMeta.join(' · ')})` : ''
+              }`
+            );
           }
           if (fechaCorreoStr) {
             details.push(`• Fecha del correo bancario: ${fechaCorreoStr}`);

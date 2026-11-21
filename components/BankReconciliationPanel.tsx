@@ -627,6 +627,77 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     message: string;
   } | null>(null);
 
+  // Modal de Auditoría de Ciclo Cerrado (Pagos y Capturas de una Liquidación)
+  const [inspectedLiquidation, setInspectedLiquidation] =
+    useState<ClientLiquidationRecord | null>(null);
+  const [adminLiqItems, setAdminLiqItems] = useState<PendingPaymentOrder[]>([]);
+  const [adminLiqSummary, setAdminLiqSummary] = useState<{
+    totalCount: number;
+    portalCount: number;
+    directCount: number;
+    totalBruto: number;
+    totalComision: number;
+    totalNeto: number;
+  } | null>(null);
+  const [isLoadingAdminLiqItems, setIsLoadingAdminLiqItems] =
+    useState<boolean>(false);
+  const [adminLiqItemsError, setAdminLiqItemsError] = useState<string | null>(
+    null
+  );
+  const [adminLiqSearch, setAdminLiqSearch] = useState<string>('');
+
+  const openAdminLiquidationDetail = async (
+    liq: ClientLiquidationRecord
+  ): Promise<void> => {
+    setInspectedLiquidation(liq);
+    setAdminLiqItems([]);
+    setAdminLiqSummary(null);
+    setAdminLiqItemsError(null);
+    setAdminLiqSearch('');
+    setIsLoadingAdminLiqItems(true);
+
+    try {
+      const res = await fetch(
+        `/api/reconciliation/liquidations/items?liquidacionId=${encodeURIComponent(
+          liq.id
+        )}`,
+        {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: buildScopeHeaders(false),
+        }
+      );
+      const data = (await res.json()) as {
+        ok: boolean;
+        items?: PendingPaymentOrder[];
+        summary?: {
+          totalCount: number;
+          portalCount: number;
+          directCount: number;
+          totalBruto: number;
+          totalComision: number;
+          totalNeto: number;
+        };
+        error?: string;
+      };
+      if (!res.ok || !data.ok) {
+        throw new Error(
+          data.error ?? 'No se pudo cargar el detalle de pagos de esta liquidación.'
+        );
+      }
+      setAdminLiqItems(data.items ?? []);
+      setAdminLiqSummary(data.summary ?? null);
+    } catch (err: unknown) {
+      setAdminLiqItemsError(
+        err instanceof Error
+          ? err.message
+          : 'Error consultando el historial archivado.'
+      );
+    } finally {
+      setIsLoadingAdminLiqItems(false);
+    }
+  };
+
   // Modal Crear Orden Esperada
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] =
     useState<boolean>(false);
@@ -5127,13 +5198,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <th className="px-4 py-3 text-right">Monto Liquidado</th>
                       <th className="px-4 py-3 text-right">Saldo Antes → Después</th>
                       <th className="px-4 py-3 text-center">Operador</th>
+                      <th className="px-4 py-3 text-right">Archivo / Capturas</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/70">
                     {filteredLiquidations.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={8}
+                          colSpan={9}
                           className="px-6 py-12 text-center text-slate-400"
                         >
                           No se encontraron liquidaciones registradas. Haz clic en &quot;+ Registrar Liquidación&quot; para liquidar el saldo de un cliente.
@@ -5187,6 +5259,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           <td className="px-4 py-3.5 text-center text-xs text-slate-400">
                             {liq.liquidado_por || 'ADMIN'}
                           </td>
+                          <td className="px-4 py-3.5 text-right">
+                            <button
+                              type="button"
+                              onClick={() => void openAdminLiquidationDetail(liq)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 cursor-pointer"
+                            >
+                              <ImageIcon className="h-3.5 w-3.5 text-indigo-300" />
+                              Ver Pagos y Capturas
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -5194,6 +5276,237 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </table>
               </div>
             </div>
+
+            {/* Modal Auditoría de Ciclo Cerrado (Admin) */}
+            <Dialog.Root
+              open={inspectedLiquidation !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setInspectedLiquidation(null);
+                }
+              }}
+            >
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-40 flex max-h-[90vh] w-[95vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-indigo-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4">
+                    <div>
+                      <Dialog.Title className="flex items-center gap-2 text-lg font-bold text-white">
+                        <Coins className="h-5 w-5 text-indigo-400" />
+                        Detalle del Ciclo Liquidado · {inspectedLiquidation?.codigo_liquidacion} ({inspectedLiquidation?.cliente_nombre})
+                      </Dialog.Title>
+                      <Dialog.Description className="mt-1 text-xs text-slate-400">
+                        Liquidado:{' '}
+                        <strong className="text-rose-400">
+                          -{inspectedLiquidation ? formatMoney(inspectedLiquidation.monto_liquidado, inspectedLiquidation.moneda) : ''}
+                        </strong>{' '}
+                        · Saldo Antes → Después:{' '}
+                        <span className="font-mono text-slate-300">
+                          {inspectedLiquidation ? formatMoney(inspectedLiquidation.saldo_anterior, inspectedLiquidation.moneda) : ''}
+                        </span>{' '}
+                        →{' '}
+                        <strong className="font-mono text-emerald-400">
+                          {inspectedLiquidation ? formatMoney(inspectedLiquidation.saldo_restante, inspectedLiquidation.moneda) : ''}
+                        </strong>
+                      </Dialog.Description>
+                    </div>
+                    <Dialog.Close asChild>
+                      <button
+                        type="button"
+                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </Dialog.Close>
+                  </div>
+
+                  {isLoadingAdminLiqItems ? (
+                    <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-300">
+                      <RefreshCw className="h-5 w-5 animate-spin text-indigo-400" />
+                      Cargando pagos y capturas archivadas...
+                    </div>
+                  ) : adminLiqItemsError ? (
+                    <div className="my-6 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-xs text-rose-200">
+                      {adminLiqItemsError}
+                    </div>
+                  ) : (
+                    (() => {
+                      const q = adminLiqSearch.trim().toLowerCase();
+                      const filtered = q
+                        ? adminLiqItems.filter(
+                            (item) =>
+                              item.codigo_orden.toLowerCase().includes(q) ||
+                              (item.remitente_reportado || '').toLowerCase().includes(q) ||
+                              (item.tx_remitente_correo || '').toLowerCase().includes(q) ||
+                              (item.referencia_reportada || '').toLowerCase().includes(q) ||
+                              (item.tx_referencia_correo || '').toLowerCase().includes(q)
+                          )
+                        : adminLiqItems;
+
+                      return (
+                        <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+                          {adminLiqSummary && (
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                                  Pagos del Ciclo
+                                </span>
+                                <p className="mt-1 font-mono text-lg font-bold text-white">
+                                  {adminLiqSummary.totalCount}
+                                </p>
+                                <span className="text-[11px] text-slate-400">
+                                  {adminLiqSummary.portalCount} capturas · {adminLiqSummary.directCount} directos
+                                </span>
+                              </div>
+                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                                  Bruto Archivado
+                                </span>
+                                <p className="mt-1 font-mono text-lg font-bold text-white">
+                                  {formatMoney(adminLiqSummary.totalBruto, inspectedLiquidation?.moneda ?? 'USD')}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
+                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                                  Comisión Retenida
+                                </span>
+                                <p className="mt-1 font-mono text-lg font-bold text-violet-300">
+                                  -{formatMoney(adminLiqSummary.totalComision, inspectedLiquidation?.moneda ?? 'USD')}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3">
+                                <span className="text-[11px] font-semibold uppercase text-emerald-300">
+                                  Neto Acreditado
+                                </span>
+                                <p className="mt-1 font-mono text-lg font-bold text-emerald-400">
+                                  {formatMoney(adminLiqSummary.totalNeto, inspectedLiquidation?.moneda ?? 'USD')}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between gap-3">
+                            <input
+                              type="text"
+                              value={adminLiqSearch}
+                              onChange={(e) => setAdminLiqSearch(e.target.value)}
+                              placeholder="Buscar por remitente, ORD-, referencia bancaria o reportada..."
+                              className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                            />
+                            <span className="text-xs text-slate-400">
+                              Mostrando {filtered.length} de {adminLiqItems.length} registros
+                            </span>
+                          </div>
+
+                          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-800">
+                            <table className="w-full border-collapse text-left text-xs">
+                              <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                                <tr>
+                                  <th className="px-3 py-2.5">#</th>
+                                  <th className="px-3 py-2.5">Orden &amp; Fecha Correo</th>
+                                  <th className="px-3 py-2.5">Remitente (Correo / Orden)</th>
+                                  <th className="px-3 py-2.5">Referencia (Banco / Orden)</th>
+                                  <th className="px-3 py-2.5 text-right">Bruto</th>
+                                  <th className="px-3 py-2.5 text-right">Comisión</th>
+                                  <th className="px-3 py-2.5 text-right">Neto</th>
+                                  <th className="px-3 py-2.5 text-right">Captura</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800/70 bg-slate-950/60">
+                                {filtered.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={8} className="px-6 py-8 text-center text-slate-400">
+                                      No se encontraron pagos en este ciclo con ese criterio.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  filtered.map((o, idx) => {
+                                    const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
+                                    const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                                    const c = Number(o.tx_monto_comision ?? 0);
+                                    const n = Number(o.tx_monto_neto ?? 0);
+                                    return (
+                                      <tr key={o.id} className="hover:bg-slate-800/40">
+                                        <td className="px-3 py-2.5 font-mono text-slate-500">
+                                          {idx + 1}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5">
+                                          <span className="font-mono font-bold text-sky-300">
+                                            {o.codigo_orden}
+                                          </span>
+                                          {isDirect && (
+                                            <span className="ml-1.5 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.2 text-[9px] font-bold uppercase text-indigo-300">
+                                              Directa
+                                            </span>
+                                          )}
+                                          <div className="text-[10px] text-slate-400">
+                                            {formatDateTime(o.tx_fecha_correo ?? o.created_at)}
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div className="font-semibold text-white">
+                                            {o.tx_remitente_correo || o.remitente_reportado}
+                                          </div>
+                                          {o.tx_remitente_correo &&
+                                            o.remitente_reportado &&
+                                            o.tx_remitente_correo.toLowerCase() !==
+                                              o.remitente_reportado.toLowerCase() && (
+                                              <div className="text-[10px] text-slate-400">
+                                                Reportado: {o.remitente_reportado}
+                                              </div>
+                                            )}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5 font-mono">
+                                          <div className="text-slate-200">
+                                            {o.tx_referencia_correo || o.referencia_reportada || 'SIN-REF'}
+                                          </div>
+                                          {o.tx_referencia_correo &&
+                                            o.referencia_reportada &&
+                                            o.tx_referencia_correo !== o.referencia_reportada && (
+                                              <div className="text-[10px] text-slate-400">
+                                                En orden: {o.referencia_reportada}
+                                              </div>
+                                            )}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-white">
+                                          {formatMoney(b, o.moneda)}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-violet-300">
+                                          -{formatMoney(c, o.moneda)}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-emerald-400">
+                                          {formatMoney(n, o.moneda)}
+                                        </td>
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                                          {o.has_capture || o.comprobante_base64 ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => void openLightboxForOrder(o)}
+                                              className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2 py-1 text-[11px] font-semibold text-sky-300 hover:bg-sky-500/25 cursor-pointer"
+                                            >
+                                              <ImageIcon className="h-3 w-3" />
+                                              Ver Captura
+                                            </button>
+                                          ) : (
+                                            <span className="text-[10px] text-indigo-300/80">
+                                              Sin captura (Directa)
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()
+                  )}
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
           </div>
         )}
 

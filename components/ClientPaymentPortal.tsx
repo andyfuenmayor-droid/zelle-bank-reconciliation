@@ -247,6 +247,74 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
   const [copiedSummaryReport, setCopiedSummaryReport] = useState<boolean>(false);
 
+  // Modal de detalle de ciclos pasados / liquidaciones cerradas (con acceso a capturas archivadas)
+  const [selectedLiquidationModal, setSelectedLiquidationModal] =
+    useState<ClientLiquidationRecord | null>(null);
+  const [liqDetailItems, setLiqDetailItems] = useState<PendingPaymentOrder[]>([]);
+  const [liqDetailSummary, setLiqDetailSummary] = useState<{
+    totalCount: number;
+    portalCount: number;
+    directCount: number;
+    totalBruto: number;
+    totalComision: number;
+    totalNeto: number;
+  } | null>(null);
+  const [isLoadingLiqDetail, setIsLoadingLiqDetail] = useState<boolean>(false);
+  const [liqDetailError, setLiqDetailError] = useState<string | null>(null);
+  const [liqDetailSearch, setLiqDetailSearch] = useState<string>('');
+  const [copiedLiqDetailSummary, setCopiedLiqDetailSummary] =
+    useState<boolean>(false);
+
+  const openLiquidationCycleDetail = useCallback(
+    async (liq: ClientLiquidationRecord): Promise<void> => {
+      setSelectedLiquidationModal(liq);
+      setLiqDetailItems([]);
+      setLiqDetailSummary(null);
+      setLiqDetailError(null);
+      setLiqDetailSearch('');
+      setCopiedLiqDetailSummary(false);
+      setIsLoadingLiqDetail(true);
+
+      try {
+        const res = await fetch(
+          `/api/reconciliation/liquidations/items?liquidacionId=${encodeURIComponent(
+            liq.id
+          )}`,
+          { cache: 'no-store', credentials: 'same-origin' }
+        );
+        const data = (await res.json()) as {
+          ok: boolean;
+          items?: PendingPaymentOrder[];
+          summary?: {
+            totalCount: number;
+            portalCount: number;
+            directCount: number;
+            totalBruto: number;
+            totalComision: number;
+            totalNeto: number;
+          };
+          error?: string;
+        };
+        if (!res.ok || !data.ok) {
+          throw new Error(
+            data.error ?? 'No se pudo cargar el historial del ciclo liquidado.'
+          );
+        }
+        setLiqDetailItems(data.items ?? []);
+        setLiqDetailSummary(data.summary ?? null);
+      } catch (err: unknown) {
+        setLiqDetailError(
+          err instanceof Error
+            ? err.message
+            : 'Error cargando pagos archivados del ciclo.'
+        );
+      } finally {
+        setIsLoadingLiqDetail(false);
+      }
+    },
+    []
+  );
+
   const applySelectedAccount = useCallback((acc: AssignedReceivingAccount) => {
     setSelectedAccountId(acc.id);
     setPlataforma(acc.plataforma);
@@ -2335,6 +2403,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         <th className="px-4 py-2.5">Método &amp; Referencia</th>
                         <th className="px-4 py-2.5 text-right">Monto Liquidado</th>
                         <th className="px-4 py-2.5 text-right">Saldo Restante</th>
+                        <th className="px-4 py-2.5 text-right">Ciclo / Capturas</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/70">
@@ -2370,6 +2439,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400 text-xs">
                             {formatAmount(liq.saldo_restante, liq.moneda)}
                           </td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => void openLiquidationCycleDetail(liq)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 cursor-pointer"
+                            >
+                              <Eye className="h-3.5 w-3.5 text-indigo-300" />
+                              Ver Pagos y Capturas
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2379,6 +2458,292 @@ export default function ClientPaymentPortal(): React.JSX.Element {
             </section>
           </div>
         )}
+
+        {/* Modal de Archivo Histórico: Pagos y Capturas de un Ciclo Liquidado */}
+        <Dialog.Root
+          open={selectedLiquidationModal !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelectedLiquidationModal(null);
+            }
+          }}
+        >
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-40 flex max-h-[90vh] w-[95vw] max-w-5xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-indigo-500/35 bg-slate-900 p-5 text-slate-100 shadow-2xl">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                  <Dialog.Title className="flex items-center gap-2 text-base font-bold text-white">
+                    <Coins className="h-5 w-5 text-indigo-400" />
+                    Archivo de Ciclo Cerrado · {selectedLiquidationModal?.codigo_liquidacion}
+                  </Dialog.Title>
+                  <Dialog.Description className="mt-0.5 text-xs text-slate-400">
+                    Liquidado el {formatDateTime(selectedLiquidationModal?.created_at)} · Monto pagado:{' '}
+                    <strong className="text-rose-300">
+                      -{selectedLiquidationModal ? formatAmount(selectedLiquidationModal.monto_liquidado, selectedLiquidationModal.moneda) : ''}
+                    </strong>{' '}
+                    · Saldo restante tras cierre:{' '}
+                    <strong className="text-emerald-400">
+                      {selectedLiquidationModal ? formatAmount(selectedLiquidationModal.saldo_restante, selectedLiquidationModal.moneda) : ''}
+                    </strong>
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button
+                    type="button"
+                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {isLoadingLiqDetail ? (
+                <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-300">
+                  <Loader2 className="h-5 w-5 animate-spin text-indigo-400" />
+                  Cargando pagos y capturas archivadas de este ciclo...
+                </div>
+              ) : liqDetailError ? (
+                <div className="my-6 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-xs text-rose-200">
+                  {liqDetailError}
+                </div>
+              ) : (
+                (() => {
+                  const q = liqDetailSearch.trim().toLowerCase();
+                  const filteredItems = q
+                    ? liqDetailItems.filter(
+                        (item) =>
+                          item.codigo_orden.toLowerCase().includes(q) ||
+                          (item.remitente_reportado || '').toLowerCase().includes(q) ||
+                          (item.tx_remitente_correo || '').toLowerCase().includes(q) ||
+                          (item.referencia_reportada || '').toLowerCase().includes(q) ||
+                          (item.tx_referencia_correo || '').toLowerCase().includes(q)
+                      )
+                    : liqDetailItems;
+
+                  const handleCopyCycleSummary = async (): Promise<void> => {
+                    if (!selectedLiquidationModal) return;
+                    const lines: string[] = [
+                      `📁 ARCHIVO DE CICLO LIQUIDADO ${selectedLiquidationModal.codigo_liquidacion} - ${selectedLiquidationModal.cliente_nombre.toUpperCase()}`,
+                      `Fecha liquidación: ${formatDateTime(selectedLiquidationModal.created_at)} | Pagado: -${formatAmount(selectedLiquidationModal.monto_liquidado, selectedLiquidationModal.moneda)} | Saldo restante: ${formatAmount(selectedLiquidationModal.saldo_restante, selectedLiquidationModal.moneda)}`,
+                      `Pagos archivados: ${filteredItems.length} | Bruto: $${(liqDetailSummary?.totalBruto ?? 0).toFixed(2)} | Comisión: -$${(liqDetailSummary?.totalComision ?? 0).toFixed(2)} | Neto: $${(liqDetailSummary?.totalNeto ?? 0).toFixed(2)}`,
+                      `------------------------------------------------------------`,
+                    ];
+                    filteredItems.forEach((o, i) => {
+                      const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                      const n = Number(o.tx_monto_neto ?? 0);
+                      const dateLbl = formatDateTime(o.tx_fecha_correo ?? o.created_at);
+                      const refLbl = o.tx_referencia_correo || o.referencia_reportada || 'SIN-REF';
+                      const tag = o.origen_registro === 'ADMIN_DIRECTA' ? ' [Directa]' : '';
+                      lines.push(
+                        `${i + 1}. ${o.codigo_orden}${tag} | ${dateLbl} | ${o.tx_remitente_correo || o.remitente_reportado} | Ref: ${refLbl} | Bruto: $${b.toFixed(2)} | Neto: $${n.toFixed(2)}`
+                      );
+                    });
+                    try {
+                      await navigator.clipboard.writeText(lines.join('\n'));
+                      setCopiedLiqDetailSummary(true);
+                      window.setTimeout(() => setCopiedLiqDetailSummary(false), 2500);
+                    } catch {
+                      // ignore
+                    }
+                  };
+
+                  return (
+                    <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
+                      {liqDetailSummary && (
+                        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-2.5">
+                            <span className="text-[10px] font-semibold uppercase text-slate-400">
+                              Pagos Archivados
+                            </span>
+                            <p className="mt-0.5 font-mono text-base font-bold text-white">
+                              {liqDetailSummary.totalCount}
+                            </p>
+                            <span className="text-[10px] text-slate-400">
+                              {liqDetailSummary.portalCount} capturas · {liqDetailSummary.directCount} directos
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-2.5">
+                            <span className="text-[10px] font-semibold uppercase text-slate-400">
+                              Bruto del Ciclo
+                            </span>
+                            <p className="mt-0.5 font-mono text-base font-bold text-slate-100">
+                              ${liqDetailSummary.totalBruto.toFixed(2)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-2.5">
+                            <span className="text-[10px] font-semibold uppercase text-slate-400">
+                              Comisión Retenida
+                            </span>
+                            <p className="mt-0.5 font-mono text-base font-bold text-rose-400">
+                              -${liqDetailSummary.totalComision.toFixed(2)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-2.5">
+                            <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                              Neto del Ciclo
+                            </span>
+                            <p className="mt-0.5 font-mono text-base font-bold text-emerald-400">
+                              +${liqDetailSummary.totalNeto.toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <input
+                          type="text"
+                          value={liqDetailSearch}
+                          onChange={(e) => setLiqDetailSearch(e.target.value)}
+                          placeholder="Buscar por nombre, código ORD- o referencia (ej. WFCT22V5DCHJ)..."
+                          className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyCycleSummary()}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/15 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
+                        >
+                          {copiedLiqDetailSummary ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-emerald-400" />
+                              ¡Copiado!
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5 text-sky-400" />
+                              Copiar Resumen del Ciclo ({filteredItems.length})
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-800">
+                        <table className="w-full border-collapse text-left text-xs">
+                          <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                            <tr>
+                              <th className="px-3 py-2">#</th>
+                              <th className="px-3 py-2">Orden &amp; Fecha Correo</th>
+                              <th className="px-3 py-2">Remitente</th>
+                              <th className="px-3 py-2">Referencia (Banco / Orden)</th>
+                              <th className="px-3 py-2 text-right">Bruto</th>
+                              <th className="px-3 py-2 text-right">Comisión</th>
+                              <th className="px-3 py-2 text-right">Neto</th>
+                              <th className="px-3 py-2 text-right">Captura</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800/70 bg-slate-950/60">
+                            {filteredItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                                  No hay pagos archivados que coincidan con tu búsqueda.
+                                </td>
+                              </tr>
+                            ) : (
+                              filteredItems.map((o, idx) => {
+                                const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
+                                const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
+                                const c = Number(o.tx_monto_comision ?? 0);
+                                const n = Number(o.tx_monto_neto ?? 0);
+                                return (
+                                  <tr key={o.id} className="hover:bg-slate-800/40">
+                                    <td className="px-3 py-2 font-mono text-slate-500">
+                                      {idx + 1}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2">
+                                      <span className="font-mono font-bold text-sky-300">
+                                        {o.codigo_orden}
+                                      </span>
+                                      {isDirect && (
+                                        <span className="ml-1.5 rounded border border-indigo-500/40 bg-indigo-500/15 px-1 py-0.2 text-[9px] font-bold uppercase text-indigo-300">
+                                          Directa
+                                        </span>
+                                      )}
+                                      <div className="text-[10px] text-slate-400">
+                                        {formatDateTime(o.tx_fecha_correo ?? o.created_at)}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="font-semibold text-white">
+                                        {o.tx_remitente_correo || o.remitente_reportado}
+                                      </div>
+                                      {o.tx_remitente_correo &&
+                                        o.remitente_reportado &&
+                                        o.tx_remitente_correo.toLowerCase() !==
+                                          o.remitente_reportado.toLowerCase() && (
+                                          <div className="text-[10px] text-slate-400">
+                                            Reportado: {o.remitente_reportado}
+                                          </div>
+                                        )}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2 font-mono">
+                                      <div className="text-slate-200">
+                                        {o.tx_referencia_correo || o.referencia_reportada || 'SIN-REF'}
+                                      </div>
+                                      {o.tx_referencia_correo &&
+                                        o.referencia_reportada &&
+                                        o.tx_referencia_correo !== o.referencia_reportada && (
+                                          <div className="text-[10px] text-slate-400">
+                                            En orden: {o.referencia_reportada}
+                                          </div>
+                                        )}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-white">
+                                      ${b.toFixed(2)}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-rose-300">
+                                      -${c.toFixed(2)}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2 text-right font-mono font-bold text-emerald-400">
+                                      +${n.toFixed(2)}
+                                    </td>
+                                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                                      {o.has_capture || o.comprobante_base64 ? (
+                                        <button
+                                          type="button"
+                                          onClick={async () => {
+                                            if (!o.comprobante_base64) {
+                                              try {
+                                                const res = await fetch(
+                                                  `/api/reconciliation/capture?orderId=${encodeURIComponent(o.id)}`,
+                                                  { credentials: 'same-origin' }
+                                                );
+                                                if (res.ok) {
+                                                  const capData = await res.json();
+                                                  if (capData.comprobante_base64) {
+                                                    o.comprobante_base64 = capData.comprobante_base64;
+                                                  }
+                                                }
+                                              } catch {
+                                                // ignore
+                                              }
+                                            }
+                                            setPreviewOrder({ ...o });
+                                          }}
+                                          className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-slate-800"
+                                        >
+                                          <Eye className="h-3 w-3" />
+                                          Ver
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10px] text-indigo-300/80">
+                                          Admin Directa
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()
+              )}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
 
         {/* Modal Lightbox para ver la captura subida por el cliente */}
         <Dialog.Root
@@ -2390,7 +2755,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm" />
             <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-5 text-slate-100 shadow-2xl">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <Dialog.Title className="text-base font-bold text-white">
