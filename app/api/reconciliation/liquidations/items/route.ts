@@ -63,24 +63,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const liqRes = adminSession
       ? await dbQuery<ClientLiquidationRecord>(
           `
-          SELECT
-            id,
-            codigo_liquidacion,
-            negocio_id,
-            cliente_id,
-            cliente_nombre,
-            monto_liquidado,
-            moneda,
-            destinatario_beneficiario,
-            motivo_concepto,
-            metodo_pago_salida,
-            referencia_salida,
-            saldo_anterior,
-            saldo_restante,
-            liquidado_por,
-            notas_operador,
-            created_at
-          FROM liquidaciones_clientes
+          SELECT *
+          FROM (
+            SELECT
+              id,
+              codigo_liquidacion,
+              ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo,
+              negocio_id,
+              cliente_id,
+              cliente_nombre,
+              monto_liquidado,
+              moneda,
+              destinatario_beneficiario,
+              motivo_concepto,
+              metodo_pago_salida,
+              referencia_salida,
+              saldo_anterior,
+              saldo_restante,
+              liquidado_por,
+              notas_operador,
+              created_at
+            FROM liquidaciones_clientes
+          ) ranked_liq
           WHERE id = $1::uuid
             AND ($2::uuid IS NULL OR negocio_id = $2::uuid OR negocio_id IS NULL)
           LIMIT 1;
@@ -89,26 +93,30 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         )
       : await dbQuery<ClientLiquidationRecord>(
           `
-          SELECT
-            id,
-            codigo_liquidacion,
-            negocio_id,
-            cliente_id,
-            cliente_nombre,
-            monto_liquidado,
-            moneda,
-            destinatario_beneficiario,
-            motivo_concepto,
-            metodo_pago_salida,
-            referencia_salida,
-            saldo_anterior,
-            saldo_restante,
-            liquidado_por,
-            notas_operador,
-            created_at
-          FROM liquidaciones_clientes
+          SELECT *
+          FROM (
+            SELECT
+              id,
+              codigo_liquidacion,
+              ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo,
+              negocio_id,
+              cliente_id,
+              cliente_nombre,
+              monto_liquidado,
+              moneda,
+              destinatario_beneficiario,
+              motivo_concepto,
+              metodo_pago_salida,
+              referencia_salida,
+              saldo_anterior,
+              saldo_restante,
+              liquidado_por,
+              notas_operador,
+              created_at
+            FROM liquidaciones_clientes
+            WHERE cliente_id = $2::uuid
+          ) ranked_liq
           WHERE id = $1::uuid
-            AND cliente_id = $2::uuid
           LIMIT 1;
           `,
           [liquidacionId, clientSession!.clienteId]

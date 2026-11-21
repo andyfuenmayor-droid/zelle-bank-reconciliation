@@ -1717,6 +1717,9 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     <h3 className="text-base font-bold text-white">
                       Mis Reportes ({orders.length})
                     </h3>
+                    <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                      Ciclo #{liquidations.length + 1} (Actual)
+                    </span>
                   </div>
                   {orders.length > 50 && (
                     <button
@@ -2016,11 +2019,14 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-900/80 p-5 shadow-xl">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <CheckCircle2 className="h-5 w-5 text-sky-400" />
                         <h3 className="text-base font-bold text-white">
                           Reporte General y Resumen Corto de Pagos ({orders.length} registros)
                         </h3>
+                        <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-300">
+                          Ciclo #{liquidations.length + 1} (Actual)
+                        </span>
                       </div>
                       <p className="mt-0.5 text-xs text-slate-400">
                         Vista completa de tus comprobantes reportados y conciliaciones directas acreditadas por administración (fecha del correo, remitente, referencia, comisión y neto acreditado).
@@ -2410,10 +2416,17 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       {liquidations.map((liq) => (
                         <tr key={liq.id} className="hover:bg-slate-800/40">
                           <td className="px-4 py-3 font-mono text-xs">
-                            <span className="font-bold text-emerald-400">
-                              {liq.codigo_liquidacion}
-                            </span>
-                            <div className="text-[11px] text-slate-400 font-sans">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {liq.numero_ciclo && (
+                                <span className="inline-flex rounded-full border border-indigo-500/40 bg-indigo-500/20 px-2 py-0.5 font-sans text-[10px] font-bold text-indigo-200">
+                                  Ciclo #{liq.numero_ciclo}
+                                </span>
+                              )}
+                              <span className="font-bold text-emerald-400">
+                                {liq.codigo_liquidacion}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-400 font-sans">
                               {formatDateTime(liq.created_at)}
                             </div>
                           </td>
@@ -2475,7 +2488,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 <div>
                   <Dialog.Title className="flex items-center gap-2 text-base font-bold text-white">
                     <Coins className="h-5 w-5 text-indigo-400" />
-                    Archivo de Ciclo Cerrado · {selectedLiquidationModal?.codigo_liquidacion}
+                    {selectedLiquidationModal?.numero_ciclo
+                      ? `Ciclo #${selectedLiquidationModal.numero_ciclo} (Cerrado) · `
+                      : 'Archivo de Ciclo Cerrado · '}
+                    {selectedLiquidationModal?.codigo_liquidacion}
                   </Dialog.Title>
                   <Dialog.Description className="mt-0.5 text-xs text-slate-400">
                     Liquidado el {formatDateTime(selectedLiquidationModal?.created_at)} · Monto pagado:{' '}
@@ -2523,8 +2539,11 @@ export default function ClientPaymentPortal(): React.JSX.Element {
 
                   const handleCopyCycleSummary = async (): Promise<void> => {
                     if (!selectedLiquidationModal) return;
+                    const cycleTag = selectedLiquidationModal.numero_ciclo
+                      ? `CICLO #${selectedLiquidationModal.numero_ciclo} · `
+                      : '';
                     const lines: string[] = [
-                      `📁 ARCHIVO DE CICLO LIQUIDADO ${selectedLiquidationModal.codigo_liquidacion} - ${selectedLiquidationModal.cliente_nombre.toUpperCase()}`,
+                      `📁 ARCHIVO ${cycleTag}${selectedLiquidationModal.codigo_liquidacion} - ${selectedLiquidationModal.cliente_nombre.toUpperCase()}`,
                       `Fecha liquidación: ${formatDateTime(selectedLiquidationModal.created_at)} | Pagado: -${formatAmount(selectedLiquidationModal.monto_liquidado, selectedLiquidationModal.moneda)} | Saldo restante: ${formatAmount(selectedLiquidationModal.saldo_restante, selectedLiquidationModal.moneda)}`,
                       `Pagos archivados: ${filteredItems.length} | Bruto: $${(liqDetailSummary?.totalBruto ?? 0).toFixed(2)} | Comisión: -$${(liqDetailSummary?.totalComision ?? 0).toFixed(2)} | Neto: $${(liqDetailSummary?.totalNeto ?? 0).toFixed(2)}`,
                       `------------------------------------------------------------`,

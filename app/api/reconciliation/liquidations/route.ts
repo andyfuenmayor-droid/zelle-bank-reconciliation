@@ -75,25 +75,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const sql = `
-      SELECT
-        l.id,
-        l.codigo_liquidacion,
-        l.negocio_id,
-        l.cliente_id,
-        l.cliente_nombre,
-        l.monto_liquidado,
-        l.moneda,
-        l.destinatario_beneficiario,
-        l.motivo_concepto,
-        l.metodo_pago_salida,
-        l.referencia_salida,
-        l.comprobante_salida_base64,
-        l.saldo_anterior,
-        l.saldo_restante,
-        l.liquidado_por,
-        l.notas_operador,
-        l.created_at
-      FROM liquidaciones_clientes l
+      SELECT *
+      FROM (
+        SELECT
+          l.id,
+          l.codigo_liquidacion,
+          ROW_NUMBER() OVER (PARTITION BY l.cliente_id ORDER BY l.created_at ASC, l.id ASC)::int AS numero_ciclo,
+          l.negocio_id,
+          l.cliente_id,
+          l.cliente_nombre,
+          l.monto_liquidado,
+          l.moneda,
+          l.destinatario_beneficiario,
+          l.motivo_concepto,
+          l.metodo_pago_salida,
+          l.referencia_salida,
+          l.comprobante_salida_base64,
+          l.saldo_anterior,
+          l.saldo_restante,
+          l.liquidado_por,
+          l.notas_operador,
+          l.created_at
+        FROM liquidaciones_clientes l
+      ) l
       ${whereClause}
       ORDER BY l.created_at DESC
       LIMIT 100;

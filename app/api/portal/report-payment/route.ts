@@ -348,6 +348,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           conciliado_at: string | null;
           liquidado_at: string | null;
           codigo_liquidacion: string | null;
+          numero_ciclo: number | null;
           liquidacion_fecha: string | null;
           tx_fecha: string | null;
         }>(
@@ -364,12 +365,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             o.conciliado_at,
             COALESCE(o.liquidado_at, t.liquidado_at) AS liquidado_at,
             l.codigo_liquidacion,
+            l.numero_ciclo,
             l.created_at AS liquidacion_fecha,
             t.fecha_transaccion AS tx_fecha
           FROM ordenes_pago_pendientes o
           LEFT JOIN financial_transactions_reconciliation t
             ON t.id = COALESCE(o.transaccion_conciliada_id, o.alerta_conciliada_id)
-          LEFT JOIN liquidaciones_clientes l
+          LEFT JOIN (
+            SELECT
+              id,
+              codigo_liquidacion,
+              created_at,
+              ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo
+            FROM liquidaciones_clientes
+          ) l
             ON l.id = COALESCE(o.liquidacion_id, t.liquidacion_id)
           WHERE o.estado IN ('CONCILIADO', 'PENDIENTE', 'LIQUIDADO')
             AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = $1
@@ -394,8 +403,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               dupOrder.liquidado_at ||
               dupOrder.codigo_liquidacion
           );
+          const cicloPrefix = dupOrder.numero_ciclo
+            ? `Ciclo #${dupOrder.numero_ciclo} (cerrado)`
+            : 'Ciclo cerrado';
           const cicloDesc = isLiquidated
-            ? `Ciclo cerrado — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
+            ? `${cicloPrefix} — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
                 dupOrder.codigo_liquidacion
                   ? ` (${dupOrder.codigo_liquidacion})`
                   : ''
@@ -437,6 +449,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           conciliado_at: string | null;
           liquidado_at: string | null;
           codigo_liquidacion: string | null;
+          numero_ciclo: number | null;
           liquidacion_fecha: string | null;
           codigo_orden: string | null;
           orden_referencia_reportada: string | null;
@@ -453,12 +466,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             t.conciliado_at,
             t.liquidado_at,
             l.codigo_liquidacion,
+            l.numero_ciclo,
             l.created_at AS liquidacion_fecha,
             o.codigo_orden,
             o.referencia_reportada AS orden_referencia_reportada,
             COALESCE(o.remitente_reportado, o.nombre_remitente_reportado) AS orden_remitente_reportado
           FROM financial_transactions_reconciliation t
-          LEFT JOIN liquidaciones_clientes l
+          LEFT JOIN (
+            SELECT
+              id,
+              codigo_liquidacion,
+              created_at,
+              ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo
+            FROM liquidaciones_clientes
+          ) l
             ON l.id = t.liquidacion_id
           LEFT JOIN ordenes_pago_pendientes o
             ON o.id = t.orden_conciliada_id
@@ -484,8 +505,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const isLiquidated = Boolean(
             dupTx.liquidado_at || dupTx.codigo_liquidacion
           );
+          const cicloTxPrefix = dupTx.numero_ciclo
+            ? `Ciclo #${dupTx.numero_ciclo} (cerrado)`
+            : 'Ciclo cerrado';
           const cicloDesc = isLiquidated
-            ? `Ciclo cerrado — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
+            ? `${cicloTxPrefix} — Liquidado${fechaLiqStr ? ` el ${fechaLiqStr}` : ''}${
                 dupTx.codigo_liquidacion
                   ? ` (${dupTx.codigo_liquidacion})`
                   : ''

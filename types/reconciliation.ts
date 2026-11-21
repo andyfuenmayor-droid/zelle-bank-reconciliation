@@ -152,6 +152,7 @@ export interface FinancialTransactionRecord {
   liquidacion_id?: string | null;
   liquidado_at?: string | null;
   codigo_liquidacion?: string | null;
+  numero_ciclo?: number | null;
   descartado_at?: string | null;
   created_at: string;
   // Datos enriquecidos de la orden vinculada (para visor de capturas en el dashboard)
@@ -289,6 +290,7 @@ export interface ClientPortalWalletSummary {
 export interface ClientLiquidationRecord {
   id: string;
   codigo_liquidacion: string;
+  numero_ciclo?: number | null;
   negocio_id?: string | null;
   cliente_id: string;
   cliente_nombre: string;

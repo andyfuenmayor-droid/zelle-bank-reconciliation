@@ -4478,7 +4478,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <div className="flex flex-col items-start gap-0.5">
                                   <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1 text-xs font-semibold text-indigo-300">
                                     <CheckCircle2 className="h-3.5 w-3.5" />
-                                    LIQUIDADO
+                                    {alert.numero_ciclo
+                                      ? `CICLO #${alert.numero_ciclo} · LIQUIDADO`
+                                      : 'LIQUIDADO'}
                                   </span>
                                   {alert.codigo_liquidacion && (
                                     <span className="font-mono text-[10px] text-indigo-300/80">
@@ -5215,10 +5217,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       filteredLiquidations.map((liq) => (
                         <tr key={liq.id} className="hover:bg-slate-800/40">
                           <td className="px-4 py-3.5 font-mono text-xs">
-                            <span className="font-bold text-emerald-400">
-                              {liq.codigo_liquidacion}
-                            </span>
-                            <div className="text-[11px] text-slate-400 font-sans">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {liq.numero_ciclo && (
+                                <span className="inline-flex rounded-full border border-indigo-500/40 bg-indigo-500/20 px-2 py-0.5 font-sans text-[10px] font-bold text-indigo-200">
+                                  Ciclo #{liq.numero_ciclo}
+                                </span>
+                              )}
+                              <span className="font-bold text-emerald-400">
+                                {liq.codigo_liquidacion}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-400 font-sans">
                               {new Date(liq.created_at).toLocaleString('es-ES', {
                                 dateStyle: 'short',
                                 timeStyle: 'short',
@@ -5293,7 +5302,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <div>
                       <Dialog.Title className="flex items-center gap-2 text-lg font-bold text-white">
                         <Coins className="h-5 w-5 text-indigo-400" />
-                        Detalle del Ciclo Liquidado · {inspectedLiquidation?.codigo_liquidacion} ({inspectedLiquidation?.cliente_nombre})
+                        {inspectedLiquidation?.numero_ciclo
+                          ? `Ciclo #${inspectedLiquidation.numero_ciclo} · `
+                          : 'Detalle del Ciclo Liquidado · '}
+                        {inspectedLiquidation?.codigo_liquidacion} ({inspectedLiquidation?.cliente_nombre})
                       </Dialog.Title>
                       <Dialog.Description className="mt-1 text-xs text-slate-400">
                         Liquidado:{' '}

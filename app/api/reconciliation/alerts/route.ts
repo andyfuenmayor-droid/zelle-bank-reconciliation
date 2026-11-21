@@ -175,6 +175,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         t.liquidacion_id,
         t.liquidado_at,
         l.codigo_liquidacion,
+        l.numero_ciclo,
         t.created_at,
         (CASE WHEN o.comprobante_base64 IS NOT NULL AND LENGTH(o.comprobante_base64) > 10 THEN true ELSE false END) AS has_capture,
         o.id AS capture_order_id,
@@ -200,7 +201,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       FROM financial_transactions_reconciliation t
       LEFT JOIN ordenes_pago_pendientes o
         ON o.id = t.orden_conciliada_id
-      LEFT JOIN liquidaciones_clientes l
+      LEFT JOIN (
+        SELECT
+          id,
+          codigo_liquidacion,
+          ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo
+        FROM liquidaciones_clientes
+      ) l
         ON l.id = t.liquidacion_id
       ${whereClause}
       ORDER BY t.fecha_transaccion DESC, t.created_at DESC

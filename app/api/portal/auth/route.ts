@@ -247,23 +247,27 @@ async function loadPostgresPortalSession(
     ),
     dbQuery<ClientLiquidationRecord>(
       `
-      SELECT
-        id,
-        codigo_liquidacion,
-        cliente_id,
-        cliente_nombre,
-        monto_liquidado,
-        moneda,
-        destinatario_beneficiario,
-        motivo_concepto,
-        metodo_pago_salida,
-        referencia_salida,
-        saldo_anterior,
-        saldo_restante,
-        liquidado_por,
-        created_at
-      FROM liquidaciones_clientes
-      WHERE cliente_id = $1::uuid
+      SELECT *
+      FROM (
+        SELECT
+          id,
+          codigo_liquidacion,
+          ROW_NUMBER() OVER (PARTITION BY cliente_id ORDER BY created_at ASC, id ASC)::int AS numero_ciclo,
+          cliente_id,
+          cliente_nombre,
+          monto_liquidado,
+          moneda,
+          destinatario_beneficiario,
+          motivo_concepto,
+          metodo_pago_salida,
+          referencia_salida,
+          saldo_anterior,
+          saldo_restante,
+          liquidado_por,
+          created_at
+        FROM liquidaciones_clientes
+        WHERE cliente_id = $1::uuid
+      ) ranked_liq
       ORDER BY created_at DESC
       LIMIT 50;
       `,
