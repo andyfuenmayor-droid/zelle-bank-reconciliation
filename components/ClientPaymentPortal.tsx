@@ -246,6 +246,48 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   >('TODOS');
   const [reportSearchQuery, setReportSearchQuery] = useState<string>('');
   const [copiedSummaryReport, setCopiedSummaryReport] = useState<boolean>(false);
+  const [selectedReportCycleId, setSelectedReportCycleId] =
+    useState<string>('ACTIVO');
+  const [archivedReportOrders, setArchivedReportOrders] = useState<
+    PendingPaymentOrder[]
+  >([]);
+  const [isLoadingReportCycle, setIsLoadingReportCycle] =
+    useState<boolean>(false);
+
+  const handleSelectReportCycle = useCallback(
+    async (cycleId: string): Promise<void> => {
+      setSelectedReportCycleId(cycleId);
+      setReportFilterStatus('TODOS');
+      setReportSearchQuery('');
+      if (cycleId === 'ACTIVO') {
+        setArchivedReportOrders([]);
+        return;
+      }
+      setIsLoadingReportCycle(true);
+      try {
+        const res = await fetch(
+          `/api/reconciliation/liquidations/items?liquidacionId=${encodeURIComponent(
+            cycleId
+          )}`,
+          { cache: 'no-store', credentials: 'same-origin' }
+        );
+        const data = (await res.json()) as {
+          ok: boolean;
+          items?: PendingPaymentOrder[];
+        };
+        if (res.ok && data.ok) {
+          setArchivedReportOrders(data.items ?? []);
+        } else {
+          setArchivedReportOrders([]);
+        }
+      } catch {
+        setArchivedReportOrders([]);
+      } finally {
+        setIsLoadingReportCycle(false);
+      }
+    },
+    []
+  );
 
   // Modal de detalle de ciclos pasados / liquidaciones cerradas (con acceso a capturas archivadas)
   const [selectedLiquidationModal, setSelectedLiquidationModal] =
@@ -1893,8 +1935,30 @@ export default function ClientPaymentPortal(): React.JSX.Element {
             {/* Reporte Adicional: Resumen Corto de Cada Comprobante y Conciliación Directa (Todos los Registros) */}
             {(() => {
               const feeDefault = Number(client.porcentaje_comision_zelle ?? 4);
-              const filteredReportOrders = orders.filter((o) => {
-                if (reportFilterStatus === 'CONCILIADO' && o.estado !== 'CONCILIADO') {
+              const isViewingArchivedCycle = selectedReportCycleId !== 'ACTIVO';
+              const activeSelectedLiq = isViewingArchivedCycle
+                ? liquidations.find((l) => l.id === selectedReportCycleId) ?? null
+                : null;
+              const reportSourceOrders = isViewingArchivedCycle
+                ? archivedReportOrders
+                : orders;
+              const activeCycleLabel = isViewingArchivedCycle
+                ? `${
+                    activeSelectedLiq?.numero_ciclo
+                      ? `Ciclo #${activeSelectedLiq.numero_ciclo}`
+                      : 'Ciclo Cerrado'
+                  }${
+                    activeSelectedLiq
+                      ? ` (${activeSelectedLiq.codigo_liquidacion})`
+                      : ''
+                  }`
+                : `Ciclo #${liquidations.length + 1} (Actual)`;
+
+              const isSettledOrder = (o: PendingPaymentOrder): boolean =>
+                o.estado === 'CONCILIADO' || o.estado === 'LIQUIDADO';
+
+              const filteredReportOrders = reportSourceOrders.filter((o) => {
+                if (reportFilterStatus === 'CONCILIADO' && !isSettledOrder(o)) {
                   return false;
                 }
                 if (
@@ -1903,7 +1967,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 ) {
                   return false;
                 }
-                if (reportFilterStatus === 'PENDIENTE' && o.estado === 'CONCILIADO') {
+                if (reportFilterStatus === 'PENDIENTE' && isSettledOrder(o)) {
                   return false;
                 }
                 if (reportSearchQuery.trim()) {
@@ -1921,15 +1985,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 return true;
               });
 
-              const conciliadosTotalCount = orders.filter(
-                (o) => o.estado === 'CONCILIADO'
+              const conciliadosTotalCount = reportSourceOrders.filter((o) =>
+                isSettledOrder(o)
               ).length;
-              const directAdminCount = orders.filter(
+              const directAdminCount = reportSourceOrders.filter(
                 (o) => o.origen_registro === 'ADMIN_DIRECTA'
               ).length;
               const capturasConciliadasCount =
                 conciliadosTotalCount - directAdminCount;
-              const pendientesTotalCount = orders.length - conciliadosTotalCount;
+              const pendientesTotalCount =
+                reportSourceOrders.length - conciliadosTotalCount;
 
               let sumBruto = 0;
               let sumComision = 0;
@@ -1940,7 +2005,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 if (o.origen_registro === 'ADMIN_DIRECTA') {
                   filteredDirectCount += 1;
                 }
-                if (o.estado === 'CONCILIADO') {
+                if (isSettledOrder(o)) {
                   filteredConciliadosCount += 1;
                   const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
                   const f = Number(o.tx_porcentaje_comision ?? feeDefault);
@@ -1978,10 +2043,10 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                     ? ` · incluye ${filteredDirectCount} conciliación(es) directa(s) por Admin`
                     : '';
                 const lines: string[] = [
-                  `📊 RESUMEN DE PAGOS Y CONCILIACIONES - ${client.nombre_titular.toUpperCase()}`,
-                  `Ciclo actual: ${filteredReportOrders.length} registro(s) (${filteredConciliadosCount} conciliados, ${filteredReportOrders.length - filteredConciliadosCount} pendientes${directSuffix})`,
-                  `Ciclo actual -> Bruto: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto ciclo: +$${sumNeto.toFixed(2)} USD`,
-                  ...(walletTotalLiquidadoUsd > 0
+                  `📊 RESUMEN DE PAGOS Y CONCILIACIONES (${activeCycleLabel}) - ${client.nombre_titular.toUpperCase()}`,
+                  `${activeCycleLabel}: ${filteredReportOrders.length} registro(s) (${filteredConciliadosCount} conciliados, ${filteredReportOrders.length - filteredConciliadosCount} pendientes${directSuffix})`,
+                  `Totales ciclo -> Bruto: $${sumBruto.toFixed(2)} USD | Comisión: -$${sumComision.toFixed(2)} USD | Neto: +$${sumNeto.toFixed(2)} USD`,
+                  ...(!isViewingArchivedCycle && walletTotalLiquidadoUsd > 0
                     ? [
                         `Balance Total -> Conciliado Neto: $${walletTotalAcreditadoUsd.toFixed(2)} USD − Liquidado: -$${walletTotalLiquidadoUsd.toFixed(2)} USD = Saldo Pendiente: $${walletSaldoPendienteUsd.toFixed(2)} USD`,
                       ]
@@ -1989,7 +2054,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                   `------------------------------------------------------------`,
                 ];
                 filteredReportOrders.forEach((o, i) => {
-                  const isConc = o.estado === 'CONCILIADO';
+                  const isConc = isSettledOrder(o);
                   const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
                   const b = Number(o.tx_monto_bruto ?? o.monto_esperado);
                   const f = Number(o.tx_porcentaje_comision ?? feeDefault);
@@ -2022,10 +2087,16 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       <div className="flex flex-wrap items-center gap-2">
                         <CheckCircle2 className="h-5 w-5 text-sky-400" />
                         <h3 className="text-base font-bold text-white">
-                          Reporte General y Resumen Corto de Pagos ({orders.length} registros)
+                          Reporte General y Resumen Corto de Pagos ({reportSourceOrders.length} registros)
                         </h3>
-                        <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-0.5 text-[11px] font-bold text-emerald-300">
-                          Ciclo #{liquidations.length + 1} (Actual)
+                        <span
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold ${
+                            isViewingArchivedCycle
+                              ? 'border-indigo-500/40 bg-indigo-500/20 text-indigo-200'
+                              : 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                          }`}
+                        >
+                          {activeCycleLabel}
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs text-slate-400">
@@ -2033,27 +2104,68 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void handleCopyShortSummary()}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
-                    >
-                      {copiedSummaryReport ? (
-                        <>
-                          <Check className="h-3.5 w-3.5 text-emerald-400" />
-                          ¡Resumen Copiado!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-3.5 w-3.5 text-sky-400" />
-                          Copiar Resumen Corto ({filteredReportOrders.length})
-                        </>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {liquidations.length > 0 && (
+                        <div className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500/35 bg-slate-950 px-3 py-1.5">
+                          <span className="text-[11px] font-semibold text-indigo-300">
+                            Ciclo:
+                          </span>
+                          <select
+                            value={selectedReportCycleId}
+                            onChange={(e) =>
+                              void handleSelectReportCycle(e.target.value)
+                            }
+                            className="bg-slate-950 text-xs font-semibold text-slate-100 focus:outline-none cursor-pointer"
+                          >
+                            <option value="ACTIVO">
+                              Ciclo #{liquidations.length + 1} (Actual · {orders.length})
+                            </option>
+                            {liquidations.map((liq) => (
+                              <option key={liq.id} value={liq.id}>
+                                {liq.numero_ciclo
+                                  ? `Ciclo #${liq.numero_ciclo}`
+                                  : 'Ciclo Cerrado'}{' '}
+                                · {liq.codigo_liquidacion} (
+                                {new Date(liq.created_at).toLocaleDateString('es-ES', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                })}
+                                )
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       )}
-                    </button>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyShortSummary()}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/15 px-3.5 py-2 text-xs font-semibold text-sky-200 hover:bg-sky-500/25"
+                      >
+                        {copiedSummaryReport ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-emerald-400" />
+                            ¡Resumen Copiado!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5 text-sky-400" />
+                            Copiar Resumen Corto ({filteredReportOrders.length})
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
+                  {isLoadingReportCycle ? (
+                    <div className="flex items-center justify-center gap-2 py-10 text-xs text-slate-300">
+                      <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
+                      Cargando registros del ciclo seleccionado...
+                    </div>
+                  ) : null}
+
                   {/* Resumen de Balance Acumulado: Conciliado - Liquidado = Saldo Pendiente */}
-                  {walletTotalLiquidadoUsd > 0 && (
+                  {!isViewingArchivedCycle && walletTotalLiquidadoUsd > 0 && (
                     <div className="mb-4 grid grid-cols-1 gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3.5 sm:grid-cols-3">
                       <div className="rounded-lg border border-slate-800/80 bg-slate-950/70 px-3 py-2">
                         <span className="text-[10px] font-semibold uppercase text-slate-400">
@@ -2094,7 +2206,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         Total Pagos / Reportes
                       </span>
                       <p className="mt-1 font-mono text-lg font-bold text-white">
-                        {orders.length}
+                        {reportSourceOrders.length}
                       </p>
                       <span className="text-[11px] text-slate-400">
                         {directAdminCount > 0
@@ -2152,7 +2264,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                             : 'bg-slate-950 text-slate-400 hover:bg-slate-800'
                         }`}
                       >
-                        Todos ({orders.length})
+                        Todos ({reportSourceOrders.length})
                       </button>
                       <button
                         type="button"
@@ -2226,7 +2338,7 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                           </tr>
                         ) : (
                           filteredReportOrders.map((o, idx) => {
-                            const isConc = o.estado === 'CONCILIADO';
+                            const isConc = isSettledOrder(o);
                             const isDirect = o.origen_registro === 'ADMIN_DIRECTA';
                             const isBinanceRow =
                               (o.plataforma_esperada || '').startsWith('BINANCE') ||

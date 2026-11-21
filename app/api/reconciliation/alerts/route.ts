@@ -41,6 +41,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const search = searchParams.get('search')?.trim() ?? '';
   const includeLiquidated = searchParams.get('includeLiquidated') === '1';
   const includeDiscarded = searchParams.get('includeDiscarded') === '1';
+  const rawLiquidacionId = searchParams.get('liquidacionId')?.trim() ?? '';
+  const liquidacionId =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      rawLiquidacionId
+    )
+      ? rawLiquidacionId
+      : null;
 
   const dbConnected = await isDatabaseAvailable();
 
@@ -110,7 +117,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       conditions.push(`t.negocio_id = $${params.length}::uuid`);
     }
 
-    if (!includeLiquidated) {
+    if (liquidacionId) {
+      params.push(liquidacionId);
+      conditions.push(`t.liquidacion_id = $${params.length}::uuid`);
+    } else if (!includeLiquidated) {
       conditions.push(`t.liquidado_at IS NULL`);
     }
 
@@ -211,7 +221,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         ON l.id = t.liquidacion_id
       ${whereClause}
       ORDER BY t.fecha_transaccion DESC, t.created_at DESC
-      LIMIT 250;
+      LIMIT ${liquidacionId ? 1000 : includeLiquidated ? 500 : 250};
     `;
 
     const pendingOrdersSql = scope.negocioId

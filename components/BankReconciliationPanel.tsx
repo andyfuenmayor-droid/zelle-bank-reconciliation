@@ -510,6 +510,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [showLiquidatedHistory, setShowLiquidatedHistory] =
     useState<boolean>(false);
+  const [selectedCycleFilter, setSelectedCycleFilter] =
+    useState<string>('ACTIVO');
   const [showDiscardedHistory, setShowDiscardedHistory] =
     useState<boolean>(false);
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('TODOS');
@@ -779,7 +781,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     try {
       const reqHeaders = buildScopeHeaders(false);
       const alertQueryParams = new URLSearchParams();
-      if (showLiquidatedHistory) {
+      if (
+        selectedCycleFilter !== 'ACTIVO' &&
+        selectedCycleFilter !== 'TODOS'
+      ) {
+        alertQueryParams.set('liquidacionId', selectedCycleFilter);
+      } else if (selectedCycleFilter === 'TODOS' || showLiquidatedHistory) {
         alertQueryParams.set('includeLiquidated', '1');
       }
       if (showDiscardedHistory) {
@@ -907,7 +914,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     } finally {
       setIsLoading(false);
     }
-  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId, showLiquidatedHistory, showDiscardedHistory]);
+  }, [activeNegocioId, buildScopeHeaders, currentBusinessUserId, showLiquidatedHistory, selectedCycleFilter, showDiscardedHistory]);
 
   // Restaurar sesión de negocio desde localStorage y revisar ?login=1
   useEffect(() => {
@@ -3877,15 +3884,65 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
                 <p className="text-xs text-slate-400">
-                  {showLiquidatedHistory && showDiscardedHistory
-                    ? 'Mostrando ciclo activo + historial liquidado + correos eliminados/descartados.'
-                    : showLiquidatedHistory
-                      ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
-                      : showDiscardedHistory
-                        ? 'Mostrando ciclo activo + correos eliminados/descartados (puedes restaurarlos).'
-                        : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados están ocultos).'}
+                  {selectedCycleFilter !== 'ACTIVO' && selectedCycleFilter !== 'TODOS'
+                    ? (() => {
+                        const selLiq = liquidations.find(
+                          (l) => l.id === selectedCycleFilter
+                        );
+                        return selLiq
+                          ? `Mostrando exclusivamente ${
+                              selLiq.numero_ciclo
+                                ? `Ciclo #${selLiq.numero_ciclo}`
+                                : 'ciclo liquidado'
+                            } · ${selLiq.cliente_nombre} (${selLiq.codigo_liquidacion}) en modo solo lectura.`
+                          : 'Mostrando pagos del ciclo liquidado seleccionado (solo lectura).';
+                      })()
+                    : showLiquidatedHistory && showDiscardedHistory
+                      ? 'Mostrando ciclo activo + historial liquidado + correos eliminados/descartados.'
+                      : showLiquidatedHistory
+                        ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
+                        : showDiscardedHistory
+                          ? 'Mostrando ciclo activo + correos eliminados/descartados (puedes restaurarlos).'
+                          : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados están ocultos).'}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* Selector directo de Ciclos para la vista de reportes */}
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/35 bg-slate-950 px-2.5 py-1">
+                    <span className="text-[11px] font-semibold text-indigo-300">
+                      Ciclos:
+                    </span>
+                    <select
+                      value={selectedCycleFilter}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedCycleFilter(val);
+                        setShowLiquidatedHistory(val !== 'ACTIVO');
+                      }}
+                      className="bg-slate-950 text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer"
+                    >
+                      <option value="ACTIVO">Ciclo Actual (Activo)</option>
+                      <option value="TODOS">Todos los Ciclos (Activo + Historial)</option>
+                      {liquidations
+                        .filter(
+                          (l) =>
+                            selectedClientFilter === 'TODOS' ||
+                            selectedClientFilter === 'SIN_ASIGNAR' ||
+                            l.cliente_id === selectedClientFilter
+                        )
+                        .map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.numero_ciclo ? `Ciclo #${l.numero_ciclo}` : 'Ciclo'} ·{' '}
+                            {l.cliente_nombre} · {l.codigo_liquidacion} (
+                            {new Date(l.created_at).toLocaleDateString('es-ES', {
+                              day: '2-digit',
+                              month: 'short',
+                            })}
+                            )
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -3910,15 +3967,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setShowLiquidatedHistory((prev) => !prev)}
+                    onClick={() => {
+                      if (showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO') {
+                        setShowLiquidatedHistory(false);
+                        setSelectedCycleFilter('ACTIVO');
+                      } else {
+                        setShowLiquidatedHistory(true);
+                        setSelectedCycleFilter('TODOS');
+                      }
+                    }}
                     className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
-                      showLiquidatedHistory
+                      showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
                         ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
                         : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
                     }`}
                   >
-                    {showLiquidatedHistory
-                      ? 'Ocultar Historial Liquidado'
+                    {showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
+                      ? 'Volver al Ciclo Actual'
                       : 'Ver Historial Liquidado'}
                   </button>
                 </div>
