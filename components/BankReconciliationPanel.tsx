@@ -367,12 +367,27 @@ function referencesMatch(
     return true;
   }
 
-  // Tolerancia de 1 carácter por lectura OCR en códigos de confirmación de 8-9 caracteres
-  // (ej. "Ik9lpx0ib" vs "BACLK9LPX0IB", "Ibllortmf" vs "BACLBLLORTMF", "rjsnfkdk9" vs "BACRJSNFKDQ9")
-  if (cleanOrder.length >= 8 && cleanTx.length >= cleanOrder.length) {
-    const txSuffix = cleanTx.slice(-cleanOrder.length);
-    if (levenshteinDistance(cleanOrder, txSuffix) <= 1) {
+  // Tolerancia de 1 carácter por lectura OCR en códigos largos (>= 8 caracteres):
+  // cubre sustitución (ej. "j4b3143dk" vs "BACJ4B3I43DK"), 1 letra extra insertada
+  // (ej. "WFCT22VQRNYPS" vs "WFCT22VQRNYS") o 1 letra omitida.
+  if (cleanOrder.length >= 8 && cleanTx.length >= 8) {
+    if (
+      Math.abs(cleanOrder.length - cleanTx.length) <= 1 &&
+      levenshteinDistance(cleanOrder, cleanTx) <= 1
+    ) {
       return true;
+    }
+    if (cleanTx.length >= cleanOrder.length) {
+      const txSuffix = cleanTx.slice(-cleanOrder.length);
+      if (levenshteinDistance(cleanOrder, txSuffix) <= 1) {
+        return true;
+      }
+    }
+    if (cleanOrder.length >= 9 && cleanTx.length >= cleanOrder.length - 1) {
+      const txSuffixShort = cleanTx.slice(-(cleanOrder.length - 1));
+      if (levenshteinDistance(cleanOrder, txSuffixShort) <= 1) {
+        return true;
+      }
     }
   }
 

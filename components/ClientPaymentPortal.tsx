@@ -128,7 +128,7 @@ async function compressImageFileToBase64(file: File): Promise<{
       const img = new Image();
       img.onerror = () => resolve({ base64: dataUrl, mime: file.type || 'image/png' });
       img.onload = () => {
-        const maxWidth = 1080;
+        const maxWidth = 1440;
         const scale = img.width > maxWidth ? maxWidth / img.width : 1;
         const targetWidth = Math.max(1, Math.round(img.width * scale));
         const targetHeight = Math.max(1, Math.round(img.height * scale));
@@ -143,7 +143,7 @@ async function compressImageFileToBase64(file: File): Promise<{
         }
 
         ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-        const compressed = canvas.toDataURL('image/jpeg', 0.82);
+        const compressed = canvas.toDataURL('image/jpeg', 0.9);
         resolve({
           base64: compressed,
           mime: 'image/jpeg',

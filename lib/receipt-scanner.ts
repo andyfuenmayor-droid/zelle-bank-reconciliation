@@ -447,7 +447,9 @@ Reglas estrictas:
 - "plataforma": usa "CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN" (para Zelle usa "CITIBANK" salvo que el destinatario/comprobante indique TD Bank).
 - "fecha": fecha visible de la transferencia en formato YYYY-MM-DD (o null si no es visible en la captura; NO inventes la fecha de hoy si no aparece escrita).
 - "remitente": deja siempre cadena vacía "".
-- "referencia": extrae el Confirmation Number / Confirmation Code / Reference / Transaction ID / Order ID / TxID exacto tal cual aparece impreso en la imagen (ej. "ee3j9bfv7", "WFCT22...", "JPM99...", "22N0..."). REGLA CRÍTICA: En pantallas de confirmación rápida de Chase / Zelle iOS (como "Estamos enviando tu dinero ahora" / "We're sending your money now" con botón "Añadir a Siri" / "Listo") NO existe código de confirmación — en esos casos devuelve SIEMPRE cadena vacía "". JAMÁS inventes códigos ni tomes la hora del teléfono, porcentaje de batería ni dígitos de cuenta/teléfono.`,
+- "referencia": extrae el Confirmation Number / Confirmation Code / Reference / Transaction ID / Order ID / TxID exacto tal cual aparece impreso en la imagen (ej. "ee3j9bfv7", "WFCT22VQRNYS", "JPM99D22REAQ", "22N0KANBT651").
+  Longitudes estándar Zelle para verificar tu lectura: Wells Fargo "WFCT" + 8 caracteres (12 en total), Chase "JPM" + 9 caracteres (12 en total), Capital One "COF" + 9 caracteres (12 en total), PNC "PNC" + 9 caracteres (12 en total), Bank of America 9 caracteres alfanuméricos. Lee carácter por carácter con máxima precisión sin insertar, duplicar ni omitir letras.
+  REGLA CRÍTICA: En pantallas de confirmación rápida de Chase / Zelle iOS (como "Estamos enviando tu dinero ahora" / "We're sending your money now" con botón "Añadir a Siri" / "Listo") NO existe código de confirmación — en esos casos devuelve SIEMPRE cadena vacía "". JAMÁS inventes códigos ni tomes la hora del teléfono, porcentaje de batería ni dígitos de cuenta/teléfono.`,
           },
           {
             inlineData: {
@@ -459,7 +461,7 @@ Reglas estrictas:
       },
     ],
     generationConfig: {
-      temperature: 0.1,
+      temperature: 0.0,
       responseMimeType: 'application/json',
     },
   };
