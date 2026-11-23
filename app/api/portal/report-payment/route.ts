@@ -499,6 +499,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             AND (
               UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) = $1
               OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $1 || '%'
+              OR (
+                LENGTH($1) >= 7
+                AND TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110')
+                  LIKE '%' || TRANSLATE($1, 'ILO', '110') || '%'
+              )
             )
           LIMIT 1;
           `,
@@ -590,6 +595,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 LENGTH($4) >= 6
                 AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
                 AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT($4, 6)
+              )
+              OR (
+                LENGTH($4) >= 7
+                AND (
+                  TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110')
+                    LIKE '%' || TRANSLATE($4, 'ILO', '110') || '%'
+                  OR TRANSLATE($4, 'ILO', '110')
+                    LIKE '%' || TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110') || '%'
+                )
               )
             )
           ORDER BY fecha_transaccion ASC

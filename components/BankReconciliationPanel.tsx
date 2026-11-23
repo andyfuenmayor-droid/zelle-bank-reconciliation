@@ -379,6 +379,139 @@ function referencesMatch(
   return false;
 }
 
+function isSpecificAlphanumericBankRef(ref: string | null | undefined): boolean {
+  if (!ref) return false;
+  const clean = ref.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (clean.length < 5) return false;
+  if (/^[0-9]+$/.test(clean)) return false;
+  const genericList = [
+    'SINREF',
+    'NOREF',
+    'NA',
+    'NONE',
+    'NULL',
+    'CITIBANK',
+    'TDBANK',
+    'WELLSFARGO',
+    'ZELLE',
+    'PAGO',
+    'TRANSFERENCIA',
+    'BANKOFAMERICA',
+    'COMPROBANTE',
+  ];
+  return !genericList.includes(clean);
+}
+
+function getDateDistanceDaysVe(
+  txTimestamp: string | null | undefined,
+  orderDateYmd: string | null | undefined
+): number {
+  if (!txTimestamp || !orderDateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(orderDateYmd.trim())) {
+    return 9999;
+  }
+  const d = new Date(txTimestamp);
+  if (Number.isNaN(d.getTime())) {
+    return 9999;
+  }
+  try {
+    const txYmd = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Caracas',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(d);
+    const t1 = Date.parse(`${txYmd}T12:00:00Z`);
+    const t2 = Date.parse(`${orderDateYmd.trim()}T12:00:00Z`);
+    if (Number.isNaN(t1) || Number.isNaN(t2)) return 9999;
+    return Math.abs(Math.round((t1 - t2) / 86400000));
+  } catch {
+    return 9999;
+  }
+}
+
+function findBestCandidateTxForOrder(
+  order: PendingPaymentOrder,
+  alertsList: BankEmailAlertRecord[]
+): {
+  tx: BankEmailAlertRecord | null;
+  matchType: 'LINKED' | 'REF' | 'SENDER' | 'NONE';
+  sameAmountCount: number;
+} {
+  const linked = alertsList.find((t) => t.orden_conciliada_id === order.id) ?? null;
+  if (linked) {
+    return { tx: linked, matchType: 'LINKED', sameAmountCount: 1 };
+  }
+
+  const eligible = alertsList.filter(
+    (a) =>
+      a.estado !== 'CONCILIADO' &&
+      a.estado !== 'DESCARTADO' &&
+      !a.liquidado_at &&
+      a.tipo_movimiento === 'RECIBIDO' &&
+      a.moneda === order.moneda &&
+      Math.abs(a.monto_bruto - order.monto_esperado) < 0.01
+  );
+
+  if (eligible.length === 0) {
+    return { tx: null, matchType: 'NONE', sameAmountCount: 0 };
+  }
+
+  const orderSender =
+    order.remitente_reportado || order.nombre_remitente_reportado || '';
+
+  // Prioridad 1: Coincidencia de referencia bancaria (exacta, sufijo o tolerancia OCR 1 carácter)
+  const refMatches = eligible
+    .filter((a) => referencesMatch(order.referencia_reportada, a.referencia))
+    .map((a) => ({
+      tx: a,
+      dayDiff: getDateDistanceDaysVe(a.fecha_transaccion, order.fecha_transferencia),
+      sim: calculateSenderSimilarity(orderSender, a.remitente_o_contraparte || ''),
+    }))
+    .sort((a, b) => {
+      if (a.dayDiff !== b.dayDiff) return a.dayDiff - b.dayDiff;
+      if (b.sim !== a.sim) return b.sim - a.sim;
+      return new Date(a.tx.fecha_transaccion).getTime() - new Date(b.tx.fecha_transaccion).getTime();
+    });
+
+  if (refMatches.length > 0 && refMatches[0]) {
+    return {
+      tx: refMatches[0].tx,
+      matchType: 'REF',
+      sameAmountCount: eligible.length,
+    };
+  }
+
+  // Si la orden tiene una referencia bancaria alfanumérica específica que NO coincide con ningún correo,
+  // NO asumir otro correo del mismo remitente con referencia distinta (evita cruzar pagos de fechas diferentes).
+  if (isSpecificAlphanumericBankRef(order.referencia_reportada)) {
+    return { tx: null, matchType: 'NONE', sameAmountCount: eligible.length };
+  }
+
+  // Prioridad 2: Coincidencia por remitente (>= 0.65) desempatando SIEMPRE por cercanía a fecha_transferencia
+  const senderMatches = eligible
+    .map((a) => ({
+      tx: a,
+      dayDiff: getDateDistanceDaysVe(a.fecha_transaccion, order.fecha_transferencia),
+      sim: calculateSenderSimilarity(orderSender, a.remitente_o_contraparte || ''),
+    }))
+    .filter((c) => c.sim >= 0.65)
+    .sort((a, b) => {
+      if (a.dayDiff !== b.dayDiff) return a.dayDiff - b.dayDiff;
+      if (b.sim !== a.sim) return b.sim - a.sim;
+      return new Date(a.tx.fecha_transaccion).getTime() - new Date(b.tx.fecha_transaccion).getTime();
+    });
+
+  if (senderMatches.length > 0 && senderMatches[0]) {
+    return {
+      tx: senderMatches[0].tx,
+      matchType: 'SENDER',
+      sameAmountCount: eligible.length,
+    };
+  }
+
+  return { tx: null, matchType: 'NONE', sameAmountCount: eligible.length };
+}
+
 const SAMPLE_TEMPLATES: ReadonlyArray<{
   label: string;
   from: string;
@@ -1758,33 +1891,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
   const openManualOrderConfirmModal = (order: PendingPaymentOrder): void => {
     setSelectedOrderForManualConfirm(order);
-    const orderSender =
-      order.remitente_reportado || order.nombre_remitente_reportado || '';
-    // Buscar el mejor correo DETECTADO del mismo monto y moneda priorizando referencia exacta y luego mayor similitud de remitente (>= 0.65)
-    const eligibleTxs = alerts.filter(
-      (a) =>
-        a.estado !== 'CONCILIADO' &&
-        a.estado !== 'DESCARTADO' &&
-        !a.liquidado_at &&
-        a.tipo_movimiento === 'RECIBIDO' &&
-        a.moneda === order.moneda &&
-        Math.abs(a.monto_bruto - order.monto_esperado) < 0.01
-    );
-    const refCandidate = eligibleTxs.find((a) =>
-      referencesMatch(order.referencia_reportada, a.referencia)
-    );
-    const senderCandidate =
-      eligibleTxs
-        .map((a) => ({
-          tx: a,
-          sim: calculateSenderSimilarity(
-            orderSender,
-            a.remitente_o_contraparte || ''
-          ),
-        }))
-        .filter((c) => c.sim >= 0.65)
-        .sort((a, b) => b.sim - a.sim)[0]?.tx ?? null;
-    const candidateTx = refCandidate ?? senderCandidate ?? null;
+    const { tx: candidateTx } = findBestCandidateTxForOrder(order, alerts);
     setOrderConfirmLinkedTxId(candidateTx ? candidateTx.id : '');
     setOrderConfirmNotes(
       `Confirmado manualmente por el administrador tras verificar comprobante de ${
@@ -2734,44 +2841,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     if (!captureBase64) {
       return;
     }
-    const orderSender =
-      order.remitente_reportado || order.nombre_remitente_reportado || '';
-    const linkedTx =
-      alerts.find((t) => t.orden_conciliada_id === order.id) ?? null;
-
-    let matchingTx: BankEmailAlertRecord | null = linkedTx;
-    if (!matchingTx) {
-      const candidates = alerts.filter(
-        (t) =>
-          t.estado !== 'CONCILIADO' &&
-          t.estado !== 'DESCARTADO' &&
-          !t.liquidado_at &&
-          t.tipo_movimiento === 'RECIBIDO' &&
-          t.moneda === order.moneda &&
-          Math.abs(t.monto_bruto - order.monto_esperado) < 0.01
-      );
-      const refMatchTx =
-        candidates.find((t) =>
-          referencesMatch(order.referencia_reportada, t.referencia)
-        ) ?? null;
-      if (refMatchTx) {
-        matchingTx = refMatchTx;
-      } else {
-        // Priorizar siempre la mayor coincidencia real de remitente (>= 0.65)
-        // para jamás mostrar un correo de otra persona solo por tener el mismo monto
-        const bestSenderCandidate = candidates
-          .map((t) => ({
-            tx: t,
-            sim: calculateSenderSimilarity(
-              orderSender,
-              t.remitente_o_contraparte || ''
-            ),
-          }))
-          .filter((c) => c.sim >= 0.65)
-          .sort((a, b) => b.sim - a.sim)[0];
-        matchingTx = bestSenderCandidate?.tx ?? null;
-      }
-    }
+    const { tx: matchingTx } = findBestCandidateTxForOrder(order, alerts);
 
     setLightboxData({
       title: `Captura Subida en Portal · ${order.codigo_orden}`,
@@ -4431,30 +4501,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               other.referencia_reportada
                             )
                         ).length;
-                        const sameAmountDetectedTxs = alerts.filter(
-                          (a) =>
-                            a.estado !== 'CONCILIADO' &&
-                            a.estado !== 'DESCARTADO' &&
-                            !a.liquidado_at &&
-                            a.tipo_movimiento === 'RECIBIDO' &&
-                            a.moneda === order.moneda &&
-                            Math.abs(a.monto_bruto - order.monto_esperado) < 0.01
+                        const candidateMatch = findBestCandidateTxForOrder(
+                          order,
+                          alerts
                         );
-                        const bestSenderMatchedTx =
-                          sameAmountDetectedTxs
-                            .map((a) => ({
-                              tx: a,
-                              sim: calculateSenderSimilarity(
-                                order.remitente_reportado ||
-                                  order.nombre_remitente_reportado ||
-                                  '',
-                                a.remitente_o_contraparte || ''
-                              ),
-                            }))
-                            .filter((c) => c.sim >= 0.65)
-                            .sort((a, b) => b.sim - a.sim)[0]?.tx ?? null;
-                        const detectedSameAmountTx =
-                          bestSenderMatchedTx ?? sameAmountDetectedTxs[0] ?? null;
+                        const bestMatchedTx = candidateMatch.tx;
+                        const bestMatchType = candidateMatch.matchType;
+                        const sameAmountCount = candidateMatch.sameAmountCount;
                         const orderPlatformBadge = getPlatformBadgeMeta(
                           order.plataforma_esperada
                         );
@@ -4514,15 +4567,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   <Clock className="h-3.5 w-3.5 shrink-0 text-sky-400 mt-0.5" />
                                   <span>{order.notas_cliente}</span>
                                 </span>
-                              ) : bestSenderMatchedTx ? (
+                              ) : bestMatchedTx ? (
                                 <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-950/60 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">
                                   <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
-                                  Coincide por nombre: {bestSenderMatchedTx.remitente_o_contraparte} ({bestSenderMatchedTx.referencia})
+                                  {bestMatchType === 'REF'
+                                    ? `Coincide por ref.: ${bestMatchedTx.remitente_o_contraparte} (${bestMatchedTx.referencia})`
+                                    : `Coincide por nombre y fecha: ${bestMatchedTx.remitente_o_contraparte} (${bestMatchedTx.referencia})`}
                                 </span>
-                              ) : detectedSameAmountTx ? (
+                              ) : sameAmountCount > 0 ? (
                                 <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-950/60 px-2 py-0.5 text-[11px] font-semibold text-sky-200">
                                   <Clock className="h-3 w-3 shrink-0 text-sky-400" />
-                                  Sin coincidencia exacta · Hay {sameAmountDetectedTxs.length} correo(s) de {formatMoney(order.monto_esperado, order.moneda)} de otro remitente
+                                  Sin coincidencia exacta · Hay {sameAmountCount} correo(s) de {formatMoney(order.monto_esperado, order.moneda)} con otra ref./remitente
                                 </span>
                               ) : (
                                 <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
