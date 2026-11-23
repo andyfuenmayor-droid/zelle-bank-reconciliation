@@ -195,6 +195,46 @@ function normalizeAmount(rawAmount: unknown): number | null {
 }
 
 /**
+ * Limpia referencias falsas o alucinadas por la IA cuando la captura no muestra código de confirmación
+ * (por ejemplo pantallas rápidas de Zelle/Chase iOS sin Confirmation Number).
+ */
+function sanitizeDetectedReference(rawRef?: string | null): string {
+  const trimmed = (rawRef ?? '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  const clean = trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (
+    clean.length < 4 ||
+    [
+      'SINREF',
+      'NOREF',
+      'NA',
+      'NONE',
+      'NULL',
+      'UNDEFINED',
+      'NINGUNA',
+      'NINGUNO',
+      'ZELLE',
+      'CHASE',
+      'CITIBANK',
+      'TDBANK',
+      'WELLSFARGO',
+      'BANKOFAMERICA',
+      'CONFIRMACION',
+      'CONFIRMATION',
+    ].includes(clean)
+  ) {
+    return '';
+  }
+  // Evitar horas (ej. 647, 0647) o últimos 4 dígitos de cuenta tomados por error como referencia
+  if (/^[0-9]{1,5}$/.test(clean)) {
+    return '';
+  }
+  return trimmed;
+}
+
+/**
  * Extrae datos directos si el comprobante es un SVG vectorial o generado con texto legible.
  */
 function tryExtractFromSvgDataUrl(dataUrl: string): ReceiptAiScanResult | null {
@@ -405,9 +445,9 @@ Reglas estrictas:
 - "monto": número decimal positivo exacto del pago (ej. 10.00, 40.00, 125.50). Sin símbolo $ ni comas.
 - "moneda": "USD" para Zelle/bancos USA, "USDT" para Binance/cripto, "VES" para bolívares.
 - "plataforma": usa "CITIBANK", "TD_BANK", "BINANCE_PAY", "BINANCE_P2P" o "BINANCE_ONCHAIN" (para Zelle usa "CITIBANK" salvo que el destinatario/comprobante indique TD Bank).
-- "fecha": fecha visible de la transferencia en formato YYYY-MM-DD (o null si no es visible).
+- "fecha": fecha visible de la transferencia en formato YYYY-MM-DD (o null si no es visible en la captura; NO inventes la fecha de hoy si no aparece escrita).
 - "remitente": deja siempre cadena vacía "".
-- "referencia": extrae el Confirmation Number / Confirmation Code / Reference / Transaction ID / Order ID / TxID exacto tal cual aparece (ej. "ee3j9bfv7", "WFCT22...", "JPM99...", "22N0..."). No inventes códigos; si no existe en la imagen, devuelve "".`,
+- "referencia": extrae el Confirmation Number / Confirmation Code / Reference / Transaction ID / Order ID / TxID exacto tal cual aparece impreso en la imagen (ej. "ee3j9bfv7", "WFCT22...", "JPM99...", "22N0..."). REGLA CRÍTICA: En pantallas de confirmación rápida de Chase / Zelle iOS (como "Estamos enviando tu dinero ahora" / "We're sending your money now" con botón "Añadir a Siri" / "Listo") NO existe código de confirmación — en esos casos devuelve SIEMPRE cadena vacía "". JAMÁS inventes códigos ni tomes la hora del teléfono, porcentaje de batería ni dígitos de cuenta/teléfono.`,
           },
           {
             inlineData: {
@@ -497,7 +537,7 @@ Reglas estrictas:
     plataforma,
     fecha: (parsed.fecha ?? '').trim() || null,
     remitente: '', // Debe ser colocado obligatoriamente de forma manual por el usuario
-    referencia: (parsed.referencia ?? '').trim(),
+    referencia: sanitizeDetectedReference(parsed.referencia),
     cuenta_destino: parsed.cuenta_destino?.trim() || null,
     selected_account_id: null,
     confianza: typeof parsed.confianza === 'number' ? parsed.confianza : 0.9,

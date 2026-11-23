@@ -174,9 +174,18 @@ export default function ClientPaymentPortal(): React.JSX.Element {
   const [plataforma, setPlataforma] = useState<ExpectedPlatformType>('CITIBANK');
   const [moneda, setMoneda] = useState<CurrencyType>('USD');
   const [monto, setMonto] = useState<string>('');
-  const [fechaTransferencia, setFechaTransferencia] = useState<string>(() =>
-    new Date().toISOString().slice(0, 10)
-  );
+  const [fechaTransferencia, setFechaTransferencia] = useState<string>(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Caracas',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  });
   const [remitente, setRemitente] = useState<string>('');
   const [remitenteMismatchError, setRemitenteMismatchError] = useState<string | null>(null);
   const [referencia, setReferencia] = useState<string>('');
@@ -601,6 +610,8 @@ export default function ClientPaymentPortal(): React.JSX.Element {
           if (d.referencia && d.referencia.trim().length > 0) {
             setReferencia(d.referencia.trim());
             detectedMap.referencia = true;
+          } else {
+            setReferencia('');
           }
 
           // Auto-asignación de la cuenta receptora si coincidió con la cuenta destino o plataforma

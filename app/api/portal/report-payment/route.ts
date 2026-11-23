@@ -134,7 +134,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const montoEsperado = Number(body.monto_esperado ?? 0);
     const fechaTransferencia = (body.fecha_transferencia ?? '').trim() || null;
     const remitenteReportado = (body.remitente_reportado ?? '').trim();
-    const referenciaReportada = (body.referencia_reportada ?? '').trim();
+    const rawReferenciaReportada = (body.referencia_reportada ?? '').trim();
     const comprobanteBase64 = (body.comprobante_base64 ?? '').trim();
     const notasCliente = (body.notas_cliente ?? '').trim() || null;
 
@@ -182,16 +182,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    if (referenciaReportada.length < 3) {
+    // En Zelle (Citibank / TD Bank) muchos bancos (Chase, Zelle iOS, Wells Fargo) no muestran código en pantalla inicial.
+    // Permitir referencia vacía y normalizarla a 'SIN-REF' para conciliar por Monto + Nombre del Remitente.
+    if (plataforma.startsWith('BINANCE') && rawReferenciaReportada.length < 3) {
       return NextResponse.json(
         {
           ok: false,
           error:
-            'Ingresa el número de confirmación, Order ID o TxID del comprobante.',
+            'Ingresa el número de confirmación, Order ID o TxID del comprobante de Binance.',
         },
         { status: 400 }
       );
     }
+    const referenciaReportada =
+      rawReferenciaReportada.length >= 3 ? rawReferenciaReportada : 'SIN-REF';
 
     if (!isAllowedRasterImageDataUrl(comprobanteBase64)) {
       return NextResponse.json(
@@ -275,13 +279,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Metadatos OCR rápidos de los datos ya escaneados y confirmados en el Paso 1
     // (evita re-llamar a Gemini Vision al presionar Enviar y elimina demoras/cortes en móvil)
-    const ocrResult: OcrExtractionData = buildDemoOcrFallback({
-      plataforma,
-      moneda,
-      monto: normalizedAmount,
-      referencia: referenciaReportada,
-      remitente: remitenteReportado,
-    });
+    const ocrResult: OcrExtractionData = {
+      ...buildDemoOcrFallback({
+        plataforma,
+        moneda,
+        monto: normalizedAmount,
+        referencia: referenciaReportada,
+        remitente: remitenteReportado,
+      }),
+      observaciones:
+        referenciaReportada === 'SIN-REF'
+          ? 'Comprobante registrado desde el Portal sin código de confirmación visible (conciliación por monto y remitente).'
+          : 'Comprobante validado y registrado desde el Portal de Clientes.',
+    };
 
     const txOutcome = await withTransaction<{
       order: PendingPaymentOrder;
