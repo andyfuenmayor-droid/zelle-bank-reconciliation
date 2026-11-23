@@ -391,7 +391,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           ) l
             ON l.id = COALESCE(o.liquidacion_id, t.liquidacion_id)
           WHERE o.estado IN ('CONCILIADO', 'PENDIENTE', 'LIQUIDADO')
-            AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = $1
+            AND UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) = $1
           ORDER BY o.created_at DESC
           LIMIT 1;
           `,
@@ -497,11 +497,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             AND t.tipo_movimiento = 'RECIBIDO'
             AND t.monto_bruto = $2
             AND (
-              UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) = $1
-              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $1 || '%'
+              UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) = $1
+              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || $1 || '%'
               OR (
                 LENGTH($1) >= 7
-                AND TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110')
+                AND TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')), 'ILO', '110')
                   LIKE '%' || TRANSLATE($1, 'ILO', '110') || '%'
               )
             )
@@ -588,21 +588,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             AND monto_bruto = $2
             AND (negocio_id IS NOT DISTINCT FROM $3::uuid OR negocio_id IS NULL OR $3::uuid IS NULL)
             AND (
-              UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) = $4
-              OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || $4 || '%'
-              OR $4 LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
+              UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')) = $4
+              OR UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || $4 || '%'
+              OR $4 LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')) || '%'
               OR (
                 LENGTH($4) >= 6
-                AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
-                AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT($4, 6)
+                AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g'))) >= 6
+                AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')), 6) = RIGHT($4, 6)
               )
               OR (
                 LENGTH($4) >= 7
                 AND (
-                  TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110')
+                  TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')), 'ILO', '110')
                     LIKE '%' || TRANSLATE($4, 'ILO', '110') || '%'
                   OR TRANSLATE($4, 'ILO', '110')
-                    LIKE '%' || TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Z0-9]', '', 'g')), 'ILO', '110') || '%'
+                    LIKE '%' || TRANSLATE(UPPER(REGEXP_REPLACE(COALESCE(referencia, ''), '[^A-Za-z0-9]', '', 'g')), 'ILO', '110') || '%'
                 )
               )
             )

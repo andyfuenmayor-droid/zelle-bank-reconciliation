@@ -251,7 +251,7 @@ BEGIN
             LEFT(b.message_id, 180),
             LEFT(
                 b.banco || ':' ||
-                COALESCE(NULLIF(UPPER(REGEXP_REPLACE(COALESCE(b.referencia, ''), '[^A-Z0-9]', '', 'g')), ''), 'NOREF') ||
+                COALESCE(NULLIF(UPPER(REGEXP_REPLACE(COALESCE(b.referencia, ''), '[^A-Za-z0-9]', '', 'g')), ''), 'NOREF') ||
                 ':' || TO_CHAR(b.monto_bruto, 'FM999999990.00'),
                 180
             ),
@@ -408,7 +408,7 @@ BEGIN
         RETURN;
     END IF;
 
-    v_clean_order_ref := UPPER(REGEXP_REPLACE(COALESCE(v_orden.referencia_reportada, ''), '[^A-Z0-9]', '', 'g'));
+    v_clean_order_ref := UPPER(REGEXP_REPLACE(COALESCE(v_orden.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g'));
     v_clean_order_sender := LOWER(unaccent(TRIM(COALESCE(v_orden.remitente_reportado, v_orden.nombre_remitente_reportado, ''))));
 
     v_is_order_ref_generic := (
@@ -440,18 +440,18 @@ BEGIN
           AND t.monto_bruto = v_orden.monto_esperado
           AND (t.negocio_id IS NOT DISTINCT FROM v_orden.negocio_id OR t.negocio_id IS NULL OR v_orden.negocio_id IS NULL)
           AND (
-              UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) = v_clean_order_ref
-              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
-              OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
+              UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) = v_clean_order_ref
+              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
+              OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) || '%'
               OR (
                   LENGTH(v_clean_order_ref) >= 6
-                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
-                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
               )
               OR (
                   LENGTH(v_clean_order_ref) >= 8
-                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 8
-                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 8) = RIGHT(v_clean_order_ref, 8)
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g'))) >= 8
+                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')), 8) = RIGHT(v_clean_order_ref, 8)
               )
           )
         ORDER BY t.fecha_transaccion ASC
@@ -510,13 +510,13 @@ BEGIN
               v_is_order_ref_generic
               OR v_is_order_ref_numeric_conf
               OR t.referencia IS NULL
-              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
-              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
-              OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')) || '%'
+              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL')
+              OR UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || v_clean_order_ref || '%'
+              OR v_clean_order_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')) || '%'
               OR (
                   LENGTH(v_clean_order_ref) >= 6
-                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g'))) >= 6
-                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(UPPER(REGEXP_REPLACE(COALESCE(t.referencia, ''), '[^A-Za-z0-9]', '', 'g')), 6) = RIGHT(v_clean_order_ref, 6)
               )
           )
           AND (
@@ -623,7 +623,7 @@ BEGIN
         RETURN;
     END IF;
 
-    v_norm_ref := UPPER(REGEXP_REPLACE(COALESCE(v_tx.referencia, ''), '[^A-Z0-9]', '', 'g'));
+    v_norm_ref := UPPER(REGEXP_REPLACE(COALESCE(v_tx.referencia, ''), '[^A-Za-z0-9]', '', 'g'));
     v_norm_sender := LOWER(unaccent(TRIM(COALESCE(v_tx.remitente_o_contraparte, ''))));
 
     v_is_ref_generic := (
@@ -646,13 +646,13 @@ BEGIN
           AND o.monto_esperado = v_tx.monto_bruto
           AND (o.negocio_id IS NOT DISTINCT FROM v_tx.negocio_id OR o.negocio_id IS NULL OR v_tx.negocio_id IS NULL)
           AND (
-              UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) = v_norm_ref
-              OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) || '%'
-              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
+              UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) = v_norm_ref
+              OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) || '%'
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
               OR (
                   LENGTH(v_norm_ref) >= 6
-                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g'))) >= 6
-                  AND RIGHT(v_norm_ref, 6) = RIGHT(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')), 6)
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(v_norm_ref, 6) = RIGHT(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')), 6)
               )
           )
         ORDER BY o.created_at ASC
@@ -705,14 +705,14 @@ BEGIN
           AND (
               v_is_ref_generic
               OR o.referencia_reportada IS NULL
-              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL', 'BANKOFAMERICA', 'CHASE', 'CITIBANK', 'WELLSFARGO')
-              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) ~ '^[0-9]{8,14}$'
-              OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) || '%'
-              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) IN ('SINREF', 'NOREF', 'NA', 'NONE', 'NULL', 'BANKOFAMERICA', 'CHASE', 'CITIBANK', 'WELLSFARGO')
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) ~ '^[0-9]{8,14}$'
+              OR v_norm_ref LIKE '%' || UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) || '%'
+              OR UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')) LIKE '%' || v_norm_ref || '%'
               OR (
                   LENGTH(v_norm_ref) >= 6
-                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g'))) >= 6
-                  AND RIGHT(v_norm_ref, 6) = RIGHT(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Z0-9]', '', 'g')), 6)
+                  AND LENGTH(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g'))) >= 6
+                  AND RIGHT(v_norm_ref, 6) = RIGHT(UPPER(REGEXP_REPLACE(COALESCE(o.referencia_reportada, ''), '[^A-Za-z0-9]', '', 'g')), 6)
               )
           )
           AND (
