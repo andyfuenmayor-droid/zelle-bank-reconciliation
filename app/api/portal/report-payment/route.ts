@@ -833,14 +833,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
       }
 
-      const saldoDisponibleUsd = Math.max(
-        0,
-        Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100
-      );
-      const saldoDisponibleUsdt = Math.max(
-        0,
-        Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100
-      );
+      const saldoDisponibleUsd =
+        Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100;
+      const saldoDisponibleUsdt =
+        Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100;
 
       const wallet: ClientPortalWalletSummary = {
         saldoNetoUsd: saldoDisponibleUsd,

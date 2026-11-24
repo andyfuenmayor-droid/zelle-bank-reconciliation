@@ -360,10 +360,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const round2 = (v: number): number => Math.round(v * 100) / 100;
     const zelleNetoAcum = Number(s?.zelle_neto_acumulado ?? 0);
     const zelleLiq = Number(lq?.zelle_liquidado ?? 0);
-    const zelleSaldoPendiente = Math.max(0, round2(zelleNetoAcum - zelleLiq));
+    const zelleSaldoPendiente = round2(zelleNetoAcum - zelleLiq);
     const binanceNetoAcum = Number(s?.binance_neto_acumulado ?? 0);
     const binanceLiq = Number(lq?.binance_liquidado ?? 0);
-    const binanceSaldoPendiente = Math.max(0, round2(binanceNetoAcum - binanceLiq));
+    const binanceSaldoPendiente = round2(binanceNetoAcum - binanceLiq);
 
     const summaryMetrics: FinancialSummaryMetrics | null = s
       ? {

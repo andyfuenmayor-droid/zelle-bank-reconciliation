@@ -89,18 +89,19 @@ interface LightboxContext {
 
 function formatMoney(amount: number, currency: CurrencyType | string = 'USD'): string {
   const safe = Number.isFinite(amount) ? amount : 0;
+  const sign = safe < 0 ? '-' : '';
   const formatted = new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(safe);
+  }).format(Math.abs(safe));
 
   if (currency === 'USDT') {
-    return `${formatted} USDT`;
+    return `${sign}${formatted} USDT`;
   }
   if (currency === 'VES') {
-    return `${formatted} VES`;
+    return `${sign}${formatted} VES`;
   }
-  return `$${formatted}`;
+  return `${sign}$${formatted}`;
 }
 
 function formatDateTime(isoString: string | null): string {
@@ -2312,19 +2313,6 @@ export default function BankReconciliationPanel(): React.JSX.Element {
       return;
     }
 
-    const maxAvailable =
-      liqMoneda === 'USDT'
-        ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
-        : (selectedClientForLiq.saldo_disponible_usd ?? selectedClientForLiq.total_neto_usd);
-
-    if (amount > maxAvailable + 0.009) {
-      setLiquidationFeedback({
-        ok: false,
-        message: `Monto insuficiente: El monto a liquidar ($${amount.toFixed(2)}) supera el saldo disponible actual ($${maxAvailable.toFixed(2)} ${liqMoneda}).`,
-      });
-      return;
-    }
-
     if (!liqDestinatario.trim()) {
       setLiquidationFeedback({ ok: false, message: 'Ingresa el destinatario o beneficiario del pago.' });
       return;
@@ -2353,6 +2341,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           liquidado_por: currentBusinessUser?.nombre_usuario || currentBusinessUser?.nombre_negocio || 'ADMINISTRADOR',
           notas_operador: liqNotas.trim() || null,
           archivar_comprobantes: liqArchivar,
+          permitir_saldo_negativo: true,
         }),
       });
 
@@ -3600,15 +3589,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       const clientLiquidadoUsd = Number(
                         client.total_liquidado_usd ?? 0
                       );
-                      const clientSaldoPendienteUsd = Math.max(
-                        0,
+                      const clientSaldoPendienteUsd =
                         Math.round(
                           Number(
                             client.saldo_disponible_usd ??
                               client.total_neto_usd - clientLiquidadoUsd
                           ) * 100
-                        ) / 100
-                      );
+                        ) / 100;
                       return (
                         <div
                           key={client.id}
@@ -3786,15 +3773,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       const clientLiquidadoUsdt = Number(
                         client.total_liquidado_usdt ?? 0
                       );
-                      const clientSaldoPendienteUsdt = Math.max(
-                        0,
+                      const clientSaldoPendienteUsdt =
                         Math.round(
                           Number(
                             client.saldo_disponible_usdt ??
                               client.total_neto_usdt - clientLiquidadoUsdt
                           ) * 100
-                        ) / 100
-                      );
+                        ) / 100;
                       return (
                         <div
                           key={client.id}
@@ -3997,15 +3982,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <option value="TODOS">Todos los Titulares</option>
                       <option value="SIN_ASIGNAR">⚠️ Sin Cliente (En Espera)</option>
                       {clients.map((c) => {
-                        const cSaldo = Math.max(
-                          0,
+                        const cSaldo =
                           Math.round(
                             Number(
                               c.saldo_disponible_usd ??
                                 c.total_neto_usd - (c.total_liquidado_usd ?? 0)
                             ) * 100
-                          ) / 100
-                        );
+                          ) / 100;
                         return (
                           <option key={c.id} value={c.id}>
                             👤 {c.nombre_titular} ({formatMoney(cSaldo, 'USD')} pendiente)
@@ -5341,8 +5324,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       </tr>
                     ) : (
                       clients.map((c) => {
-                        const dispUsd = c.saldo_disponible_usd ?? Math.max(0, c.total_neto_usd - (c.total_liquidado_usd ?? 0));
-                        const dispUsdt = c.saldo_disponible_usdt ?? Math.max(0, c.total_neto_usdt - (c.total_liquidado_usdt ?? 0));
+                        const dispUsd = c.saldo_disponible_usd ?? Math.round((c.total_neto_usd - (c.total_liquidado_usd ?? 0)) * 100) / 100;
+                        const dispUsdt = c.saldo_disponible_usdt ?? Math.round((c.total_neto_usdt - (c.total_liquidado_usdt ?? 0)) * 100) / 100;
                         return (
                           <tr key={c.id} className="hover:bg-slate-800/40">
                             <td className="px-4 py-3.5 font-semibold text-white">
@@ -8943,10 +8926,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
                   >
                     {clients.map((c) => {
-                      const disp = c.saldo_disponible_usd ?? Math.max(0, c.total_neto_usd - (c.total_liquidado_usd ?? 0));
+                      const disp = c.saldo_disponible_usd ?? Math.round((c.total_neto_usd - (c.total_liquidado_usd ?? 0)) * 100) / 100;
                       return (
                         <option key={c.id} value={c.id}>
-                          {c.nombre_titular} — Saldo Disponible: ${disp.toFixed(2)} USD
+                          {c.nombre_titular} — Saldo Disponible: {formatMoney(disp, 'USD')} USD
                         </option>
                       );
                     })}
@@ -8958,34 +8941,37 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   const maxAvail =
                     liqMoneda === 'USDT'
                       ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
-                      : (selectedClientForLiq.saldo_disponible_usd ?? Math.max(0, selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)));
+                      : (selectedClientForLiq.saldo_disponible_usd ?? Math.round((selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)) * 100) / 100);
                   const numInput = parseFloat(liqMonto) || 0;
-                  const remaining = Math.max(0, Math.round((maxAvail - numInput) * 100) / 100);
-                  const isOver = numInput > maxAvail + 0.009;
+                  const remaining = Math.round((maxAvail - numInput) * 100) / 100;
+                  const isOver = remaining < -0.009;
 
                   return (
                     <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5 text-xs space-y-2">
                       <div className="flex justify-between items-center text-slate-400">
                         <span>Saldo Disponible Actual:</span>
-                        <span className="font-mono font-bold text-white text-sm">
-                          ${maxAvail.toFixed(2)} {liqMoneda}
+                        <span className={`font-mono font-bold text-sm ${maxAvail < 0 ? 'text-rose-400' : 'text-white'}`}>
+                          {formatMoney(maxAvail, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-slate-400">
                         <span>Monto a Liquidar:</span>
                         <span className="font-mono font-bold text-rose-400 text-sm">
-                          -${numInput.toFixed(2)} {liqMoneda}
+                          -{formatMoney(numInput, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
                       <div className="border-t border-slate-800 pt-1.5 flex justify-between items-center">
-                        <span className="font-semibold text-slate-300">Saldo Restante Resultante:</span>
-                        <span className={`font-mono font-bold text-base ${isOver ? 'text-rose-400' : 'text-emerald-400'}`}>
-                          ${remaining.toFixed(2)} {liqMoneda}
+                        <span className="font-semibold text-slate-300">
+                          {isOver ? 'Saldo en Contra Resultante (Adelanto):' : 'Saldo Restante Resultante:'}
+                        </span>
+                        <span className={`font-mono font-bold text-base ${isOver ? 'text-amber-400' : 'text-emerald-400'}`}>
+                          {formatMoney(remaining, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
                       {isOver && (
-                        <p className="text-[11px] font-semibold text-rose-400">
-                          ⚠️ El monto a liquidar supera el saldo disponible actual.
+                        <p className="rounded-lg border border-amber-500/30 bg-amber-950/35 px-2.5 py-2 text-[11px] font-medium text-amber-200">
+                          ⚠️ Liquidación por encima del saldo actual (+{formatMoney(Math.abs(remaining), liqMoneda)} de adelanto/cuadre). Permitido: el cliente quedará con saldo negativo de{' '}
+                          <strong className="font-mono text-amber-300">{formatMoney(remaining, liqMoneda)}</strong> y se descontará automáticamente de sus próximos pagos conciliados.
                         </p>
                       )}
                     </div>
@@ -9009,8 +8995,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             const maxAvail =
                               liqMoneda === 'USDT'
                                 ? (selectedClientForLiq.saldo_disponible_usdt ?? selectedClientForLiq.total_neto_usdt)
-                                : (selectedClientForLiq.saldo_disponible_usd ?? Math.max(0, selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)));
-                            setLiqMonto(maxAvail.toFixed(2));
+                                : (selectedClientForLiq.saldo_disponible_usd ?? Math.round((selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)) * 100) / 100);
+                            setLiqMonto(Math.max(0, maxAvail).toFixed(2));
                           }}
                           className="text-[10px] text-emerald-400 hover:underline font-semibold"
                         >

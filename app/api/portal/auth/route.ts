@@ -324,14 +324,10 @@ async function loadPostgresPortalSession(
     }
   }
 
-  const saldoNetoUsdDisponible = Math.max(
-    0,
-    Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100
-  );
-  const saldoNetoUsdtDisponible = Math.max(
-    0,
-    Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100
-  );
+  const saldoNetoUsdDisponible =
+    Math.round((saldoNetoUsd - totalLiquidadoUsd) * 100) / 100;
+  const saldoNetoUsdtDisponible =
+    Math.round((saldoNetoUsdt - totalLiquidadoUsdt) * 100) / 100;
 
   const pagosPendientesCount = ordersRes.rows.filter(
     (o) => o.estado === 'PENDIENTE'

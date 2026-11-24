@@ -26,6 +26,7 @@ interface CreateLiquidationBody {
   liquidado_por?: string;
   notas_operador?: string;
   archivar_comprobantes?: boolean;
+  permitir_saldo_negativo?: boolean;
 }
 
 const VALID_CURRENCIES: ReadonlyArray<CurrencyType> = ['USD', 'USDT', 'VES'];
@@ -163,6 +164,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const liquidadoPor = (body.liquidado_por ?? 'ADMINISTRADOR').trim() || 'ADMINISTRADOR';
     const notasOperador = (body.notas_operador ?? '').trim() || null;
     const archivarComprobantes = body.archivar_comprobantes ?? true;
+    const permitirSaldoNegativo = body.permitir_saldo_negativo ?? true;
 
     if (!clienteId) {
       return NextResponse.json(
@@ -233,7 +235,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const saldoAnterior = Math.round((totalAcreditado - totalPrevioLiquidado) * 100) / 100;
 
-      if (montoLiquidado > saldoAnterior + 0.009) {
+      if (!permitirSaldoNegativo && montoLiquidado > saldoAnterior + 0.009) {
         throw new Error(
           `Fondos insuficientes: El monto a liquidar ($${montoLiquidado.toFixed(2)}) supera el saldo disponible actual ($${saldoAnterior.toFixed(2)} ${moneda}).`
         );

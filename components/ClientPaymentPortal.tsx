@@ -71,18 +71,19 @@ const PLATFORM_DISPLAY_META: Record<
 
 function formatAmount(amount: number, currency: CurrencyType): string {
   const safe = Number.isFinite(amount) ? amount : 0;
+  const sign = safe < 0 ? '-' : '';
   const formatted = new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(safe);
+  }).format(Math.abs(safe));
 
   if (currency === 'USDT') {
-    return `${formatted} USDT`;
+    return `${sign}${formatted} USDT`;
   }
   if (currency === 'VES') {
-    return `${formatted} VES`;
+    return `${sign}${formatted} VES`;
   }
-  return `$${formatted} USD`;
+  return `${sign}$${formatted} USD`;
 }
 
 function formatDateTime(isoString: string | null | undefined): string {
@@ -2043,10 +2044,8 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                 wallet.totalLiquidadoUsd ?? 0
               );
               const walletSaldoPendienteUsd = Number(wallet.saldoNetoUsd ?? 0);
-              const saldoAnteriorRestanteUsd = Math.max(
-                0,
-                Math.round((walletSaldoPendienteUsd - sumNeto) * 100) / 100
-              );
+              const saldoAnteriorRestanteUsd =
+                Math.round((walletSaldoPendienteUsd - sumNeto) * 100) / 100;
 
               const handleCopyShortSummary = async (): Promise<void> => {
                 const directSuffix =
@@ -2263,12 +2262,12 @@ export default function ClientPaymentPortal(): React.JSX.Element {
                         <span className="text-[10px] font-semibold uppercase text-emerald-300">
                           Saldo Pendiente Total
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
-                          ${walletSaldoPendienteUsd.toFixed(2)} USD
+                        <p className={`mt-0.5 font-mono text-sm font-bold ${walletSaldoPendienteUsd < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {formatAmount(walletSaldoPendienteUsd, 'USD')}
                         </p>
-                        {saldoAnteriorRestanteUsd > 0 && (
+                        {Math.abs(saldoAnteriorRestanteUsd) >= 0.01 && (
                           <span className="text-[10px] text-emerald-300/80">
-                            Saldo ant. ${saldoAnteriorRestanteUsd.toFixed(2)} + Ciclo +${sumNeto.toFixed(2)}
+                            Saldo ant. {formatAmount(saldoAnteriorRestanteUsd, 'USD')} + Ciclo +${sumNeto.toFixed(2)}
                           </span>
                         )}
                       </div>
