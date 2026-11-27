@@ -13,6 +13,7 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Coins,
   Copy,
@@ -41,7 +42,6 @@ import {
   RotateCcw,
   Search,
   Server,
-  ShieldCheck,
   Sparkles,
   Trash2,
   UserCheck,
@@ -51,6 +51,7 @@ import {
   X,
 } from 'lucide-react';
 import LandingPageView from '@/components/LandingPageView';
+import ThemeToggle from '@/components/ThemeToggle';
 import {
   AlertStatus,
   AssignedReceivingAccount,
@@ -126,32 +127,38 @@ function getPlatformBadgeMeta(platform: PlatformType): {
     case 'CITIBANK':
       return {
         label: 'Citibank',
-        badgeClass: 'border-sky-500/30 bg-sky-500/15 text-sky-300',
+        badgeClass:
+          'border-stone-300 bg-stone-100 text-stone-700 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300',
       };
     case 'TD_BANK':
       return {
         label: 'TD Bank',
-        badgeClass: 'border-emerald-500/30 bg-emerald-500/15 text-emerald-300',
+        badgeClass:
+          'border-emerald-700/25 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400',
       };
     case 'BINANCE_PAY':
       return {
         label: 'Binance Pay',
-        badgeClass: 'border-amber-500/30 bg-amber-500/15 text-amber-300',
+        badgeClass:
+          'border-amber-700/25 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-400',
       };
     case 'BINANCE_P2P':
       return {
         label: 'Binance P2P',
-        badgeClass: 'border-yellow-500/30 bg-yellow-500/15 text-yellow-300',
+        badgeClass:
+          'border-amber-700/25 bg-amber-50/70 text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400',
       };
     case 'BINANCE_ONCHAIN':
       return {
         label: 'Depósito Red',
-        badgeClass: 'border-purple-500/30 bg-purple-500/15 text-purple-300',
+        badgeClass:
+          'border-stone-300 bg-stone-100 text-stone-700 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-300',
       };
     default:
       return {
         label: 'Otro',
-        badgeClass: 'border-slate-600 bg-slate-800 text-slate-300',
+        badgeClass:
+          'border-stone-300 bg-stone-100 text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-400',
       };
   }
 }
@@ -796,6 +803,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     null
   );
   const [adminLiqSearch, setAdminLiqSearch] = useState<string>('');
+
+  // Estado exclusivamente visual (Cinta Financiera, Menú Acciones, Inspector Master-Detail)
+  const [activeFinanceChannel, setActiveFinanceChannel] = useState<
+    'ZELLE' | 'BINANCE'
+  >('ZELLE');
+  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState<boolean>(false);
+  const [selectedInspectorAlertId, setSelectedInspectorAlertId] = useState<
+    string | null
+  >(null);
+  const [inspectorPreviewBase64, setInspectorPreviewBase64] = useState<
+    string | null
+  >(null);
+  const [isLoadingInspectorPreview, setIsLoadingInspectorPreview] =
+    useState<boolean>(false);
+  const [isMobileInspectorOpen, setIsMobileInspectorOpen] =
+    useState<boolean>(false);
 
   const openAdminLiquidationDetail = async (
     liq: ClientLiquidationRecord
@@ -2855,6 +2878,66 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     });
   };
 
+  // Inspector Master-Detail (solo presentación y vista previa perezosa)
+  const selectedInspectorAlert = useMemo<BankEmailAlertRecord | null>(() => {
+    if (filteredAlerts.length === 0) return null;
+    if (selectedInspectorAlertId) {
+      const found = filteredAlerts.find((a) => a.id === selectedInspectorAlertId);
+      if (found) return found;
+    }
+    return filteredAlerts[0] ?? null;
+  }, [filteredAlerts, selectedInspectorAlertId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedInspectorAlert) {
+      setInspectorPreviewBase64(null);
+      setIsLoadingInspectorPreview(false);
+      return;
+    }
+
+    const candidateOrder = findAssociatedCaptureOrder(selectedInspectorAlert);
+    const hasExisting =
+      selectedInspectorAlert.comprobante_base64 ??
+      candidateOrder?.comprobante_base64 ??
+      null;
+
+    if (hasExisting) {
+      setInspectorPreviewBase64(hasExisting);
+      setIsLoadingInspectorPreview(false);
+      return;
+    }
+
+    const hasCaptureFlag = Boolean(
+      selectedInspectorAlert.has_capture ||
+        candidateOrder?.has_capture ||
+        selectedInspectorAlert.orden_conciliada_id
+    );
+
+    if (!hasCaptureFlag) {
+      setInspectorPreviewBase64(null);
+      setIsLoadingInspectorPreview(false);
+      return;
+    }
+
+    setInspectorPreviewBase64(null);
+    setIsLoadingInspectorPreview(true);
+    const orderIdToFetch =
+      selectedInspectorAlert.orden_conciliada_id ?? candidateOrder?.id ?? null;
+
+    void fetchCaptureBase64(orderIdToFetch, selectedInspectorAlert.id).then(
+      (fetched) => {
+        if (cancelled) return;
+        setInspectorPreviewBase64(fetched);
+        setIsLoadingInspectorPreview(false);
+      }
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedInspectorAlert, findAssociatedCaptureOrder]);
+
   // =========================================================================
   // HANDLERS: LOGIN DE USUARIOS / NEGOCIOS Y GESTIÓN MULTI-NEGOCIO
   // =========================================================================
@@ -3108,10 +3191,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
   if (isCheckingAuth) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-300">
-        <div className="flex items-center gap-3 text-sm">
-          <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
-          Cargando Plataforma ConciliaPay...
+      <div className="flex min-h-screen items-center justify-center bg-[#FAF9F6] text-stone-600 dark:bg-[#121110] dark:text-stone-400">
+        <div className="flex items-center gap-3 text-sm font-medium">
+          <Loader2 className="h-4 w-4 animate-spin text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
+          Cargando ConciliarCuenta...
         </div>
       </div>
     );
@@ -3140,40 +3223,46 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-lg dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="flex items-center gap-2 text-lg font-bold text-white">
-                    <Lock className="h-4 w-4 text-emerald-400" />
+                  <p className="text-[11px] font-medium uppercase tracking-widest text-amber-700 dark:text-amber-500">
+                    ConciliarCuenta · Acceso Corporativo
+                  </p>
+                  <Dialog.Title className="mt-1 flex items-center gap-2 font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
+                    <Lock className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
                     Acceso de Usuarios y Negocios
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Ingresa con el correo y la contraseña asignados a tu negocio.
                   </Dialog.Description>
                 </div>
-                <Dialog.Close asChild>
-                  <button
-                    type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </Dialog.Close>
+                <div className="flex items-center gap-1.5">
+                  <ThemeToggle />
+                  <Dialog.Close asChild>
+                    <button
+                      type="button"
+                      className="rounded-lg p-1.5 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 dark:text-stone-500 dark:hover:bg-stone-800 dark:hover:text-stone-200"
+                    >
+                      <X className="h-4 w-4" strokeWidth={1.5} />
+                    </button>
+                  </Dialog.Close>
+                </div>
               </div>
 
               {loginError && (
-                <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-950/50 px-3.5 py-2.5 text-xs text-rose-200">
+                <div className="mt-4 rounded-lg border border-rose-700/25 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-700 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-400">
                   {loginError}
                 </div>
               )}
 
               <form
                 onSubmit={(e) => void handleBusinessLoginSubmit(e)}
-                className="mt-4 space-y-4"
+                className="mt-5 space-y-4"
               >
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Correo Electrónico *
                   </label>
                   <input
@@ -3182,12 +3271,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
                     placeholder="usuario@tunegocio.com"
-                    className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2.5 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Contraseña *
                   </label>
                   <input
@@ -3196,28 +3285,28 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2.5 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={isSubmittingLogin}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:opacity-60"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 py-2.5 text-sm font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                 >
                   {isSubmittingLogin ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                   ) : (
-                    <LogIn className="h-4 w-4" />
+                    <LogIn className="h-4 w-4" strokeWidth={1.5} />
                   )}
                   Entrar al Panel del Negocio
                 </button>
 
-                <div className="border-t border-slate-800 pt-3 text-center text-[11px] text-slate-400">
+                <div className="border-t border-stone-200 pt-3.5 text-center text-xs text-stone-500 dark:border-stone-800 dark:text-stone-400">
                   ¿Eres cliente final reportando un comprobante?{' '}
                   <Link
                     href="/portal"
-                    className="font-semibold text-sky-400 hover:text-sky-300"
+                    className="font-medium text-amber-700 underline-offset-4 hover:underline dark:text-amber-500"
                   >
                     Ir al Portal de Clientes
                   </Link>
@@ -3231,624 +3320,677 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="mx-auto w-full max-w-[1920px] px-2 py-6 sm:px-4 lg:px-6">
-        {/* Encabezado Principal */}
-        <header className="mb-6 flex flex-col gap-4 border-b border-slate-800/80 pb-6 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2.5">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-emerald-400">
-                <ShieldCheck className="h-3.5 w-3.5" />
-                MULTI-CHANNEL FINTECH ENGINE
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/15 px-3 py-1 text-xs font-semibold text-violet-200">
-                <Briefcase className="h-3.5 w-3.5 text-violet-400" />
-                {activeBusinessRecord?.nombre_negocio ?? 'Negocio Activo'}
-              </span>
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-                  dataSourceMode === 'POSTGRESQL_LIVE'
-                    ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
-                    : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                }`}
-              >
-                {dataSourceMode === 'POSTGRESQL_LIVE'
-                  ? 'PostgreSQL Pool Activo'
-                  : 'Modo Previsualización Interactiva'}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-2.5 py-0.5 text-xs text-slate-300">
-                <Mail className="h-3 w-3 text-emerald-400" />
-                {mailboxes.length > 0
-                  ? `${mailboxes.length} correo(s) IMAP`
-                  : 'Sin correo IMAP configurado'}
-              </span>
-            </div>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
-              Conciliación Multi-Canal: Zelle &amp; Binance
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Operador: <strong className="text-slate-200">{currentBusinessUser.nombre_usuario}</strong> ({currentBusinessUser.email}) · Citibank, TD Bank &amp; Binance
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {currentBusinessUser.rol === 'SUPER_ADMIN' &&
-              businessUsers.length > 1 && (
-                <select
-                  value={activeNegocioId}
-                  onChange={(e) => handleSwitchBusinessScope(e.target.value)}
-                  aria-label="Seleccionar negocio activo"
-                  className="rounded-lg border border-violet-500/40 bg-slate-900 px-3 py-2 text-xs font-semibold text-violet-200 focus:border-violet-400 focus:outline-none"
+    <div className="min-h-screen bg-[#FAF9F6] text-stone-900 dark:bg-[#121110] dark:text-stone-100">
+      <div className="mx-auto w-full max-w-[1680px] px-3 py-5 sm:px-6 lg:px-8">
+        {/* Cabecera Editorial Limpia */}
+        <header className="mb-5 border-b border-stone-200 dark:border-stone-800">
+          <div className="flex flex-col gap-4 pb-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <h1 className="font-serif text-2xl font-medium tracking-tight text-stone-900 sm:text-[28px] dark:text-stone-100">
+                  ConciliarCuenta
+                </h1>
+                <span className="hidden h-4 w-px bg-stone-200 sm:inline-block dark:bg-stone-800" />
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
+                    dataSourceMode === 'POSTGRESQL_LIVE'
+                      ? 'border-emerald-700/20 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400'
+                      : 'border-amber-700/20 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-400'
+                  }`}
                 >
-                  {businessUsers.map((biz) => (
-                    <option key={biz.id} value={biz.id}>
-                      Negocio: {biz.nombre_negocio}
-                    </option>
-                  ))}
-                </select>
-              )}
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      dataSourceMode === 'POSTGRESQL_LIVE'
+                        ? 'bg-emerald-700 dark:bg-emerald-400'
+                        : 'bg-amber-700 dark:bg-amber-400'
+                    }`}
+                  />
+                  {dataSourceMode === 'POSTGRESQL_LIVE'
+                    ? 'PostgreSQL Activo'
+                    : 'Previsualización'}
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white px-2.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-400">
+                  <Mail className="h-3 w-3 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                  {mailboxes.length > 0
+                    ? `${mailboxes.length} IMAP`
+                    : 'Sin IMAP'}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-xs text-stone-500 dark:text-stone-400">
+                  <Briefcase className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                  <span className="font-medium text-stone-700 dark:text-stone-300">
+                    {activeBusinessRecord?.nombre_negocio ?? 'Negocio Activo'}
+                  </span>
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                Operador:{' '}
+                <span className="font-medium text-stone-700 dark:text-stone-300">
+                  {currentBusinessUser.nombre_usuario}
+                </span>{' '}
+                <span className="hidden sm:inline">
+                  ({currentBusinessUser.email}) · Citibank, TD Bank &amp; Binance
+                </span>
+              </p>
+            </div>
 
-            <button
-              type="button"
-              onClick={() => setIsPreviewingLanding(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-sky-300 transition hover:border-sky-500/50 hover:bg-slate-800"
-            >
-              <Globe className="h-3.5 w-3.5" />
-              Ver Landing Page
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {currentBusinessUser.rol === 'SUPER_ADMIN' &&
+                businessUsers.length > 1 && (
+                  <select
+                    value={activeNegocioId}
+                    onChange={(e) => handleSwitchBusinessScope(e.target.value)}
+                    aria-label="Seleccionar negocio activo"
+                    className="rounded-lg border border-stone-200/90 bg-white px-3 py-2 text-xs font-medium text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200 dark:focus:border-amber-500"
+                  >
+                    {businessUsers.map((biz) => (
+                      <option key={biz.id} value={biz.id}>
+                        Negocio: {biz.nombre_negocio}
+                      </option>
+                    ))}
+                  </select>
+                )}
 
-            <Link
-              href="/portal"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Portal Clientes (/portal)
-            </Link>
+              <button
+                type="button"
+                onClick={() => void handleSyncImapNow()}
+                disabled={isSyncingImap || isLoading}
+                className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+              >
+                {isSyncingImap ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                )}
+                Sincronizar IMAP + Binance
+              </button>
 
-            <button
-              type="button"
-              onClick={() => void handleCopyPortalLink()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-600 hover:text-white"
-              title="Copiar enlace del Portal de Clientes"
-            >
-              {portalLinkCopied ? (
-                <>
-                  <Check className="h-3.5 w-3.5 text-emerald-400" />
-                  Link Copiado
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3.5 w-3.5" />
-                  Copiar Link Portal
-                </>
-              )}
-            </button>
+              <ThemeToggle />
 
-            <button
-              type="button"
-              onClick={openCreateClientModal}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-900/50"
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              + Crear Acceso Cliente
-            </button>
+              {/* Menú Desplegable Acciones */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsActionsMenuOpen((prev) => !prev)}
+                  aria-expanded={isActionsMenuOpen}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200/90 bg-white px-3 py-2 text-xs font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:border-stone-700 dark:hover:bg-stone-900"
+                >
+                  Acciones
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-stone-400 transition-transform ${
+                      isActionsMenuOpen ? 'rotate-180' : ''
+                    }`}
+                    strokeWidth={1.5}
+                  />
+                </button>
 
-            <button
-              type="button"
-              onClick={() => setIsSimulatorOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800"
-            >
-              <MailPlus className="h-3.5 w-3.5 text-sky-400" />
-              Simular Email
-            </button>
+                {isActionsMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setIsActionsMenuOpen(false)}
+                    />
+                    <div className="absolute right-0 z-40 mt-2 w-56 rounded-xl border border-stone-200/90 bg-white p-1.5 shadow-lg dark:border-stone-800 dark:bg-[#1C1A18]">
+                      <Link
+                        href="/portal"
+                        onClick={() => setIsActionsMenuOpen(false)}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                        Portal Clientes (/portal)
+                      </Link>
 
-            <button
-              type="button"
-              onClick={() => void handleSyncImapNow()}
-              disabled={isSyncingImap || isLoading}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isSyncingImap ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              Sincronizar IMAP + Binance
-            </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          void handleCopyPortalLink();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                      >
+                        {portalLinkCopied ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                        )}
+                        {portalLinkCopied ? 'Link Copiado' : 'Copiar Link Portal'}
+                      </button>
 
-            <button
-              type="button"
-              onClick={handleBusinessLogout}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-xs font-medium text-rose-300 hover:bg-rose-900/40"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Salir
-            </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          openCreateClientModal();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                      >
+                        <UserPlus className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                        Crear Acceso Cliente
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          setIsSimulatorOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                      >
+                        <MailPlus className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                        Simular Email
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          setIsPreviewingLanding(true);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-800/80"
+                      >
+                        <Globe className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                        Ver Landing Page
+                      </button>
+
+                      <div className="my-1 border-t border-stone-200 dark:border-stone-800" />
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          handleBusinessLogout();
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium text-rose-700 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                      >
+                        <LogOut className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        Salir
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </header>
 
-        {/* Navegación de Pestañas Principales */}
-        <div className="mb-6 flex flex-wrap gap-2 border-b border-slate-800 pb-3">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('ALERTS');
-              setMovementFilter('RECIBIDO');
-            }}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === 'ALERTS'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
+          {/* Fila Inferior: Navegación Editorial por Pestañas */}
+          <nav
+            aria-label="Secciones del panel"
+            className="-mb-px flex items-center gap-6 overflow-x-auto"
           >
-            <DollarSign className="h-4 w-4" />
-            1. Transacciones y Conciliación ({receivedAlertsCount})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('EXPENSES')}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === 'EXPENSES'
-                ? 'bg-rose-600 text-white shadow-md shadow-rose-950/50'
-                : 'bg-slate-900 text-rose-300/80 hover:bg-slate-800'
-            }`}
-          >
-            <CreditCard className="h-4 w-4 text-rose-400" />
-            2. Egresos / Gastos Personales y Salidas ({sentAlertsCount})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('CLIENTS')}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === 'CLIENTS'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <Users className="h-4 w-4" />
-            3. Clientes, Saldos y Órdenes ({clients.length} / {pendingOrders.length})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('LIQUIDATIONS')}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === 'LIQUIDATIONS'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <Coins className="h-4 w-4 text-emerald-400" />
-            4. Liquidaciones ({liquidations.length})
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('MAILBOXES')}
-            className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-              activeTab === 'MAILBOXES'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-                : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-            }`}
-          >
-            <Inbox className="h-4 w-4" />
-            5. Correos IMAP Monitoreados ({mailboxes.length})
-          </button>
-
-          {currentBusinessUser.rol === 'SUPER_ADMIN' && (
             <button
               type="button"
-              onClick={() => setActiveTab('BUSINESS_USERS')}
-              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                activeTab === 'BUSINESS_USERS'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50'
-                  : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
+              onClick={() => {
+                setActiveTab('ALERTS');
+                setMovementFilter('RECIBIDO');
+              }}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                activeTab === 'ALERTS'
+                  ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                  : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
               }`}
             >
-              <Briefcase className="h-4 w-4" />
-              6. Usuarios y Negocios ({businessUsers.length})
+              <DollarSign className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+              <span>Transacciones</span>
+              <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                {receivedAlertsCount}
+              </span>
             </button>
-          )}
-        </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('EXPENSES')}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                activeTab === 'EXPENSES'
+                  ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                  : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
+              }`}
+            >
+              <CreditCard className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+              <span>Egresos</span>
+              <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                {sentAlertsCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('CLIENTS')}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                activeTab === 'CLIENTS'
+                  ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                  : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
+              }`}
+            >
+              <Users className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+              <span>Clientes</span>
+              <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                {clients.length}/{pendingOrders.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('LIQUIDATIONS')}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                activeTab === 'LIQUIDATIONS'
+                  ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                  : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
+              }`}
+            >
+              <Coins className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+              <span>Liquidaciones</span>
+              <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                {liquidations.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('MAILBOXES')}
+              className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                activeTab === 'MAILBOXES'
+                  ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                  : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
+              }`}
+            >
+              <Inbox className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+              <span>IMAP</span>
+              <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                {mailboxes.length}
+              </span>
+            </button>
+
+            {currentBusinessUser.rol === 'SUPER_ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('BUSINESS_USERS')}
+                className={`inline-flex shrink-0 items-center gap-2 border-b-2 pb-3 pt-1 text-sm font-medium transition ${
+                  activeTab === 'BUSINESS_USERS'
+                    ? 'border-amber-700 text-stone-900 dark:border-amber-500 dark:text-stone-100'
+                    : 'border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-800 dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-200'
+                }`}
+              >
+                <Briefcase className="h-4 w-4 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                <span>Usuarios</span>
+                <span className="rounded-md bg-stone-100 px-1.5 py-0.5 font-mono text-[11px] tabular-nums text-stone-600 dark:bg-stone-800 dark:text-stone-400">
+                  {businessUsers.length}
+                </span>
+              </button>
+            )}
+          </nav>
+        </header>
 
         {/* Notificación de Estado */}
         {bannerMessage && (
           <div
-            className={`mb-6 flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${
+            className={`mb-5 flex items-center justify-between rounded-xl border px-4 py-3 text-sm ${
               bannerMessage.type === 'success'
-                ? 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200'
+                ? 'border-emerald-700/20 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300'
                 : bannerMessage.type === 'warning'
-                  ? 'border-amber-500/40 bg-amber-950/50 text-amber-200'
+                  ? 'border-amber-700/25 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300'
                   : bannerMessage.type === 'error'
-                    ? 'border-rose-500/40 bg-rose-950/50 text-rose-200'
-                    : 'border-sky-500/40 bg-sky-950/50 text-sky-200'
+                    ? 'border-rose-700/25 bg-rose-50 text-rose-800 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-300'
+                    : 'border-stone-200/90 bg-white text-stone-700 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200'
             }`}
           >
             <div className="flex items-center gap-2.5">
-              <Sparkles className="h-4 w-4 shrink-0" />
+              <Sparkles className="h-4 w-4 shrink-0 opacity-80" strokeWidth={1.5} />
               <span>{bannerMessage.text}</span>
             </div>
             <button
               type="button"
               onClick={() => setBannerMessage(null)}
-              className="ml-4 rounded p-1 opacity-70 hover:opacity-100"
+              className="ml-4 rounded p-1 opacity-70 transition hover:opacity-100"
               aria-label="Cerrar aviso"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" strokeWidth={1.5} />
             </button>
           </div>
         )}
 
         {/* =====================================================================
-            TARJETAS SUPERIORES SEPARADAS: BLOQUE ZELLE (USD) + BLOQUE BINANCE (USDT)
+            CINTA FINANCIERA COMPACTA MULTI-CANAL (ZELLE USD / BINANCE USDT)
            ===================================================================== */}
         <section
           aria-label="Resumen Financiero Multi-Canal"
-          className="mb-8 grid grid-cols-1 gap-5 lg:grid-cols-2"
+          className="mb-5 rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]"
         >
-          {/* Bloque Zelle (Citibank + TD Bank en USD) */}
-          <div className="rounded-2xl border border-sky-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-sky-950/30 p-5 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="rounded-lg bg-sky-500/15 p-2 text-sky-400">
-                  <Building2 className="h-4 w-4" />
-                </span>
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Bloque Zelle (Citibank + TD Bank)
-                  </h2>
-                  <p className="text-[11px] text-slate-400">
-                    Total Conciliado Acreditado · Comisiones Reales
-                  </p>
-                </div>
-              </div>
-              <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-sky-300">
-                USD
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Neto Conciliado
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-white">
-                  {formatMoney(
-                    financialMetrics.zelleNetoAcumuladoUsd ??
-                      financialMetrics.zelleNetoLiquidableUsd,
-                    'USD'
-                  )}
-                </p>
-                <span className="text-[10px] text-slate-400">
-                  Bruto {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')} ·{' '}
-                  {financialMetrics.pagosConciliadosHistoricoCount ??
-                    financialMetrics.pagosConciliadosCount}{' '}
-                  pagos
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Comisión Retenida
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-violet-300">
-                  -{formatMoney(financialMetrics.zelleComisionRetenidaUsd, 'USD')}
-                </p>
-                <span className="text-[10px] text-slate-500">
-                  Ciclo actual: -
-                  {formatMoney(financialMetrics.zelleCicloComisionUsd ?? 0, 'USD')}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-rose-500/25 bg-rose-950/20 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-rose-300">
-                  Total Liquidado
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-rose-400">
-                  -{formatMoney(financialMetrics.zelleLiquidadoUsd ?? 0, 'USD')}
-                </p>
-                <span className="text-[10px] text-rose-300/70">
-                  Ya pagado a titulares
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-emerald-500/35 bg-emerald-950/35 p-3.5">
-                <span className="text-[11px] font-semibold uppercase text-emerald-300">
-                  Saldo Pendiente
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-emerald-400">
+          {/* Barra Superior de Canal */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200/80 px-4 py-3 dark:border-stone-800">
+            <div className="inline-flex items-center rounded-lg border border-stone-200/90 bg-[#FAF9F6] p-0.5 dark:border-stone-800 dark:bg-[#121110]">
+              <button
+                type="button"
+                onClick={() => setActiveFinanceChannel('ZELLE')}
+                className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  activeFinanceChannel === 'ZELLE'
+                    ? 'bg-stone-900 text-stone-50 shadow-sm dark:bg-stone-100 dark:text-stone-950'
+                    : 'text-stone-600 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100'
+                }`}
+              >
+                <Building2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                <span>Zelle USD</span>
+                <span className="font-mono text-[11px] tabular-nums opacity-80">
                   {formatMoney(financialMetrics.zelleNetoLiquidableUsd, 'USD')}
-                </p>
-                <span className="text-[10px] text-emerald-300/80">
-                  Conciliado − Liquidado (Ciclo: +
-                  {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')})
                 </span>
-              </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFinanceChannel('BINANCE')}
+                className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  activeFinanceChannel === 'BINANCE'
+                    ? 'bg-stone-900 text-stone-50 shadow-sm dark:bg-stone-100 dark:text-stone-950'
+                    : 'text-stone-600 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100'
+                }`}
+              >
+                <Coins className="h-3.5 w-3.5" strokeWidth={1.5} />
+                <span>Binance USDT</span>
+                <span className="font-mono text-[11px] tabular-nums opacity-80">
+                  {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
+                </span>
+              </button>
             </div>
 
-            {/* Desglose de Titular(es) Beneficiarios del Saldo Acreditado */}
-            {clientsWithReconciledFunds.some((c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0) && (
-              <div className="mt-3.5 rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3.5">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
-                    <UserCheck className="h-4 w-4 text-emerald-400" />
-                    <span>¿De quién es este dinero? Titular(es) Acreditados:</span>
-                  </div>
-                  <span className="text-[10px] text-slate-400">
-                    Click para filtrar movimientos
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {clientsWithReconciledFunds
-                    .filter((c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0)
-                    .map((client) => {
-                      const isSelected = selectedClientFilter === client.id;
-                      const clientLiquidadoUsd = Number(
-                        client.total_liquidado_usd ?? 0
-                      );
-                      const clientSaldoPendienteUsd =
-                        Math.round(
-                          Number(
-                            client.saldo_disponible_usd ??
-                              client.total_neto_usd - clientLiquidadoUsd
-                          ) * 100
-                        ) / 100;
-                      return (
-                        <div
-                          key={client.id}
-                          onClick={() =>
-                            setSelectedClientFilter(
-                              isSelected ? 'TODOS' : client.id
-                            )
-                          }
-                          className={`flex items-center justify-between rounded-lg p-2.5 transition-all cursor-pointer border ${
-                            isSelected
-                              ? 'border-emerald-400 bg-emerald-500/25 ring-1 ring-emerald-400 shadow-md'
-                              : 'border-slate-800 bg-slate-900/90 hover:border-emerald-500/50 hover:bg-slate-900'
-                          }`}
-                          title={`Click para filtrar solo las transacciones de ${client.nombre_titular}`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 font-mono text-xs font-bold text-emerald-300 ring-1 ring-emerald-500/40">
-                              {client.nombre_titular.slice(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-bold text-white">
-                                  {client.nombre_titular}
-                                </span>
-                                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.2 text-[10px] font-semibold text-emerald-300">
-                                  {client.pagos_conciliados_count} pagos conciliados
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-slate-400">
-                                Conciliado:{' '}
-                                <strong className="text-slate-200">
-                                  {formatMoney(client.total_neto_usd, 'USD')}
-                                </strong>{' '}
-                                (Bruto {formatMoney(client.total_bruto_usd, 'USD')} · Com{' '}
-                                <span className="text-violet-300">
-                                  -{formatMoney(client.total_comision_usd, 'USD')}
-                                </span>
-                                )
-                                {clientLiquidadoUsd > 0 && (
-                                  <>
-                                    {' '}
-                                    · Liquidado:{' '}
-                                    <strong className="text-rose-400">
-                                      -{formatMoney(clientLiquidadoUsd, 'USD')}
-                                    </strong>
-                                  </>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="text-right pl-3">
-                            <div className="font-mono text-sm font-bold text-emerald-400">
-                              {formatMoney(clientSaldoPendienteUsd, 'USD')}
-                            </div>
-                            <div className="text-[10px] text-slate-400 font-medium">
-                              Saldo Pendiente
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
-
-            {financialMetrics.zellePorConciliarUsd > 0 && (
-              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-500/20 bg-sky-950/30 px-3.5 py-2 text-xs text-sky-200/90">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-sky-400 shrink-0" />
-                  <span>
-                    <strong className="font-semibold text-white">En espera por conciliar:</strong> {formatMoney(financialMetrics.zellePorConciliarUsd, 'USD')} ({financialMetrics.pagosRevisionManualCount + financialMetrics.pagosDetectadosCount} correos)
-                  </span>
-                </div>
-                <span className="text-[11px] text-sky-300/70">
-                  Sin cliente asignado · Comisión 0% hasta conciliar
-                </span>
-              </div>
-            )}
+            <div className="text-xs text-stone-500 dark:text-stone-400">
+              {activeFinanceChannel === 'ZELLE'
+                ? 'Citibank & TD Bank · Conciliado histórico y saldo por liquidar'
+                : 'Binance Pay, P2P & Depósitos Red · Conciliado USDT'}
+            </div>
           </div>
 
-          {/* Bloque Binance (Pay + P2P + On-Chain en USDT) */}
-          <div className="rounded-2xl border border-amber-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/25 p-5 shadow-lg">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="rounded-lg bg-amber-500/15 p-2 text-amber-400">
-                  <Coins className="h-4 w-4" />
-                </span>
-                <div>
-                  <h2 className="text-sm font-bold text-white">
-                    Bloque Binance (Pay + P2P + On-Chain)
-                  </h2>
-                  <p className="text-[11px] text-slate-400">
-                    Total Conciliado USDT · Comisiones Reales
+          {/* Barra Unificada de 4 KPIs */}
+          {activeFinanceChannel === 'ZELLE' ? (
+            <>
+              <div className="grid grid-cols-2 divide-y divide-stone-200 sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-stone-800">
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Neto Conciliado
+                  </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    {formatMoney(
+                      financialMetrics.zelleNetoAcumuladoUsd ??
+                        financialMetrics.zelleNetoLiquidableUsd,
+                      'USD'
+                    )}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                    Bruto {formatMoney(financialMetrics.zelleBrutoRecibidoUsd, 'USD')} ·{' '}
+                    {financialMetrics.pagosConciliadosHistoricoCount ??
+                      financialMetrics.pagosConciliadosCount}{' '}
+                    pagos
+                  </p>
+                </div>
+
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Comisión
+                  </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    -{formatMoney(financialMetrics.zelleComisionRetenidaUsd, 'USD')}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                    Ciclo actual: -
+                    {formatMoney(financialMetrics.zelleCicloComisionUsd ?? 0, 'USD')}
+                  </p>
+                </div>
+
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Total Liquidado
+                  </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    -{formatMoney(financialMetrics.zelleLiquidadoUsd ?? 0, 'USD')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
+                    Ya pagado a titulares
+                  </p>
+                </div>
+
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Saldo Pendiente
+                  </span>
+                  <p
+                    className={`mt-1 font-serif text-2xl font-medium tracking-tight tabular-nums ${
+                      financialMetrics.zelleNetoLiquidableUsd < 0
+                        ? 'text-rose-700 dark:text-rose-400'
+                        : financialMetrics.zelleNetoLiquidableUsd > 0
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-stone-900 dark:text-stone-100'
+                    }`}
+                  >
+                    {formatMoney(financialMetrics.zelleNetoLiquidableUsd, 'USD')}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                    Ciclo activo: +
+                    {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')}
                   </p>
                 </div>
               </div>
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-amber-300">
-                USDT
-              </span>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Neto Conciliado
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-white">
-                  {formatMoney(
-                    financialMetrics.binanceNetoAcumuladoUsdt ??
-                      financialMetrics.binanceNetoDisponibleUsdt,
-                    'USDT'
-                  )}
-                </p>
-                <span className="text-[10px] text-amber-300/80">
-                  Bruto {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-slate-400">
-                  Comisión USDT
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-violet-300">
-                  -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
-                </p>
-                <span className="text-[10px] text-slate-500">
-                  Fee sobre conciliados
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-rose-500/25 bg-rose-950/20 p-3.5">
-                <span className="text-[11px] font-medium uppercase text-rose-300">
-                  Total Liquidado
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-rose-400">
-                  -{formatMoney(financialMetrics.binanceLiquidadoUsdt ?? 0, 'USDT')}
-                </p>
-                <span className="text-[10px] text-rose-300/70">
-                  Ya pagado en USDT
-                </span>
-              </div>
-
-              <div className="rounded-xl border border-amber-500/35 bg-amber-950/25 p-3.5">
-                <span className="text-[11px] font-semibold uppercase text-amber-300">
-                  Saldo Pendiente
-                </span>
-                <p className="mt-1.5 font-mono text-lg font-bold text-amber-300">
-                  {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
-                </p>
-                <span className="text-[10px] text-amber-300/80">
-                  Conciliado − Liquidado
-                </span>
-              </div>
-            </div>
-
-            {/* Desglose de Titular(es) en USDT */}
-            {clientsWithReconciledFunds.some((c) => c.total_neto_usdt > 0) && (
-              <div className="mt-3.5 rounded-xl border border-amber-500/30 bg-amber-950/25 p-3.5">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
-                    <UserCheck className="h-4 w-4 text-amber-400" />
-                    <span>Titular(es) Acreditados en USDT:</span>
+              {/* Línea Compacta: Titulares Acreditados + En Espera por Conciliar */}
+              {(clientsWithReconciledFunds.some(
+                (c) => c.total_neto_usd > 0 || c.pagos_conciliados_count > 0
+              ) ||
+                financialMetrics.zellePorConciliarUsd > 0) && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 bg-[#FAF9F6]/60 px-4 py-2.5 dark:border-stone-800 dark:bg-[#121110]/50">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                      <UserCheck className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                      Titulares:
+                    </span>
+                    {clientsWithReconciledFunds
+                      .filter(
+                        (c) =>
+                          c.total_neto_usd > 0 || c.pagos_conciliados_count > 0
+                      )
+                      .map((client) => {
+                        const isSelected = selectedClientFilter === client.id;
+                        const clientLiquidadoUsd = Number(
+                          client.total_liquidado_usd ?? 0
+                        );
+                        const clientSaldoPendienteUsd =
+                          Math.round(
+                            Number(
+                              client.saldo_disponible_usd ??
+                                client.total_neto_usd - clientLiquidadoUsd
+                            ) * 100
+                          ) / 100;
+                        return (
+                          <button
+                            key={client.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedClientFilter(
+                                isSelected ? 'TODOS' : client.id
+                              )
+                            }
+                            title={`Filtrar movimientos de ${client.nombre_titular} · Conciliado ${formatMoney(client.total_neto_usd, 'USD')} · Liquidado ${formatMoney(clientLiquidadoUsd, 'USD')}`}
+                            className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition ${
+                              isSelected
+                                ? 'border-amber-700 bg-amber-50 text-stone-900 dark:border-amber-500 dark:bg-amber-950/40 dark:text-stone-100'
+                                : 'border-stone-200/90 bg-white text-stone-700 hover:border-stone-300 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700'
+                            }`}
+                          >
+                            <span className="font-medium">
+                              {client.nombre_titular}
+                            </span>
+                            <span className="text-[10px] text-stone-400 dark:text-stone-500">
+                              ({client.pagos_conciliados_count})
+                            </span>
+                            <span
+                              className={`font-mono text-xs font-semibold tabular-nums ${
+                                clientSaldoPendienteUsd < 0
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : clientSaldoPendienteUsd > 0
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-stone-600 dark:text-stone-400'
+                              }`}
+                            >
+                              {formatMoney(clientSaldoPendienteUsd, 'USD')}
+                            </span>
+                          </button>
+                        );
+                      })}
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    Click para filtrar por cliente
+
+                  {financialMetrics.zellePorConciliarUsd > 0 && (
+                    <div className="inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+                      <Clock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
+                      <span>
+                        En espera por conciliar:{' '}
+                        <strong className="font-mono font-semibold tabular-nums">
+                          {formatMoney(financialMetrics.zellePorConciliarUsd, 'USD')}
+                        </strong>{' '}
+                        <span className="font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                          (
+                          {financialMetrics.pagosRevisionManualCount +
+                            financialMetrics.pagosDetectadosCount}{' '}
+                          correos)
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 divide-y divide-stone-200 sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-stone-800">
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Neto Conciliado
                   </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    {formatMoney(
+                      financialMetrics.binanceNetoAcumuladoUsdt ??
+                        financialMetrics.binanceNetoDisponibleUsdt,
+                      'USDT'
+                    )}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                    Bruto {formatMoney(financialMetrics.binanceRecibidoUsdt, 'USDT')}
+                  </p>
                 </div>
 
-                <div className="space-y-2">
-                  {clientsWithReconciledFunds
-                    .filter((c) => c.total_neto_usdt > 0)
-                    .map((client) => {
-                      const isSelected = selectedClientFilter === client.id;
-                      const clientLiquidadoUsdt = Number(
-                        client.total_liquidado_usdt ?? 0
-                      );
-                      const clientSaldoPendienteUsdt =
-                        Math.round(
-                          Number(
-                            client.saldo_disponible_usdt ??
-                              client.total_neto_usdt - clientLiquidadoUsdt
-                          ) * 100
-                        ) / 100;
-                      return (
-                        <div
-                          key={client.id}
-                          onClick={() =>
-                            setSelectedClientFilter(
-                              isSelected ? 'TODOS' : client.id
-                            )
-                          }
-                          className={`flex items-center justify-between rounded-lg p-2.5 transition-all cursor-pointer border ${
-                            isSelected
-                              ? 'border-amber-400 bg-amber-500/25 ring-1 ring-amber-400 shadow-md'
-                              : 'border-slate-800 bg-slate-900/90 hover:border-amber-500/50 hover:bg-slate-900'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/20 font-mono text-xs font-bold text-amber-300 ring-1 ring-amber-500/40">
-                              {client.nombre_titular.slice(0, 2).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-white">
-                                {client.nombre_titular}
-                              </div>
-                              <p className="text-[11px] text-slate-400">
-                                Conciliado: <strong className="text-slate-200">{formatMoney(client.total_neto_usdt, 'USDT')}</strong> · Fee ({client.porcentaje_comision_binance}%): <span className="text-violet-300">-{formatMoney(client.total_comision_usdt, 'USDT')}</span>
-                                {clientLiquidadoUsdt > 0 && (
-                                  <>
-                                    {' '}
-                                    · Liquidado:{' '}
-                                    <strong className="text-rose-400">
-                                      -{formatMoney(clientLiquidadoUsdt, 'USDT')}
-                                    </strong>
-                                  </>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right pl-3">
-                            <div className="font-mono text-sm font-bold text-amber-300">
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Comisión
+                  </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    -{formatMoney(financialMetrics.binanceComisionRetenidaUsdt, 'USDT')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
+                    Fee sobre conciliados
+                  </p>
+                </div>
+
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Total Liquidado
+                  </span>
+                  <p className="mt-1 font-mono text-xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
+                    -{formatMoney(financialMetrics.binanceLiquidadoUsdt ?? 0, 'USDT')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
+                    Ya pagado en USDT
+                  </p>
+                </div>
+
+                <div className="px-4 py-3.5 sm:px-5">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Saldo Pendiente
+                  </span>
+                  <p
+                    className={`mt-1 font-serif text-2xl font-medium tracking-tight tabular-nums ${
+                      financialMetrics.binanceNetoDisponibleUsdt < 0
+                        ? 'text-rose-700 dark:text-rose-400'
+                        : financialMetrics.binanceNetoDisponibleUsdt > 0
+                          ? 'text-emerald-700 dark:text-emerald-400'
+                          : 'text-stone-900 dark:text-stone-100'
+                    }`}
+                  >
+                    {formatMoney(financialMetrics.binanceNetoDisponibleUsdt, 'USDT')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
+                    Conciliado − Liquidado
+                  </p>
+                </div>
+              </div>
+
+              {(clientsWithReconciledFunds.some((c) => c.total_neto_usdt > 0) ||
+                financialMetrics.binancePorConciliarUsdt > 0) && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200/80 bg-[#FAF9F6]/60 px-4 py-2.5 dark:border-stone-800 dark:bg-[#121110]/50">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                      <UserCheck className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                      Titulares USDT:
+                    </span>
+                    {clientsWithReconciledFunds
+                      .filter((c) => c.total_neto_usdt > 0)
+                      .map((client) => {
+                        const isSelected = selectedClientFilter === client.id;
+                        const clientLiquidadoUsdt = Number(
+                          client.total_liquidado_usdt ?? 0
+                        );
+                        const clientSaldoPendienteUsdt =
+                          Math.round(
+                            Number(
+                              client.saldo_disponible_usdt ??
+                                client.total_neto_usdt - clientLiquidadoUsdt
+                            ) * 100
+                          ) / 100;
+                        return (
+                          <button
+                            key={client.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedClientFilter(
+                                isSelected ? 'TODOS' : client.id
+                              )
+                            }
+                            className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs transition ${
+                              isSelected
+                                ? 'border-amber-700 bg-amber-50 text-stone-900 dark:border-amber-500 dark:bg-amber-950/40 dark:text-stone-100'
+                                : 'border-stone-200/90 bg-white text-stone-700 hover:border-stone-300 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700'
+                            }`}
+                          >
+                            <span className="font-medium">
+                              {client.nombre_titular}
+                            </span>
+                            <span
+                              className={`font-mono text-xs font-semibold tabular-nums ${
+                                clientSaldoPendienteUsdt < 0
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : clientSaldoPendienteUsdt > 0
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-stone-600 dark:text-stone-400'
+                              }`}
+                            >
                               {formatMoney(clientSaldoPendienteUsdt, 'USDT')}
-                            </div>
-                            <div className="text-[10px] text-slate-400">
-                              Saldo Pendiente
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
 
-            {financialMetrics.binancePorConciliarUsdt > 0 && (
-              <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-950/30 px-3.5 py-2 text-xs text-amber-200/90">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-amber-400 shrink-0" />
-                  <span>
-                    <strong className="font-semibold text-white">En espera por conciliar:</strong> {formatMoney(financialMetrics.binancePorConciliarUsdt, 'USDT')}
-                  </span>
+                  {financialMetrics.binancePorConciliarUsdt > 0 && (
+                    <div className="inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-400">
+                      <Clock className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
+                      <span>
+                        En espera por conciliar:{' '}
+                        <strong className="font-mono font-semibold tabular-nums">
+                          {formatMoney(financialMetrics.binancePorConciliarUsdt, 'USDT')}
+                        </strong>
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <span className="text-[11px] text-amber-300/70">
-                  Sin cliente asignado · Fee 0% hasta conciliar
-                </span>
-              </div>
-            )}
-          </div>
+              )}
+            </>
+          )}
         </section>
 
         {/* Barra de Estado de Conciliación con Filtros Rápidos Clickeables */}
-        <div className="mb-6 flex flex-wrap items-center gap-3 text-xs">
+        <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
           <button
             type="button"
             onClick={() => {
@@ -3857,15 +3999,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'CONCILIADO' ? 'TODOS' : 'CONCILIADO'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
               statusFilter === 'CONCILIADO' && activeTab === 'ALERTS'
-                ? 'border-emerald-400 bg-emerald-500/25 text-emerald-200 ring-2 ring-emerald-500/40 shadow-lg'
-                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
+                ? 'border-emerald-700 bg-emerald-700 text-white dark:border-emerald-500 dark:bg-emerald-500/20 dark:text-emerald-300'
+                : 'border-stone-200/90 bg-white text-stone-700 hover:border-emerald-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-emerald-500/40'
             }`}
             title="Clic para filtrar únicamente pagos conciliados"
           >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Conciliados: {financialMetrics.pagosConciliadosCount}
+            <CheckCircle2
+              className={`h-3.5 w-3.5 ${
+                statusFilter === 'CONCILIADO' && activeTab === 'ALERTS'
+                  ? 'text-current'
+                  : 'text-emerald-700 dark:text-emerald-400'
+              }`}
+              strokeWidth={1.5}
+            />
+            <span>Conciliados</span>
+            <span className="font-mono tabular-nums opacity-80">
+              {financialMetrics.pagosConciliadosCount}
+            </span>
           </button>
 
           <button
@@ -3876,15 +4028,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'REVISION_MANUAL' ? 'TODOS' : 'REVISION_MANUAL'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
               statusFilter === 'REVISION_MANUAL' && activeTab === 'ALERTS'
-                ? 'border-amber-400 bg-amber-500/25 text-amber-100 ring-2 ring-amber-500/40 shadow-lg'
-                : 'border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                ? 'border-amber-700 bg-amber-700 text-white dark:border-amber-500 dark:bg-amber-500/20 dark:text-amber-300'
+                : 'border-stone-200/90 bg-white text-stone-700 hover:border-amber-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-amber-500/40'
             }`}
             title="Clic para filtrar únicamente pagos en revisión manual"
           >
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Revisión Manual: {financialMetrics.pagosRevisionManualCount}
+            <AlertTriangle
+              className={`h-3.5 w-3.5 ${
+                statusFilter === 'REVISION_MANUAL' && activeTab === 'ALERTS'
+                  ? 'text-current'
+                  : 'text-amber-700 dark:text-amber-400'
+              }`}
+              strokeWidth={1.5}
+            />
+            <span>Revisión Manual</span>
+            <span className="font-mono tabular-nums opacity-80">
+              {financialMetrics.pagosRevisionManualCount}
+            </span>
           </button>
 
           <button
@@ -3895,33 +4057,46 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'DETECTADO' ? 'TODOS' : 'DETECTADO'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
               statusFilter === 'DETECTADO' && activeTab === 'ALERTS'
-                ? 'border-sky-400 bg-sky-500/25 text-sky-100 ring-2 ring-sky-500/40 shadow-lg'
-                : 'border-sky-500/30 bg-sky-500/10 text-sky-300 hover:bg-sky-500/20'
+                ? 'border-amber-700 bg-amber-700 text-white dark:border-amber-500 dark:bg-amber-500/20 dark:text-amber-300'
+                : 'border-stone-200/90 bg-white text-stone-700 hover:border-amber-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-amber-500/40'
             }`}
             title="Clic para filtrar pagos detectados sin orden vinculada"
           >
-            <Clock className="h-3.5 w-3.5" />
-            Detectados (Sin Orden): {financialMetrics.pagosDetectadosCount}
+            <Clock
+              className={`h-3.5 w-3.5 ${
+                statusFilter === 'DETECTADO' && activeTab === 'ALERTS'
+                  ? 'text-current'
+                  : 'text-amber-700 dark:text-amber-400'
+              }`}
+              strokeWidth={1.5}
+            />
+            <span>Detectados</span>
+            <span className="font-mono tabular-nums opacity-80">
+              {financialMetrics.pagosDetectadosCount}
+            </span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('CLIENTS')}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-medium text-slate-300 transition hover:bg-slate-800 cursor-pointer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white px-3 py-1.5 font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700"
             title="Clic para ir a la pestaña de clientes y órdenes pendientes"
           >
-            <Wallet className="h-3.5 w-3.5 text-slate-400" />
-            Órdenes Pendientes en Portal: {pendingOrders.length}
+            <Wallet className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+            <span>Órdenes Pendientes</span>
+            <span className="font-mono tabular-nums opacity-80">
+              {pendingOrders.length}
+            </span>
           </button>
 
           {selectedClientFilter !== 'TODOS' && (
-            <div className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/20 px-3 py-1.5 font-semibold text-emerald-200 text-xs shadow-md">
-              <UserCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-700/30 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300">
+              <UserCheck className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
               <span>
-                Filtrando por:{' '}
-                <strong className="text-white">
+                Titular:{' '}
+                <strong className="font-semibold">
                   {selectedClientFilter === 'SIN_ASIGNAR'
                     ? 'Sin Asignar (En Espera)'
                     : clients.find((c) => c.id === selectedClientFilter)?.nombre_titular ?? selectedClientFilter}
@@ -3930,10 +4105,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               <button
                 type="button"
                 onClick={() => setSelectedClientFilter('TODOS')}
-                className="ml-1 rounded bg-emerald-500/30 px-1.5 py-0.5 text-[10px] text-white hover:bg-emerald-500/50 cursor-pointer"
+                className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-amber-700/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 transition hover:bg-amber-700/25 cursor-pointer dark:bg-amber-500/20 dark:text-amber-200 dark:hover:bg-amber-500/30"
                 title="Quitar filtro de cliente"
               >
-                ✕ Limpiar
+                <X className="h-3 w-3" strokeWidth={1.5} />
+                Limpiar
               </button>
             </div>
           )}
@@ -3942,45 +4118,51 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             <button
               type="button"
               onClick={() => setStatusFilter('TODOS')}
-              className="text-[11px] font-medium text-slate-400 underline hover:text-white cursor-pointer"
+              className="px-2 py-1 text-xs font-medium text-stone-500 underline underline-offset-4 transition hover:text-stone-900 cursor-pointer dark:text-stone-400 dark:hover:text-stone-100"
             >
-              (Mostrar Todos Estados)
+              Mostrar todos
             </button>
           )}
         </div>
 
         {/* =====================================================================
-            PESTAÑA 1: TABLA DE TRANSACCIONES Y CONCILIACIÓN MULTICANAL
+            PESTAÑA 1: ESPACIO DE TRABAJO MASTER-DETAIL DE TRANSACCIONES
            ===================================================================== */}
         {activeTab === 'ALERTS' && (
           <>
             <section
               aria-label="Filtros de Conciliación"
-              className="mb-6 rounded-xl border border-slate-800 bg-slate-900/70 p-4"
+              className="mb-5 rounded-xl border border-stone-200/90 bg-white p-4 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]"
             >
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
                 <div className="relative md:col-span-4">
-                  <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Search
+                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                    strokeWidth={1.5}
+                  />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Buscar por remitente, TxID, referencia..."
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                   />
                 </div>
 
                 {/* Filtro por Cliente Titular */}
                 <div className="md:col-span-3">
                   <div className="relative">
-                    <UserCheck className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-400" />
+                    <UserCheck
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                      strokeWidth={1.5}
+                    />
                     <select
                       value={selectedClientFilter}
                       onChange={(e) => setSelectedClientFilter(e.target.value)}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none font-medium"
+                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm font-medium text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
                     >
                       <option value="TODOS">Todos los Titulares</option>
-                      <option value="SIN_ASIGNAR">⚠️ Sin Cliente (En Espera)</option>
+                      <option value="SIN_ASIGNAR">Sin Cliente (En Espera)</option>
                       {clients.map((c) => {
                         const cSaldo =
                           Math.round(
@@ -3991,7 +4173,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           ) / 100;
                         return (
                           <option key={c.id} value={c.id}>
-                            👤 {c.nombre_titular} ({formatMoney(cSaldo, 'USD')} pendiente)
+                            {c.nombre_titular} ({formatMoney(cSaldo, 'USD')} pendiente)
                           </option>
                         );
                       })}
@@ -4001,13 +4183,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="md:col-span-2">
                   <div className="relative">
-                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Building2
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                      strokeWidth={1.5}
+                    />
                     <select
                       value={platformFilter}
                       onChange={(e) =>
                         setPlatformFilter(e.target.value as 'TODOS' | PlatformType)
                       }
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
                     >
                       <option value="TODOS">Todas Plataformas</option>
                       <option value="CITIBANK">Citibank (Zelle)</option>
@@ -4030,7 +4215,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         e.target.value as 'TODOS' | MovementType
                       )
                     }
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-2 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
                   >
                     <option value="TODOS">Flujos</option>
                     <option value="RECIBIDO">Recibido</option>
@@ -4040,13 +4225,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="md:col-span-2">
                   <div className="relative">
-                    <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Filter
+                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                      strokeWidth={1.5}
+                    />
                     <select
                       value={statusFilter}
                       onChange={(e) =>
                         setStatusFilter(e.target.value as 'TODOS' | AlertStatus)
                       }
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
                     >
                       <option value="TODOS">Todos Estados</option>
                       <option value="CONCILIADO">Conciliado</option>
@@ -4060,8 +4248,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </div>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-800/70 pt-3">
-                <p className="text-xs text-slate-400">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone-200/80 pt-3 dark:border-stone-800">
+                <p className="text-xs text-stone-500 dark:text-stone-400">
                   {selectedCycleFilter !== 'ACTIVO' && selectedCycleFilter !== 'TODOS'
                     ? (() => {
                         const selLiq = liquidations.find(
@@ -4081,13 +4269,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
                         : showDiscardedHistory
                           ? 'Mostrando ciclo activo + correos eliminados/descartados (puedes restaurarlos).'
-                          : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados están ocultos).'}
+                          : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados ocultos).'}
                 </p>
+
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Selector directo de Ciclos para la vista de reportes */}
-                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/35 bg-slate-950 px-2.5 py-1">
-                    <span className="text-[11px] font-semibold text-indigo-300">
-                      Ciclos:
+                  {/* Selector directo de Ciclos */}
+                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 dark:border-stone-800 dark:bg-[#121110]">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
+                      Ciclo:
                     </span>
                     <select
                       value={selectedCycleFilter}
@@ -4096,7 +4285,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setSelectedCycleFilter(val);
                         setShowLiquidatedHistory(val !== 'ACTIVO');
                       }}
-                      className="bg-slate-950 text-xs font-semibold text-slate-200 focus:outline-none cursor-pointer"
+                      className="max-w-[260px] bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer dark:text-stone-200"
                     >
                       <option value="ACTIVO">
                         Ciclo Actual (Activo) · {financialMetrics.pagosConciliadosCount} conc. · Neto{' '}
@@ -4142,17 +4331,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         return next;
                       });
                     }}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
                       showDiscardedHistory
-                        ? 'border-rose-500/50 bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
-                        : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
+                        ? 'border-rose-700/35 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-400'
+                        : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 hover:text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700'
                     }`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {showDiscardedHistory
-                      ? 'Ocultar Eliminados'
-                      : 'Ver Correos Eliminados'}
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    {showDiscardedHistory ? 'Ocultar Eliminados' : 'Eliminados'}
                   </button>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -4164,20 +4352,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setSelectedCycleFilter('TODOS');
                       }
                     }}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition cursor-pointer ${
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
                       showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
-                        ? 'border-indigo-500/50 bg-indigo-500/20 text-indigo-200 hover:bg-indigo-500/30'
-                        : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600 hover:text-white'
+                        ? 'border-amber-700/35 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-400'
+                        : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 hover:text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700'
                     }`}
                   >
                     {showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
                       ? 'Volver al Ciclo Actual'
-                      : 'Ver Historial Liquidado'}
+                      : 'Historial Liquidado'}
                   </button>
                 </div>
               </div>
 
-              {/* Resumen de Totales del Ciclo Seleccionado (y subtotal filtrado en vista) */}
+              {/* Resumen de Totales del Ciclo Seleccionado */}
               {(() => {
                 const selectedCycleLiq =
                   selectedCycleFilter !== 'ACTIVO' &&
@@ -4202,76 +4390,83 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     ? visibleTableTotals.netoUsdt
                     : visibleTableTotals.netoUsd;
                   const isSubFiltered = visibleTableTotals.totalRows !== cyclePagos;
+                  const cycleRestante = Number(selectedCycleLiq.saldo_restante ?? 0);
 
                   return (
-                    <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-indigo-500/25 pt-3 sm:grid-cols-5">
-                      <div className="rounded-lg border border-indigo-500/35 bg-indigo-950/30 px-3 py-2">
-                        <span className="text-[10px] font-semibold uppercase text-indigo-300">
+                    <div className="mt-3 grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6]/70 sm:grid-cols-5 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
+                      <div className="px-3 py-2.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
                           {selectedCycleLiq.numero_ciclo
                             ? `Ciclo #${selectedCycleLiq.numero_ciclo} · ${selectedCycleLiq.cliente_nombre}`
                             : selectedCycleLiq.cliente_nombre}
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                           {cyclePagos} pagos
                         </p>
-                        <span className="text-[10px] text-indigo-200/80">
+                        <span className="font-mono text-[10px] text-stone-500 dark:text-stone-400">
                           {isSubFiltered
                             ? `En vista: ${visibleTableTotals.totalRows} de ${cyclePagos}`
                             : selectedCycleLiq.codigo_liquidacion}
                         </span>
                       </div>
 
-                      <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                        <span className="text-[10px] font-semibold uppercase text-slate-400">
+                      <div className="px-3 py-2.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                           Bruto del Ciclo
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-slate-100">
+                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                           {formatMoney(cycleBruto, selectedCycleLiq.moneda)}
                         </p>
                         {isSubFiltered && (
-                          <span className="text-[10px] text-amber-300">
+                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                             En vista: {formatMoney(viewBruto, selectedCycleLiq.moneda)}
                           </span>
                         )}
                       </div>
 
-                      <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                        <span className="text-[10px] font-semibold uppercase text-slate-400">
+                      <div className="px-3 py-2.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                           Comisión del Ciclo
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-violet-300">
+                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                           -{formatMoney(cycleComision, selectedCycleLiq.moneda)}
                         </p>
                         {isSubFiltered && (
-                          <span className="text-[10px] text-amber-300">
+                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                             En vista: -{formatMoney(viewCom, selectedCycleLiq.moneda)}
                           </span>
                         )}
                       </div>
 
-                      <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
-                        <span className="text-[10px] font-semibold uppercase text-emerald-300">
+                      <div className="px-3 py-2.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                           Neto del Ciclo
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                           {formatMoney(cycleNeto, selectedCycleLiq.moneda)}
                         </p>
                         {isSubFiltered && (
-                          <span className="text-[10px] text-amber-300">
+                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
                             En vista: {formatMoney(viewNeto, selectedCycleLiq.moneda)}
                           </span>
                         )}
                       </div>
 
-                      <div className="rounded-lg border border-rose-500/30 bg-rose-950/20 px-3 py-2">
-                        <span className="text-[10px] font-semibold uppercase text-rose-300">
+                      <div className="px-3 py-2.5">
+                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                           Liquidado / Restante
                         </span>
-                        <p className="mt-0.5 font-mono text-sm font-bold text-rose-400">
+                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                           -{formatMoney(Number(selectedCycleLiq.monto_liquidado ?? 0), selectedCycleLiq.moneda)}
                         </p>
-                        <span className="text-[10px] font-mono text-emerald-300">
-                          Restante: {formatMoney(Number(selectedCycleLiq.saldo_restante ?? 0), selectedCycleLiq.moneda)}
+                        <span
+                          className={`font-mono text-[10px] tabular-nums ${
+                            cycleRestante < 0
+                              ? 'text-rose-700 dark:text-rose-400'
+                              : 'text-emerald-700 dark:text-emerald-400'
+                          }`}
+                        >
+                          Restante: {formatMoney(cycleRestante, selectedCycleLiq.moneda)}
                         </span>
                       </div>
                     </div>
@@ -4283,64 +4478,64 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   visibleTableTotals.netoUsdt > 0;
                 const activeCycleTitle =
                   selectedCycleFilter === 'TODOS'
-                    ? 'Todos los Ciclos (En Vista)'
-                    : 'Ciclo Actual (En Vista)';
+                    ? 'Todos los Ciclos (Vista)'
+                    : 'Ciclo Actual (Vista)';
 
                 return (
-                  <div className="mt-3 grid grid-cols-2 gap-2.5 border-t border-slate-800/70 pt-3 sm:grid-cols-4">
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                      <span className="text-[10px] font-semibold uppercase text-slate-400">
+                  <div className="mt-3 grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6]/70 sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
+                    <div className="px-3 py-2.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                         {activeCycleTitle}
                       </span>
-                      <p className="mt-0.5 font-mono text-sm font-bold text-white">
+                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                         {visibleTableTotals.conciliadosCount} conciliados
                       </p>
-                      <span className="text-[10px] text-slate-400">
+                      <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                         {visibleTableTotals.totalRows} filas · {visibleTableTotals.pendientesCount} por conciliar
                       </span>
                     </div>
 
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                      <span className="text-[10px] font-semibold uppercase text-slate-400">
-                        Bruto Conciliado (Vista)
+                    <div className="px-3 py-2.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                        Bruto Conciliado
                       </span>
-                      <p className="mt-0.5 font-mono text-sm font-bold text-slate-100">
+                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                         {formatMoney(visibleTableTotals.brutoConciliadoUsd, 'USD')}
                       </p>
                       {hasUsdtRows ? (
-                        <span className="text-[10px] font-mono text-amber-300">
+                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                           {formatMoney(visibleTableTotals.brutoConciliadoUsdt, 'USDT')}
                         </span>
                       ) : visibleTableTotals.brutoPendienteUsd > 0 ? (
-                        <span className="text-[10px] text-sky-300">
+                        <span className="font-mono text-[10px] tabular-nums text-amber-700 dark:text-amber-400">
                           Sin conciliar: {formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}
                         </span>
                       ) : null}
                     </div>
 
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2">
-                      <span className="text-[10px] font-semibold uppercase text-slate-400">
-                        Comisión Retenida (Vista)
+                    <div className="px-3 py-2.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                        Comisión Retenida
                       </span>
-                      <p className="mt-0.5 font-mono text-sm font-bold text-violet-300">
+                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                         -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
                       </p>
                       {hasUsdtRows && (
-                        <span className="text-[10px] font-mono text-violet-300/80">
+                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                           -{formatMoney(visibleTableTotals.comisionUsdt, 'USDT')}
                         </span>
                       )}
                     </div>
 
-                    <div className="rounded-lg border border-emerald-500/30 bg-emerald-950/20 px-3 py-2">
-                      <span className="text-[10px] font-semibold uppercase text-emerald-300">
-                        Neto Acreditado (Vista)
+                    <div className="px-3 py-2.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                        Neto Acreditado
                       </span>
-                      <p className="mt-0.5 font-mono text-sm font-bold text-emerald-400">
+                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                         {formatMoney(visibleTableTotals.netoUsd, 'USD')}
                       </p>
                       {hasUsdtRows && (
-                        <span className="text-[10px] font-mono text-amber-300">
+                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                           {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
                         </span>
                       )}
@@ -4350,20 +4545,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               })()}
             </section>
 
-            {/* Barra de Acciones Masivas por Lote (Bulk Actions) */}
+            {/* Barra de Acciones Masivas por Lote */}
             {selectedAlertIds.length > 0 && (
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/80 p-4 shadow-xl shadow-emerald-950/50">
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-900/15 bg-stone-900 px-4 py-3 text-stone-50 shadow-sm dark:border-stone-700 dark:bg-[#1C1A18] dark:text-stone-100">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/20 font-mono text-sm font-bold text-emerald-300 ring-1 ring-emerald-500/30">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-stone-800 font-mono text-xs font-semibold tabular-nums text-stone-100 dark:bg-stone-800">
                     {selectedAlertIds.length}
                   </span>
                   <div>
-                    <p className="text-sm font-bold text-white">
-                      {selectedAlertIds.length} pagos seleccionados para asignación en lote
+                    <p className="text-sm font-medium">
+                      {selectedAlertIds.length} movimientos seleccionados para lote
                     </p>
-                    <p className="text-xs text-emerald-300">
+                    <p className="text-xs text-stone-300 dark:text-stone-400">
                       Monto total bruto:{' '}
-                      <strong className="font-mono text-white">
+                      <strong className="font-mono tabular-nums text-white dark:text-stone-100">
                         $
                         {alerts
                           .filter((a) => selectedAlertIds.includes(a.id))
@@ -4399,10 +4594,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       setBatchNotes('Asignación masiva por lote (auditoría)');
                       setIsBatchModalOpen(true);
                     }}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition hover:bg-emerald-400 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-3.5 py-2 text-xs font-medium text-stone-950 transition hover:bg-white cursor-pointer"
                   >
-                    <UserCheck className="h-4 w-4" />
-                    Asignar pagos seleccionados al cliente...
+                    <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    Asignar seleccionados al cliente
                   </button>
                   <button
                     type="button"
@@ -4412,41 +4607,41 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       );
                       openDiscardModalForAlerts(selectedRecords);
                     }}
-                    className="inline-flex items-center gap-2 rounded-lg border border-rose-500/50 bg-rose-600/90 px-4 py-2 text-xs font-bold text-white shadow-md transition hover:bg-rose-500 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-700 px-3.5 py-2 text-xs font-medium text-white transition hover:bg-rose-600 cursor-pointer"
                   >
-                    <Trash2 className="h-4 w-4" />
-                    Eliminar seleccionados ({selectedAlertIds.length})
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    Eliminar ({selectedAlertIds.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedAlertIds([])}
-                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800 cursor-pointer"
+                    className="rounded-lg border border-stone-700 px-3 py-2 text-xs font-medium text-stone-300 transition hover:bg-stone-800 cursor-pointer"
                   >
-                    Deseleccionar todos
+                    Cancelar
                   </button>
                 </div>
               </div>
             )}
 
             {/* =================================================================
-                SECCIÓN: CAPTURAS ENVIADAS POR EL CLIENTE PENDIENTES (SIN CORREO DEL BANCO)
+                SECCIÓN: CAPTURAS ENVIADAS POR EL CLIENTE PENDIENTES
                ================================================================= */}
             {pendingOrders.length > 0 && (
               <section
                 aria-label="Capturas Enviadas por el Cliente Pendientes de Confirmar"
-                className="mb-6 overflow-hidden rounded-xl border border-amber-500/40 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/20 shadow-xl"
+                className="mb-5 overflow-hidden rounded-xl border border-amber-700/25 bg-white shadow-sm dark:border-amber-500/30 dark:bg-[#1C1A18]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-500/25 bg-amber-950/30 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-700/15 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-950/20">
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/20 font-mono text-xs font-bold text-amber-300 ring-1 ring-amber-400/40">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md border border-amber-700/30 bg-white font-mono text-xs font-semibold tabular-nums text-amber-800 dark:border-amber-500/40 dark:bg-[#121110] dark:text-amber-400">
                       {pendingOrders.length}
                     </span>
                     <div>
-                      <h3 className="text-sm font-bold text-white">
-                        Capturas Enviadas por el Cliente en Espera de Confirmación Manual ({pendingOrders.length})
+                      <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                        Capturas Enviadas por el Cliente en Espera de Confirmación Manual
                       </h3>
-                      <p className="text-xs text-amber-200/80">
-                        Estos comprobantes fueron subidos desde el portal del cliente pero no llegó el correo del banco o no coincidió automáticamente. Puedes ver la captura, confirmarlos manualmente o descartar duplicados.
+                      <p className="text-xs text-stone-600 dark:text-stone-400">
+                        Comprobantes subidos desde el portal que aún no conciliaron automáticamente. Revisa la captura, confirma manualmente o descarta duplicados.
                       </p>
                     </div>
                   </div>
@@ -4455,20 +4650,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-xs table-auto">
                     <thead>
-                      <tr className="border-b border-slate-800 bg-slate-950/70 font-semibold uppercase tracking-wider text-slate-400">
+                      <tr className="border-b border-stone-200 bg-[#FAF9F6] text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
                         <th className="px-3 py-2.5">#</th>
-                        <th className="px-3 py-2.5">Orden &amp; Fecha Envío</th>
-                        <th className="px-3 py-2.5">Cliente Titular</th>
-                        <th className="px-3 py-2.5">Remitente Reportado</th>
-                        <th className="px-3 py-2.5">Referencia Reportada</th>
-                        <th className="px-3 py-2.5">Diagnóstico / Estado Correo</th>
-                        <th className="px-3 py-2.5 text-right">Monto Bruto</th>
+                        <th className="px-3 py-2.5">Orden &amp; Fecha</th>
+                        <th className="px-3 py-2.5">Titular</th>
+                        <th className="px-3 py-2.5">Remitente</th>
+                        <th className="px-3 py-2.5">Referencia</th>
+                        <th className="px-3 py-2.5">Diagnóstico</th>
+                        <th className="px-3 py-2.5 text-right">Bruto</th>
                         <th className="px-3 py-2.5 text-right">Comisión</th>
-                        <th className="px-3 py-2.5 text-right">Neto a Acreditar</th>
-                        <th className="px-3 py-2.5 text-right">Captura &amp; Confirmación Manual</th>
+                        <th className="px-3 py-2.5 text-right">Neto</th>
+                        <th className="px-3 py-2.5 text-right">Acciones</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/70">
+                    <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                       {pendingOrders.map((order, idx) => {
                         const clientObj = clients.find(
                           (c) =>
@@ -4513,84 +4708,84 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         return (
                           <tr
                             key={order.id}
-                            className="transition hover:bg-slate-800/40"
+                            className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50"
                           >
-                            <td className="whitespace-nowrap px-3 py-2.5 font-mono text-slate-400">
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono tabular-nums text-stone-400">
                               {idx + 1}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5">
                               <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-bold text-sky-300">
+                                <span className="font-mono font-semibold text-stone-900 dark:text-stone-100">
                                   {order.codigo_orden}
                                 </span>
                                 <span
-                                  className={`inline-flex items-center rounded border px-1.5 py-0.2 text-[10px] font-bold ${orderPlatformBadge.badgeClass}`}
+                                  className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${orderPlatformBadge.badgeClass}`}
                                 >
                                   {orderPlatformBadge.label}
                                 </span>
                               </div>
                               {order.fecha_transferencia ? (
-                                <div className="text-[11px] font-semibold text-amber-300">
+                                <div className="font-mono text-[11px] tabular-nums text-amber-700 dark:text-amber-400">
                                   Fecha captura: {order.fecha_transferencia}
                                 </div>
                               ) : null}
-                              <div className="text-[10px] text-slate-400">
+                              <div className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                                 Subido: {formatDateTime(order.created_at)}
                               </div>
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 font-semibold text-emerald-300">
+                            <td className="whitespace-nowrap px-3 py-2.5 font-medium text-stone-900 dark:text-stone-100">
                               {order.cliente_nombre}
                             </td>
-                            <td className="px-3 py-2.5 font-semibold text-white">
+                            <td className="px-3 py-2.5 font-medium text-stone-800 dark:text-stone-200">
                               {order.remitente_reportado ||
                                 order.nombre_remitente_reportado ||
                                 'Sin remitente'}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 font-mono font-semibold text-amber-300">
+                            <td className="whitespace-nowrap px-3 py-2.5 font-mono font-medium text-stone-700 dark:text-stone-300">
                               {order.referencia_reportada || 'SIN-REF'}
                             </td>
-                            <td className="px-3 py-2.5 max-w-[300px]">
+                            <td className="max-w-[280px] px-3 py-2.5">
                               {alreadyReconciledTx ? (
-                                <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-950/60 px-2 py-0.5 text-[11px] font-semibold text-rose-200">
-                                  <AlertTriangle className="h-3 w-3 shrink-0 text-rose-400" />
+                                <span className="inline-flex items-center gap-1 rounded-md border border-rose-700/25 bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                                  <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={1.5} />
                                   Ref. ya conciliada en {alreadyReconciledTx.codigo_orden || alreadyReconciledTx.referencia} (Duplicado)
                                 </span>
                               ) : duplicatePendingCount > 0 ? (
-                                <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-950/60 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
-                                  <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
+                                <span className="inline-flex items-center gap-1 rounded-md border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                  <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={1.5} />
                                   Ref. repetida en otra orden pendiente
                                 </span>
                               ) : order.notas_cliente ? (
-                                <span className="inline-flex items-start gap-1.5 rounded-md border border-sky-500/35 bg-sky-950/40 px-2 py-1 text-[11px] leading-snug text-sky-200">
-                                  <Clock className="h-3.5 w-3.5 shrink-0 text-sky-400 mt-0.5" />
+                                <span className="inline-flex items-start gap-1.5 rounded-md border border-stone-200 bg-[#FAF9F6] px-2 py-1 text-[11px] leading-snug text-stone-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300">
+                                  <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700 dark:text-amber-400" strokeWidth={1.5} />
                                   <span>{order.notas_cliente}</span>
                                 </span>
                               ) : bestMatchedTx ? (
-                                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-950/60 px-2 py-0.5 text-[11px] font-semibold text-emerald-200">
-                                  <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-400" />
+                                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-700/25 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                  <CheckCircle2 className="h-3 w-3 shrink-0" strokeWidth={1.5} />
                                   {bestMatchType === 'REF'
                                     ? `Coincide por ref.: ${bestMatchedTx.remitente_o_contraparte} (${bestMatchedTx.referencia})`
                                     : `Coincide por nombre y fecha: ${bestMatchedTx.remitente_o_contraparte} (${bestMatchedTx.referencia})`}
                                 </span>
                               ) : sameAmountCount > 0 ? (
-                                <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-950/60 px-2 py-0.5 text-[11px] font-semibold text-sky-200">
-                                  <Clock className="h-3 w-3 shrink-0 text-sky-400" />
-                                  Sin coincidencia exacta · Hay {sameAmountCount} correo(s) de {formatMoney(order.monto_esperado, order.moneda)} con otra ref./remitente
+                                <span className="inline-flex items-center gap-1 rounded-md border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                  <Clock className="h-3 w-3 shrink-0" strokeWidth={1.5} />
+                                  Sin coincidencia exacta · Hay {sameAmountCount} correo(s) de {formatMoney(order.monto_esperado, order.moneda)}
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
-                                  <Clock className="h-3 w-3 shrink-0 text-amber-400" />
-                                  No llegó correo del banco · Confirmación manual
+                                <span className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-[#FAF9F6] px-2 py-0.5 text-[11px] text-stone-600 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
+                                  <Clock className="h-3 w-3 shrink-0 text-amber-700 dark:text-amber-400" strokeWidth={1.5} />
+                                  Sin correo del banco · Confirmación manual
                                 </span>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-white">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                               {formatMoney(order.monto_esperado, order.moneda)}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-violet-300">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono tabular-nums text-stone-500 dark:text-stone-400">
                               -{formatMoney(comision, order.moneda)} ({feePct}%)
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-emerald-400">
+                            <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                               {formatMoney(neto, order.moneda)}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2.5 text-right">
@@ -4599,30 +4794,30 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   <button
                                     type="button"
                                     onClick={() => void openLightboxForOrder(order)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/25 cursor-pointer"
+                                    className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-[#FAF9F6] px-2 py-1 text-[11px] font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:border-stone-700"
                                     title="Ver la captura subida por el cliente"
                                   >
-                                    <Eye className="h-3.5 w-3.5" />
-                                    Ver Captura
+                                    <Eye className="h-3 w-3" strokeWidth={1.5} />
+                                    Captura
                                   </button>
                                 )}
                                 <button
                                   type="button"
                                   onClick={() => openManualOrderConfirmModal(order)}
-                                  className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500 cursor-pointer shadow-sm"
+                                  className="inline-flex items-center gap-1 rounded-md bg-stone-900 px-2.5 py-1 text-[11px] font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                   title="Confirmar manualmente y acreditar saldo al cliente"
                                 >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Confirmar Manual
+                                  <CheckCircle2 className="h-3 w-3" strokeWidth={1.5} />
+                                  Confirmar
                                 </button>
                                 <button
                                   type="button"
                                   disabled={isRejectingOrderId === order.id}
                                   onClick={() => void handleRejectPendingOrder(order)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 disabled:opacity-50 cursor-pointer"
+                                  className="inline-flex items-center gap-1 rounded-md border border-rose-700/25 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-50 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
                                   title="Descartar orden pendiente duplicada o inválida"
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Trash2 className="h-3 w-3" strokeWidth={1.5} />
                                   Descartar
                                 </button>
                               </div>
@@ -4636,457 +4831,923 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </section>
             )}
 
-            <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="overflow-x-auto xl:overflow-x-visible">
-                <table className="w-full border-collapse text-left text-sm table-auto">
-                  <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="w-10 px-2.5 py-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={
-                            eligibleAlertsForBatch.length > 0 &&
-                            eligibleAlertsForBatch.every((a) =>
-                              selectedAlertIds.includes(a.id)
-                            )
-                          }
-                          onChange={toggleSelectAllEligible}
-                          className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                          title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
-                        />
-                      </th>
-                      <th className="px-2.5 py-3">Canal</th>
-                      <th className="px-2.5 py-3">Fecha y Hora Correo</th>
-                      <th className="px-2 py-3">Flujo</th>
-                      <th className="px-2.5 py-3">
-                        Enviado por (Correo)
-                      </th>
-                      <th className="px-2.5 py-3">
-                        Referencia correo
-                      </th>
-                      <th className="px-2.5 py-3">
-                        Titular / Subdetalle Correo
-                      </th>
-                      <th className="px-2.5 py-3">
-                        Reportado como (Cliente) / Alerta
-                      </th>
-                      <th className="px-2.5 py-3">
-                        Referencia Reportada
-                      </th>
-                      <th className="px-2.5 py-3 text-right">Monto Bruto ($)</th>
-                      <th className="px-2.5 py-3 text-right">Comisión</th>
-                      <th className="px-2.5 py-3 text-right">Monto Neto ($)</th>
-                      <th className="px-2 py-3">Estado</th>
-                      <th className="px-2.5 py-3 text-right">
-                        Captura &amp; Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/70">
-                    {filteredAlerts.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={14}
-                          className="px-6 py-12 text-center text-slate-400"
-                        >
-                          No se encontraron transacciones con los filtros
-                          seleccionados.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredAlerts.map((alert) => {
-                        const badge = getPlatformBadgeMeta(alert.plataforma);
-                        const candidateOrder = findAssociatedCaptureOrder(alert);
-                        const hasCapture = Boolean(
-                          alert.has_capture ||
+            {/* =================================================================
+                ESPACIO DE TRABAJO MASTER-DETAIL (60% LISTA / 40% INSPECTOR STICKY)
+               ================================================================= */}
+            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
+              {/* IZQUIERDA (7 cols ≈ 60%): Lista Editorial Seleccionable */}
+              <section
+                aria-label="Lista de Movimientos Bancarios"
+                className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm lg:col-span-7 dark:border-stone-800 dark:bg-[#1C1A18]"
+              >
+                {/* Cabecera de Lista */}
+                <div className="flex items-center justify-between gap-3 border-b border-stone-200 bg-[#FAF9F6] px-4 py-2.5 dark:border-stone-800 dark:bg-[#121110]">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={
+                        eligibleAlertsForBatch.length > 0 &&
+                        eligibleAlertsForBatch.every((a) =>
+                          selectedAlertIds.includes(a.id)
+                        )
+                      }
+                      onChange={toggleSelectAllEligible}
+                      className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
+                      title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
+                    />
+                    <span className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                      Movimientos ({filteredAlerts.length})
+                    </span>
+                  </div>
+                  <span className="hidden font-mono text-[11px] tabular-nums text-stone-500 sm:inline dark:text-stone-400">
+                    Selecciona una fila para inspeccionar
+                  </span>
+                </div>
+
+                {/* Filas Editoriales */}
+                {filteredAlerts.length === 0 ? (
+                  <div className="px-6 py-14 text-center text-sm text-stone-500 dark:text-stone-400">
+                    No se encontraron transacciones con los filtros seleccionados.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-stone-200/80 dark:divide-stone-800">
+                    {filteredAlerts.map((alert) => {
+                      const badge = getPlatformBadgeMeta(alert.plataforma);
+                      const candidateOrder = findAssociatedCaptureOrder(alert);
+                      const hasCapture = Boolean(
+                        alert.has_capture ||
                           alert.comprobante_base64 ||
                           candidateOrder?.has_capture ||
                           candidateOrder?.comprobante_base64
-                        );
-                        const isSelected = selectedAlertIds.includes(alert.id);
-                        const reportedSender =
-                          alert.remitente_reportado ||
-                          candidateOrder?.remitente_reportado ||
-                          candidateOrder?.nombre_remitente_reportado ||
-                          null;
-                        const reportedCode =
-                          alert.codigo_orden || candidateOrder?.codigo_orden || null;
-                        const reportedRef =
-                          alert.referencia_reportada ||
-                          candidateOrder?.referencia_reportada ||
-                          null;
-                        const senderSimilarity =
-                          reportedSender && alert.remitente_o_contraparte
-                            ? calculateSenderSimilarity(
-                                reportedSender,
-                                alert.remitente_o_contraparte
-                              )
-                            : 1;
-                        const isRefVerified = referencesMatch(
-                          reportedRef,
-                          alert.referencia
-                        );
-                        // Solo marcar disparidad real si la similitud fonética/token es baja (< 0.65)
-                        // Y tampoco está respaldada por coincidencia de referencia + al menos 1 nombre/apellido (>= 0.40)
-                        const hasNameDisparity = Boolean(
-                          reportedSender &&
-                            alert.remitente_o_contraparte &&
-                            senderSimilarity < 0.65 &&
-                            !(isRefVerified && senderSimilarity >= 0.4)
-                        );
+                      );
+                      const isBatchSelected = selectedAlertIds.includes(alert.id);
+                      const isInspected = selectedInspectorAlert?.id === alert.id;
+                      const reportedSender =
+                        alert.remitente_reportado ||
+                        candidateOrder?.remitente_reportado ||
+                        candidateOrder?.nombre_remitente_reportado ||
+                        null;
+                      const reportedRef =
+                        alert.referencia_reportada ||
+                        candidateOrder?.referencia_reportada ||
+                        null;
+                      const senderSimilarity =
+                        reportedSender && alert.remitente_o_contraparte
+                          ? calculateSenderSimilarity(
+                              reportedSender,
+                              alert.remitente_o_contraparte
+                            )
+                          : 1;
+                      const isRefVerified = referencesMatch(
+                        reportedRef,
+                        alert.referencia
+                      );
+                      const hasNameDisparity = Boolean(
+                        reportedSender &&
+                          alert.remitente_o_contraparte &&
+                          senderSimilarity < 0.65 &&
+                          !(isRefVerified && senderSimilarity >= 0.4)
+                      );
+                      const canBatchSelect =
+                        alert.estado !== 'CONCILIADO' &&
+                        alert.estado !== 'DESCARTADO' &&
+                        !alert.liquidado_at;
 
-                        return (
-                          <tr
-                            key={alert.id}
-                            className={`transition hover:bg-slate-800/40 ${
-                              isSelected ? 'bg-emerald-950/25' : ''
-                            }`}
+                      return (
+                        <div
+                          key={alert.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            setSelectedInspectorAlertId(alert.id);
+                            if (
+                              typeof window !== 'undefined' &&
+                              window.innerWidth < 1024
+                            ) {
+                              setIsMobileInspectorOpen(true);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedInspectorAlertId(alert.id);
+                              if (
+                                typeof window !== 'undefined' &&
+                                window.innerWidth < 1024
+                              ) {
+                                setIsMobileInspectorOpen(true);
+                              }
+                            }
+                          }}
+                          className={`group flex items-start gap-3 px-4 py-3.5 transition cursor-pointer ${
+                            isInspected
+                              ? 'border-l-2 border-l-amber-700 bg-amber-50/50 dark:border-l-amber-500 dark:bg-amber-950/20'
+                              : isBatchSelected
+                                ? 'bg-stone-100/80 dark:bg-stone-800/40'
+                                : 'hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50'
+                          }`}
+                        >
+                          {/* Checkbox Lote con stopPropagation */}
+                          <div
+                            className="pt-0.5"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <td className="w-9 px-2 py-3 text-center">
-                              {alert.estado !== 'CONCILIADO' &&
-                              alert.estado !== 'DESCARTADO' &&
-                              !alert.liquidado_at ? (
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleSelectAlert(alert.id)}
-                                  className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                                />
-                              ) : (
-                                <span className="inline-block h-4 w-4 text-slate-700">-</span>
-                              )}
-                            </td>
+                            {canBatchSelect ? (
+                              <input
+                                type="checkbox"
+                                checked={isBatchSelected}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => toggleSelectAlert(alert.id)}
+                                className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
+                              />
+                            ) : (
+                              <span className="inline-flex h-4 w-4 items-center justify-center text-xs text-stone-300 dark:text-stone-700">
+                                ·
+                              </span>
+                            )}
+                          </div>
 
-                            {/* 1. Canal */}
-                            <td className="whitespace-nowrap px-2.5 py-3">
+                          {/* Columna Central: Remitente, Canal, Referencia, Titular */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span
-                                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
+                                className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
                               >
                                 {badge.label}
                               </span>
-                            </td>
-
-                            {/* 2. Fecha y Hora Correo */}
-                            <td
-                              className="whitespace-nowrap px-2.5 py-3 text-xs font-medium text-slate-300"
-                              title="Fecha y hora exacta entregada por el correo bancario"
-                            >
-                              {formatDateTime(alert.fecha_transaccion)}
-                            </td>
-
-                            {/* 3. Flujo */}
-                            <td className="whitespace-nowrap px-2 py-3">
                               {alert.tipo_movimiento === 'RECIBIDO' ? (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
-                                  <ArrowDownLeft className="h-3 w-3" />
+                                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                                  <ArrowDownLeft className="h-3 w-3" strokeWidth={1.5} />
                                   Recibido
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-400">
-                                  <ArrowUpRight className="h-3 w-3" />
+                                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-400">
+                                  <ArrowUpRight className="h-3 w-3" strokeWidth={1.5} />
                                   Enviado
                                 </span>
                               )}
-                            </td>
+                              <span className="font-mono text-[11px] tabular-nums text-stone-400 dark:text-stone-500">
+                                · {formatDateTime(alert.fecha_transaccion)}
+                              </span>
+                            </div>
 
-                            {/* 4. Enviado por (Correo) */}
-                            <td className="px-2.5 py-3 max-w-[180px] 2xl:max-w-[220px]">
-                              <div
-                                className="font-semibold text-white truncate text-xs"
-                                title={alert.remitente_o_contraparte || ''}
-                              >
+                            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="truncate text-sm font-semibold text-stone-900 dark:text-stone-100">
                                 {alert.remitente_o_contraparte || (
-                                  <span className="italic text-amber-400">
+                                  <span className="italic text-amber-700 dark:text-amber-400">
                                     Remitente no identificado
                                   </span>
                                 )}
-                              </div>
-                            </td>
+                              </span>
+                              <span className="font-mono text-xs text-stone-500 dark:text-stone-400">
+                                {alert.referencia || 'SIN-REF'}
+                              </span>
+                            </div>
 
-                            {/* 5. Referencia correo */}
-                            <td className="whitespace-nowrap px-2.5 py-3 font-mono text-xs font-semibold text-slate-200">
-                              {alert.referencia || 'SIN-REF'}
-                            </td>
-
-                            {/* 6. Titular / Subdetalle Correo */}
-                            <td className="px-2.5 py-3 max-w-[180px]">
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
                               {alert.cliente_asignado_nombre ? (
-                                <div className="flex items-center gap-1 text-xs text-emerald-400">
-                                  <UserCheck className="h-3.5 w-3.5 shrink-0" />
-                                  <span className="truncate font-semibold">
-                                    Titular: {alert.cliente_asignado_nombre}
+                                <span className="inline-flex items-center gap-1 text-stone-700 dark:text-stone-300">
+                                  <UserCheck className="h-3 w-3 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
+                                  <span className="font-medium">
+                                    {alert.cliente_asignado_nombre}
                                   </span>
-                                </div>
+                                </span>
                               ) : (
-                                <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                                  <Clock className="h-3 w-3 shrink-0 text-slate-500" />
-                                  <span className="truncate">Sin cliente (En espera de orden)</span>
-                                </div>
+                                <span className="text-[11px] text-stone-400 dark:text-stone-500">
+                                  Sin titular asignado
+                                </span>
                               )}
-                            </td>
 
-                            {/* 7. Reportado como (Cliente) / Alerta */}
-                            <td className="px-2.5 py-3 max-w-[250px] 2xl:max-w-xs">
-                              {reportedSender ? (
-                                <div className="text-xs">
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    <span
-                                      className={`font-semibold truncate ${
-                                        hasNameDisparity
-                                          ? 'text-amber-300'
-                                          : 'text-sky-200'
-                                      }`}
-                                      title={reportedSender}
-                                    >
-                                      {reportedSender}
-                                    </span>
-                                    {reportedCode && (
-                                      <span className="font-mono text-[10px] font-semibold text-sky-400">
-                                        | {reportedCode}
-                                      </span>
-                                    )}
+                              {hasNameDisparity && (
+                                <span className="inline-flex items-center gap-1 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                  <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
+                                  Diferencia de nombre
+                                </span>
+                              )}
+
+                              {hasCapture && (
+                                <span className="inline-flex items-center gap-1 text-[11px] text-stone-500 dark:text-stone-400">
+                                  <ImageIcon className="h-3 w-3" strokeWidth={1.5} />
+                                  Captura
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Columna Derecha: Monto Neto, Estado y Acción Rápida */}
+                          <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
+                            <div>
+                              <div
+                                className={`font-mono text-sm font-semibold tabular-nums tracking-tight ${
+                                  alert.tipo_movimiento === 'ENVIADO'
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : 'text-stone-900 dark:text-stone-100'
+                                }`}
+                              >
+                                {alert.estado === 'CONCILIADO'
+                                  ? formatMoney(alert.monto_neto, alert.moneda)
+                                  : formatMoney(alert.monto_bruto, alert.moneda)}
+                              </div>
+                              {alert.estado === 'CONCILIADO' &&
+                                alert.monto_comision > 0 && (
+                                  <div className="font-mono text-[10px] tabular-nums text-stone-400 dark:text-stone-500">
+                                    Bruto {formatMoney(alert.monto_bruto, alert.moneda)} · -{alert.porcentaje_comision}%
                                   </div>
-                                  {hasNameDisparity && (
-                                    <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-amber-400/50 bg-amber-950/90 px-2 py-0.5 text-[11px] font-semibold text-amber-200 shadow-sm">
-                                      <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" />
-                                      Diferencia de nombre
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-xs italic text-slate-500">
-                                  Sin reporte del cliente aún
-                                </span>
-                              )}
-                            </td>
+                                )}
+                            </div>
 
-                            {/* 8. Referencia Reportada */}
-                            <td className="whitespace-nowrap px-2.5 py-3 font-mono text-xs">
-                              {reportedRef ? (
-                                <span className="font-semibold text-sky-300">
-                                  {reportedRef}
-                                </span>
-                              ) : (
-                                <span className="text-slate-500">—</span>
-                              )}
-                            </td>
-
-                            {/* 9. Monto Bruto ($) */}
-                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono font-semibold text-slate-100">
-                              {formatMoney(alert.monto_bruto, alert.moneda)}
-                            </td>
-
-                            {/* 10. Comisión */}
-                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-xs">
-                              {alert.estado === 'CONCILIADO' ? (
-                                <span className="text-violet-300">
-                                  {alert.monto_comision > 0
-                                    ? `-${formatMoney(alert.monto_comision, alert.moneda)} (${alert.porcentaje_comision}%)`
-                                    : formatMoney(0, alert.moneda)}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">
-                                  {formatMoney(0, alert.moneda)}
-                                </span>
-                              )}
-                            </td>
-
-                            {/* 11. Monto Neto ($) */}
-                            <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono font-bold">
-                              {alert.estado === 'CONCILIADO' ? (
-                                <span className="text-emerald-400">
-                                  {formatMoney(alert.monto_neto, alert.moneda)}
-                                </span>
-                              ) : (
-                                <span className="text-slate-300 font-normal">
-                                  {formatMoney(alert.monto_bruto, alert.moneda)}
-                                </span>
-                              )}
-                            </td>
-
-                            <td className="whitespace-nowrap px-2.5 py-3">
+                            <div className="flex items-center gap-1.5">
                               {alert.liquidado_at ? (
-                                <div className="flex flex-col items-start gap-0.5">
-                                  <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1 text-xs font-semibold text-indigo-300">
-                                    <CheckCircle2 className="h-3.5 w-3.5" />
-                                    {alert.numero_ciclo
-                                      ? `CICLO #${alert.numero_ciclo} · LIQUIDADO`
-                                      : 'LIQUIDADO'}
-                                  </span>
-                                  {alert.codigo_liquidacion && (
-                                    <span className="font-mono text-[10px] text-indigo-300/80">
-                                      {alert.codigo_liquidacion}
-                                    </span>
-                                  )}
-                                </div>
+                                <span className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                                  {alert.numero_ciclo
+                                    ? `CICLO #${alert.numero_ciclo}`
+                                    : 'LIQUIDADO'}
+                                </span>
+                              ) : alert.estado === 'CONCILIADO' ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                  CONCILIADO
+                                </span>
+                              ) : alert.estado === 'REVISION_MANUAL' ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                  REVISIÓN MANUAL
+                                </span>
+                              ) : alert.estado === 'DETECTADO' ? (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50/70 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
+                                  DETECTADO
+                                </span>
                               ) : (
-                                <>
-                                  {alert.estado === 'CONCILIADO' && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
-                                      <CheckCircle2 className="h-3.5 w-3.5" />
-                                      CONCILIADO
-                                    </span>
-                                  )}
-                                  {alert.estado === 'REVISION_MANUAL' && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300">
-                                      <AlertTriangle className="h-3.5 w-3.5" />
-                                      REVISIÓN MANUAL
-                                    </span>
-                                  )}
-                                  {alert.estado === 'DETECTADO' && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300">
-                                      <Clock className="h-3.5 w-3.5" />
-                                      DETECTADO
-                                    </span>
-                                  )}
-                                  {alert.estado === 'DESCARTADO' && (
-                                    <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/35 bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300">
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                      ELIMINADO
-                                    </span>
-                                  )}
-                                </>
+                                <span className="inline-flex items-center gap-1 rounded-full border border-rose-700/25 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                                  ELIMINADO
+                                </span>
                               )}
-                            </td>
 
-                            <td className="whitespace-nowrap px-3 py-3 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                {hasCapture && (
+                              {/* Botón inline rápido Conciliar con stopPropagation */}
+                              {alert.estado !== 'CONCILIADO' &&
+                                alert.estado !== 'DESCARTADO' &&
+                                !alert.liquidado_at &&
+                                alert.tipo_movimiento === 'RECIBIDO' && (
                                   <button
                                     type="button"
-                                    onClick={() => openLightboxForTx(alert)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2 py-1 text-[11px] font-semibold text-sky-300 transition hover:bg-sky-500/25 cursor-pointer"
-                                    title="Ver Captura subida por el cliente lado a lado"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openManualReconciliationModal(
+                                        alert,
+                                        candidateOrder
+                                      );
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded-md bg-stone-900 px-2 py-0.5 text-[10px] font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                   >
-                                    <ImageIcon className="h-3 w-3" />
-                                    Ver Captura
+                                    Conciliar
                                   </button>
                                 )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
+                {/* Pie de Totales en Vista */}
+                {filteredAlerts.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-[#FAF9F6] px-4 py-3 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                    <div className="font-medium text-stone-600 dark:text-stone-400">
+                      Totales en vista ({visibleTableTotals.totalRows} reg. ·{' '}
+                      {visibleTableTotals.conciliadosCount} conc.)
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums">
+                      <div>
+                        <span className="text-[10px] uppercase text-stone-400">Bruto </span>
+                        <strong className="text-stone-900 dark:text-stone-100">
+                          {formatMoney(visibleTableTotals.brutoAllUsd, 'USD')}
+                        </strong>
+                        {visibleTableTotals.brutoAllUsdt > 0 && (
+                          <span className="ml-1.5 text-[11px] text-stone-500">
+                            / {formatMoney(visibleTableTotals.brutoAllUsdt, 'USDT')}
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase text-stone-400">Com. </span>
+                        <span className="text-stone-600 dark:text-stone-400">
+                          -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase text-stone-400">Neto </span>
+                        <strong className="text-emerald-700 dark:text-emerald-400">
+                          {formatMoney(visibleTableTotals.netoUsd, 'USD')}
+                        </strong>
+                        {visibleTableTotals.netoUsdt > 0 && (
+                          <span className="ml-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+                            / {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* DERECHA (5 cols ≈ 40%): Inspector Sticky en Escritorio */}
+              <aside
+                aria-label="Inspector de Movimiento"
+                className="hidden lg:sticky lg:top-6 lg:col-span-5 lg:block"
+              >
+                {(() => {
+                  const alert = selectedInspectorAlert;
+                  if (!alert) {
+                    return (
+                      <div className="rounded-xl border border-stone-200/90 bg-white p-8 text-center shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                        <FileText
+                          className="mx-auto h-8 w-8 text-stone-300 dark:text-stone-700"
+                          strokeWidth={1.5}
+                        />
+                        <p className="mt-3 font-serif text-base text-stone-700 dark:text-stone-300">
+                          Ningún movimiento seleccionado
+                        </p>
+                        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                          Haz clic en cualquier fila de la izquierda para auditar el correo bancario, el comprobante y ejecutar acciones.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const badge = getPlatformBadgeMeta(alert.plataforma);
+                  const candidateOrder = findAssociatedCaptureOrder(alert);
+                  const hasCapture = Boolean(
+                    alert.has_capture ||
+                      alert.comprobante_base64 ||
+                      candidateOrder?.has_capture ||
+                      candidateOrder?.comprobante_base64
+                  );
+                  const reportedSender =
+                    alert.remitente_reportado ||
+                    candidateOrder?.remitente_reportado ||
+                    candidateOrder?.nombre_remitente_reportado ||
+                    null;
+                  const reportedCode =
+                    alert.codigo_orden || candidateOrder?.codigo_orden || null;
+                  const reportedRef =
+                    alert.referencia_reportada ||
+                    candidateOrder?.referencia_reportada ||
+                    null;
+                  const senderSimilarity =
+                    reportedSender && alert.remitente_o_contraparte
+                      ? calculateSenderSimilarity(
+                          reportedSender,
+                          alert.remitente_o_contraparte
+                        )
+                      : 1;
+                  const isRefVerified = referencesMatch(
+                    reportedRef,
+                    alert.referencia
+                  );
+                  const hasNameDisparity = Boolean(
+                    reportedSender &&
+                      alert.remitente_o_contraparte &&
+                      senderSimilarity < 0.65 &&
+                      !(isRefVerified && senderSimilarity >= 0.4)
+                  );
+
+                  return (
+                    <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                      {/* Cabecera Inspector */}
+                      <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-800">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium ${badge.badgeClass}`}
+                            >
+                              {badge.label}
+                            </span>
+                            {alert.tipo_movimiento === 'RECIBIDO' ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                                <ArrowDownLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Recibido
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 dark:text-rose-400">
+                                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Enviado
+                              </span>
+                            )}
+                          </div>
+
+                          {alert.liquidado_at ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-stone-100 px-2.5 py-0.5 text-[11px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                              {alert.numero_ciclo
+                                ? `CICLO #${alert.numero_ciclo} · LIQUIDADO`
+                                : 'LIQUIDADO'}
+                            </span>
+                          ) : alert.estado === 'CONCILIADO' ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-700/20 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                              <CheckCircle2 className="h-3 w-3" strokeWidth={1.5} />
+                              CONCILIADO
+                            </span>
+                          ) : alert.estado === 'REVISION_MANUAL' ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                              <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
+                              REVISIÓN MANUAL
+                            </span>
+                          ) : alert.estado === 'DETECTADO' ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50/70 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
+                              <Clock className="h-3 w-3" strokeWidth={1.5} />
+                              DETECTADO
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-rose-700/25 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                              <Trash2 className="h-3 w-3" strokeWidth={1.5} />
+                              ELIMINADO
+                            </span>
+                          )}
+                        </div>
+
+                        <h3 className="mt-2.5 font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
+                          {alert.remitente_o_contraparte || 'Remitente no identificado'}
+                        </h3>
+                        <p className="mt-0.5 font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
+                          {formatDateTime(alert.fecha_transaccion)} · Ref.{' '}
+                          <span className="font-semibold text-stone-700 dark:text-stone-300">
+                            {alert.referencia || 'SIN-REF'}
+                          </span>
+                        </p>
+                      </div>
+
+                      {/* Desglose Financiero */}
+                      <div className="grid grid-cols-3 divide-x divide-stone-200 border-b border-stone-200 bg-[#FAF9F6]/70 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
+                        <div className="px-4 py-3">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                            Monto Bruto
+                          </span>
+                          <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                            {formatMoney(alert.monto_bruto, alert.moneda)}
+                          </p>
+                        </div>
+                        <div className="px-4 py-3">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                            Comisión
+                          </span>
+                          <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                            {alert.estado === 'CONCILIADO' && alert.monto_comision > 0
+                              ? `-${formatMoney(alert.monto_comision, alert.moneda)}`
+                              : formatMoney(0, alert.moneda)}
+                          </p>
+                          {alert.estado === 'CONCILIADO' && (
+                            <span className="font-mono text-[10px] text-stone-500">
+                              {alert.porcentaje_comision}%
+                            </span>
+                          )}
+                        </div>
+                        <div className="px-4 py-3">
+                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                            Monto Neto
+                          </span>
+                          <p
+                            className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${
+                              alert.estado === 'CONCILIADO'
+                                ? 'text-emerald-700 dark:text-emerald-400'
+                                : 'text-stone-900 dark:text-stone-100'
+                            }`}
+                          >
+                            {alert.estado === 'CONCILIADO'
+                              ? formatMoney(alert.monto_neto, alert.moneda)
+                              : formatMoney(alert.monto_bruto, alert.moneda)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Cuerpo del Inspector: Titular, Reporte Cliente, Auditoría y Captura */}
+                      <div className="space-y-4 p-5">
+                        <dl className="grid grid-cols-2 gap-3 text-xs">
+                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                            <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Titular Asignado
+                            </dt>
+                            <dd className="mt-1 font-medium text-stone-900 dark:text-stone-100">
+                              {alert.cliente_asignado_nombre ? (
+                                <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                                  <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  {alert.cliente_asignado_nombre}
+                                </span>
+                              ) : (
+                                <span className="text-stone-400 dark:text-stone-500">
+                                  En espera de orden
+                                </span>
+                              )}
+                            </dd>
+                          </div>
+
+                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                            <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Orden / Liquidación
+                            </dt>
+                            <dd className="mt-1 font-mono text-stone-800 dark:text-stone-200">
+                              {reportedCode ?? '—'}
+                              {alert.codigo_liquidacion && (
+                                <span className="block text-[10px] text-amber-700 dark:text-amber-400">
+                                  {alert.codigo_liquidacion}
+                                </span>
+                              )}
+                            </dd>
+                          </div>
+                        </dl>
+
+                        {/* Comparativa con Reporte del Cliente */}
+                        <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Reporte del Cliente (Portal)
+                            </span>
+                            {hasNameDisparity && (
+                              <span className="inline-flex items-center gap-1 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
+                                Diferencia de nombre
+                              </span>
+                            )}
+                          </div>
+                          {reportedSender || reportedRef ? (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <div>
+                                <span className="text-[10px] text-stone-400">Remitente reportado</span>
+                                <p className="font-medium text-stone-900 dark:text-stone-100">
+                                  {reportedSender ?? '—'}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-stone-400">Ref. reportada</span>
+                                <p className="font-mono font-medium text-stone-900 dark:text-stone-100">
+                                  {reportedRef ?? '—'}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="mt-1.5 italic text-stone-400 dark:text-stone-500">
+                              Sin reporte del cliente asociado aún.
+                            </p>
+                          )}
+                          {alert.nota_auditoria && (
+                            <p className="mt-2 border-t border-stone-200 pt-2 text-[11px] text-stone-500 dark:border-stone-800 dark:text-stone-400">
+                              Nota: {alert.nota_auditoria}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Vista Previa Rápida de Captura */}
+                        {hasCapture && (
+                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                Comprobante del Cliente
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void openLightboxForTx(alert)}
+                                className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500 cursor-pointer"
+                              >
+                                <Eye className="h-3 w-3" strokeWidth={1.5} />
+                                Ampliar
+                              </button>
+                            </div>
+                            {isLoadingInspectorPreview ? (
+                              <div className="flex h-36 items-center justify-center rounded-md border border-dashed border-stone-300 text-xs text-stone-400 dark:border-stone-700">
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={1.5} />
+                                Cargando comprobante...
+                              </div>
+                            ) : inspectorPreviewBase64 ? (
+                              <button
+                                type="button"
+                                onClick={() => void openLightboxForTx(alert)}
+                                className="block w-full overflow-hidden rounded-md border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950 cursor-pointer"
+                              >
+                                <img
+                                  src={inspectorPreviewBase64}
+                                  alt="Vista previa de comprobante"
+                                  className="mx-auto max-h-48 w-full object-contain"
+                                />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void openLightboxForTx(alert)}
+                                className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 py-5 text-xs font-medium text-stone-600 transition hover:border-amber-700 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:text-stone-100 cursor-pointer"
+                              >
+                                <ImageIcon className="h-4 w-4" strokeWidth={1.5} />
+                                Abrir captura en visor completo
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Acciones del Inspector */}
+                        <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 pt-4 dark:border-stone-800">
+                          {alert.estado !== 'CONCILIADO' &&
+                            alert.estado !== 'DESCARTADO' &&
+                            !alert.liquidado_at &&
+                            alert.tipo_movimiento === 'RECIBIDO' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  openManualReconciliationModal(
+                                    alert,
+                                    candidateOrder
+                                  )
+                                }
+                                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                              >
+                                <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Conciliar
+                              </button>
+                            )}
+
+                          {hasCapture && (
+                            <button
+                              type="button"
+                              onClick={() => void openLightboxForTx(alert)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
+                            >
+                              <ImageIcon className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
+                              Ver Captura
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => setInspectedAlert(alert)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
+                          >
+                            <FileText className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
+                            Payload
+                          </button>
+
+                          {alert.estado !== 'CONCILIADO' &&
+                            alert.estado !== 'DESCARTADO' &&
+                            !alert.liquidado_at && (
+                              <button
+                                type="button"
+                                onClick={() => openDiscardModalForAlerts([alert])}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Eliminar
+                              </button>
+                            )}
+
+                          {alert.estado === 'DESCARTADO' && (
+                            <button
+                              type="button"
+                              disabled={restoringAlertId === alert.id}
+                              onClick={() => void handleRestoreDiscardedAlert(alert)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/25 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 cursor-pointer dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
+                            >
+                              {restoringAlertId === alert.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
+                              ) : (
+                                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                              )}
+                              Restaurar
+                            </button>
+                          )}
+
+                          {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAlertToRevert(alert);
+                                setRevertReason('');
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                              Deshacer
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </aside>
+            </div>
+
+            {/* Bottom Sheet Móvil para el Inspector (< lg) */}
+            <Dialog.Root
+              open={isMobileInspectorOpen && Boolean(selectedInspectorAlert)}
+              onOpenChange={setIsMobileInspectorOpen}
+            >
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm lg:hidden" />
+                <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[86vh] overflow-y-auto rounded-t-2xl border-t border-stone-200 bg-white p-5 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100 lg:hidden">
+                  <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-300 dark:bg-stone-700" />
+                  {selectedInspectorAlert &&
+                    (() => {
+                      const alert = selectedInspectorAlert;
+                      const badge = getPlatformBadgeMeta(alert.plataforma);
+                      const candidateOrder = findAssociatedCaptureOrder(alert);
+                      const hasCapture = Boolean(
+                        alert.has_capture ||
+                          alert.comprobante_base64 ||
+                          candidateOrder?.has_capture ||
+                          candidateOrder?.comprobante_base64
+                      );
+                      const reportedSender =
+                        alert.remitente_reportado ||
+                        candidateOrder?.remitente_reportado ||
+                        candidateOrder?.nombre_remitente_reportado ||
+                        null;
+                      const reportedRef =
+                        alert.referencia_reportada ||
+                        candidateOrder?.referencia_reportada ||
+                        null;
+
+                      return (
+                        <div className="space-y-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
+                                >
+                                  {badge.label}
+                                </span>
+                                <span className="font-mono text-xs text-stone-500">
+                                  {alert.referencia || 'SIN-REF'}
+                                </span>
+                              </div>
+                              <Dialog.Title className="mt-1.5 font-serif text-lg font-medium text-stone-900 dark:text-stone-100">
+                                {alert.remitente_o_contraparte || 'Remitente no identificado'}
+                              </Dialog.Title>
+                              <Dialog.Description className="font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
+                                {formatDateTime(alert.fecha_transaccion)}
+                              </Dialog.Description>
+                            </div>
+                            <Dialog.Close asChild>
+                              <button
+                                type="button"
+                                className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
+                              >
+                                <X className="h-4 w-4" strokeWidth={1.5} />
+                              </button>
+                            </Dialog.Close>
+                          </div>
+
+                          <div className="grid grid-cols-3 divide-x divide-stone-200 rounded-lg border border-stone-200 bg-[#FAF9F6] dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]">
+                            <div className="px-3 py-2.5">
+                              <span className="text-[10px] uppercase text-stone-500">Bruto</span>
+                              <p className="font-mono text-sm font-semibold tabular-nums">
+                                {formatMoney(alert.monto_bruto, alert.moneda)}
+                              </p>
+                            </div>
+                            <div className="px-3 py-2.5">
+                              <span className="text-[10px] uppercase text-stone-500">Com.</span>
+                              <p className="font-mono text-sm font-semibold tabular-nums">
+                                -{formatMoney(alert.monto_comision, alert.moneda)}
+                              </p>
+                            </div>
+                            <div className="px-3 py-2.5">
+                              <span className="text-[10px] uppercase text-stone-500">Neto</span>
+                              <p className="font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                                {formatMoney(
+                                  alert.estado === 'CONCILIADO'
+                                    ? alert.monto_neto
+                                    : alert.monto_bruto,
+                                  alert.moneda
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border border-stone-200 bg-[#FAF9F6] p-3 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                            <p>
+                              <span className="text-stone-500">Titular: </span>
+                              <strong className="font-medium">
+                                {alert.cliente_asignado_nombre ?? 'Sin titular asignado'}
+                              </strong>
+                            </p>
+                            {reportedSender && (
+                              <p className="mt-1">
+                                <span className="text-stone-500">Reportado: </span>
+                                <span className="font-medium">{reportedSender}</span>
+                                {reportedRef && (
+                                  <span className="ml-1.5 font-mono text-stone-500">
+                                    ({reportedRef})
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+
+                          {hasCapture && inspectorPreviewBase64 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsMobileInspectorOpen(false);
+                                void openLightboxForTx(alert);
+                              }}
+                              className="block w-full overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
+                            >
+                              <img
+                                src={inspectorPreviewBase64}
+                                alt="Comprobante"
+                                className="mx-auto max-h-44 w-full object-contain"
+                              />
+                            </button>
+                          )}
+
+                          <div className="flex flex-wrap gap-2 pt-2">
+                            {alert.estado !== 'CONCILIADO' &&
+                              alert.estado !== 'DESCARTADO' &&
+                              !alert.liquidado_at &&
+                              alert.tipo_movimiento === 'RECIBIDO' && (
                                 <button
                                   type="button"
-                                  onClick={() => setInspectedAlert(alert)}
-                                  className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-slate-700 cursor-pointer"
+                                  onClick={() => {
+                                    setIsMobileInspectorOpen(false);
+                                    openManualReconciliationModal(
+                                      alert,
+                                      candidateOrder
+                                    );
+                                  }}
+                                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2.5 text-xs font-medium text-stone-50 dark:bg-stone-100 dark:text-stone-950"
                                 >
-                                  <FileText className="h-3 w-3" />
-                                  Payload
+                                  <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  Conciliar
                                 </button>
-
-                                {alert.estado !== 'CONCILIADO' &&
-                                  alert.estado !== 'DESCARTADO' &&
-                                  !alert.liquidado_at &&
-                                  alert.tipo_movimiento === 'RECIBIDO' && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        openManualReconciliationModal(
-                                          alert,
-                                          candidateOrder
-                                        )
-                                      }
-                                      className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-[11px] font-semibold text-slate-950 transition hover:bg-amber-400 cursor-pointer"
-                                    >
-                                      <UserCheck className="h-3 w-3" />
-                                      Conciliar
-                                    </button>
-                                  )}
-
-                                {alert.estado !== 'CONCILIADO' &&
-                                  alert.estado !== 'DESCARTADO' &&
-                                  !alert.liquidado_at && (
-                                    <button
-                                      type="button"
-                                      onClick={() => openDiscardModalForAlerts([alert])}
-                                      className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 cursor-pointer"
-                                      title="Eliminar correo propio o que no corresponde a conciliación"
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                      Eliminar
-                                    </button>
-                                  )}
-
-                                {alert.estado === 'DESCARTADO' && (
-                                  <button
-                                    type="button"
-                                    disabled={restoringAlertId === alert.id}
-                                    onClick={() => void handleRestoreDiscardedAlert(alert)}
-                                    className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-500/30 disabled:opacity-50 cursor-pointer"
-                                    title="Restaurar correo a la lista activa"
-                                  >
-                                    {restoringAlertId === alert.id ? (
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                    ) : (
-                                      <RotateCcw className="h-3 w-3" />
-                                    )}
-                                    Restaurar
-                                  </button>
-                                )}
-
-                                {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setAlertToRevert(alert);
-                                      setRevertReason('');
-                                    }}
-                                    className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/15 px-2 py-1 text-[11px] font-semibold text-rose-300 transition hover:bg-rose-500/30 cursor-pointer"
-                                    title="Deshacer o revertir conciliación por error"
-                                  >
-                                    <RotateCcw className="h-3 w-3" />
-                                    Deshacer
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                  {filteredAlerts.length > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-slate-700 bg-slate-950/90 text-xs font-bold">
-                        <td colSpan={9} className="px-3 py-3 text-slate-300">
-                          TOTALES EN VISTA ({visibleTableTotals.totalRows} registro
-                          {visibleTableTotals.totalRows === 1 ? '' : 's'} ·{' '}
-                          {visibleTableTotals.conciliadosCount} conciliado
-                          {visibleTableTotals.conciliadosCount === 1 ? '' : 's'})
-                        </td>
-                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-white">
-                          <div>{formatMoney(visibleTableTotals.brutoAllUsd, 'USD')}</div>
-                          {visibleTableTotals.brutoAllUsdt > 0 && (
-                            <div className="text-[11px] text-amber-300">
-                              {formatMoney(visibleTableTotals.brutoAllUsdt, 'USDT')}
-                            </div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-violet-300">
-                          <div>-{formatMoney(visibleTableTotals.comisionUsd, 'USD')}</div>
-                          {visibleTableTotals.comisionUsdt > 0 && (
-                            <div className="text-[11px] text-violet-300/80">
-                              -{formatMoney(visibleTableTotals.comisionUsdt, 'USDT')}
-                            </div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-2.5 py-3 text-right font-mono text-emerald-400">
-                          <div>{formatMoney(visibleTableTotals.netoUsd, 'USD')}</div>
-                          {visibleTableTotals.netoUsdt > 0 && (
-                            <div className="text-[11px] text-amber-300">
-                              {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
-                            </div>
-                          )}
-                        </td>
-                        <td colSpan={2} className="px-2.5 py-3 text-right text-[11px] font-normal text-slate-400">
-                          {visibleTableTotals.brutoPendienteUsd > 0
-                            ? `Por conciliar: ${formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}`
-                            : '100% conciliado en vista'}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  )}
-                </table>
-              </div>
-            </section>
+                              )}
+                            {hasCapture && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsMobileInspectorOpen(false);
+                                  void openLightboxForTx(alert);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2.5 text-xs font-medium dark:border-stone-800"
+                              >
+                                <ImageIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Captura
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setIsMobileInspectorOpen(false);
+                                setInspectedAlert(alert);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2.5 text-xs font-medium dark:border-stone-800"
+                            >
+                              <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
+                              Payload
+                            </button>
+                            {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsMobileInspectorOpen(false);
+                                  setAlertToRevert(alert);
+                                  setRevertReason('');
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Deshacer
+                              </button>
+                            )}
+                            {alert.estado !== 'CONCILIADO' &&
+                              alert.estado !== 'DESCARTADO' &&
+                              !alert.liquidado_at && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setIsMobileInspectorOpen(false);
+                                    openDiscardModalForAlerts([alert]);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  Eliminar
+                                </button>
+                              )}
+                            {alert.estado === 'DESCARTADO' && (
+                              <button
+                                type="button"
+                                disabled={restoringAlertId === alert.id}
+                                onClick={() => {
+                                  setIsMobileInspectorOpen(false);
+                                  void handleRestoreDiscardedAlert(alert);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/25 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                Restaurar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                </Dialog.Content>
+              </Dialog.Portal>
+            </Dialog.Root>
           </>
         )}
 
@@ -5094,38 +5755,38 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             PESTAÑA: EGRESOS / GASTOS PERSONALES Y SALIDAS (TIPO_MOVIMIENTO = ENVIADO)
            ===================================================================== */}
         {activeTab === 'EXPENSES' && (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {/* Encabezado y Métricas de Egresos */}
-            <div className="rounded-2xl border border-rose-500/25 bg-gradient-to-br from-slate-900 via-slate-900 to-rose-950/25 p-5 shadow-lg">
+            <div className="rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="rounded-xl bg-rose-500/15 p-3 text-rose-400">
-                    <CreditCard className="h-6 w-6" />
+                  <div className="rounded-lg border border-rose-700/20 bg-rose-50 p-2.5 text-rose-700 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-400">
+                    <CreditCard className="h-5 w-5" strokeWidth={1.5} />
                   </div>
                   <div>
-                    <h2 className="text-base font-bold text-white">
+                    <h2 className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                       Egresos, Gastos Personales y Salidas Operativas
                     </h2>
-                    <p className="text-xs text-slate-400">
-                      Compras con tarjeta de débito (*0545), transferencias salientes y gastos del operador. Separados para mantener 100% limpia la conciliación de clientes.
+                    <p className="text-xs text-stone-500 dark:text-stone-400">
+                      Compras con tarjeta de débito (*0545), transferencias salientes y gastos del operador. Separados de la conciliación de clientes.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-right font-mono">
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-400">
+                <div className="grid grid-cols-2 divide-x divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6] dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]">
+                  <div className="px-4 py-2.5 text-right">
+                    <span className="block text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Total Salidas USD
                     </span>
-                    <span className="text-lg font-bold text-rose-300">
+                    <span className="font-mono text-base font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                       -{formatMoney(totalExpensesUsd, 'USD')}
                     </span>
                   </div>
-                  <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-2.5 text-right font-mono">
-                    <span className="block text-[10px] uppercase tracking-wider text-slate-400">
-                      Cantidad de Operaciones
+                  <div className="px-4 py-2.5 text-right">
+                    <span className="block text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                      Operaciones
                     </span>
-                    <span className="text-lg font-bold text-white">
+                    <span className="font-mono text-base font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                       {sentAlertsCount}
                     </span>
                   </div>
@@ -5134,46 +5795,46 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             </div>
 
             {/* Buscador de Egresos */}
-            <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+            <div className="flex items-center gap-3 rounded-xl border border-stone-200/90 bg-white p-3.5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
               <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" strokeWidth={1.5} />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Buscar gasto por comercio, tarjeta, TxID o destinatario..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-10 pr-4 text-sm text-slate-100 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                  className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-4 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                 />
               </div>
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="text-xs text-slate-400 hover:text-white"
+                  className="text-xs font-medium text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-stone-100"
                 >
-                  Limpiar búsqueda
+                  Limpiar
                 </button>
               )}
             </div>
 
             {/* Tabla de Egresos */}
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="overflow-x-auto xl:overflow-x-visible">
+            <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/70 text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      <th className="px-3 py-3">Fecha &amp; Canal</th>
-                      <th className="px-2.5 py-3">Tipo de Salida</th>
-                      <th className="px-3 py-3">Destinatario / Comercio / Tarjeta</th>
-                      <th className="px-3 py-3">Referencia / TxID</th>
-                      <th className="px-3 py-3 text-right">Monto Gastado</th>
-                      <th className="px-3 py-3 text-right">Detalles</th>
+                    <tr className="border-b border-stone-200 bg-[#FAF9F6] text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
+                      <th className="px-4 py-3">Fecha &amp; Canal</th>
+                      <th className="px-3 py-3">Tipo de Salida</th>
+                      <th className="px-4 py-3">Destinatario / Comercio / Tarjeta</th>
+                      <th className="px-4 py-3">Referencia / TxID</th>
+                      <th className="px-4 py-3 text-right">Monto Gastado</th>
+                      <th className="px-4 py-3 text-right">Detalles</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/70">
+                  <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                     {expensesAlerts.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-6 py-12 text-center text-slate-400">
+                        <td colSpan={6} className="px-6 py-12 text-center text-stone-500 dark:text-stone-400">
                           No se registraron egresos o gastos que coincidan con la búsqueda.
                         </td>
                       </tr>
@@ -5181,46 +5842,46 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       expensesAlerts.map((expense) => {
                         const badge = getPlatformBadgeMeta(expense.plataforma);
                         return (
-                          <tr key={expense.id} className="transition hover:bg-slate-800/40">
-                            <td className="whitespace-nowrap px-3 py-3">
+                          <tr key={expense.id} className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
+                            <td className="whitespace-nowrap px-4 py-3">
                               <span
-                                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${badge.badgeClass}`}
+                                className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium ${badge.badgeClass}`}
                               >
                                 {badge.label}
                               </span>
-                              <p className="mt-1 text-xs text-slate-400">
+                              <p className="mt-1 font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
                                 {formatDateTime(expense.fecha_transaccion)}
                               </p>
                             </td>
-                            <td className="whitespace-nowrap px-2.5 py-3">
-                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-xs font-medium text-rose-300">
-                                <ArrowUpRight className="h-3 w-3" />
+                            <td className="whitespace-nowrap px-3 py-3">
+                              <span className="inline-flex items-center gap-1 rounded-full border border-rose-700/25 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                                <ArrowUpRight className="h-3 w-3" strokeWidth={1.5} />
                                 ENVIADO / SALIDA
                               </span>
                             </td>
-                            <td className="px-3 py-3">
-                              <p className="font-semibold text-white">
+                            <td className="px-4 py-3">
+                              <p className="font-medium text-stone-900 dark:text-stone-100">
                                 {expense.remitente_o_contraparte || 'No especificado'}
                               </p>
                               {expense.nota_auditoria && (
-                                <p className="mt-0.5 text-[11px] text-slate-400">
+                                <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
                                   {expense.nota_auditoria}
                                 </p>
                               )}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 font-mono text-xs text-slate-300">
+                            <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-stone-600 dark:text-stone-400">
                               {expense.referencia || 'SIN-REF'}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 text-right font-mono text-base font-bold text-rose-300">
+                            <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                               -{formatMoney(expense.monto_bruto, expense.moneda)}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-3 text-right">
+                            <td className="whitespace-nowrap px-4 py-3 text-right">
                               <button
                                 type="button"
                                 onClick={() => setInspectedAlert(expense)}
-                                className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-800/80 px-2.5 py-1 text-xs font-medium text-slate-300 transition hover:bg-slate-700 cursor-pointer"
+                                className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 text-xs font-medium text-stone-700 transition hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:bg-stone-900"
                               >
-                                <FileText className="h-3.5 w-3.5" />
+                                <FileText className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
                                 Payload
                               </button>
                             </td>
@@ -5239,87 +5900,87 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             PESTAÑA 2: CUENTAS DE CLIENTES Y ÓRDENES PENDIENTES
            ===================================================================== */}
         {activeTab === 'CLIENTS' && (
-          <div className="space-y-8">
-            <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
+          <div className="space-y-6">
+            <div className="flex flex-col justify-between gap-4 rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm sm:flex-row sm:items-center dark:border-stone-800 dark:bg-[#1C1A18]">
               <div>
-                <h2 className="text-lg font-bold text-white">
+                <h2 className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                   Directorio de Clientes y Cuentas de Acceso al Portal
                 </h2>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                   Cada cliente ingresa a `/portal` con su Correo y PIN para reportar los pagos de terceros que recibe y consultar su saldo neto liquidable en USD y USDT.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-3">
+              <div className="flex flex-wrap gap-2.5">
                 <button
                   type="button"
                   onClick={() => setIsNewOrderModalOpen(true)}
-                  className="inline-flex items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-950/40 px-4 py-2 text-sm font-semibold text-sky-300 hover:bg-sky-900/50"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-xs font-medium text-stone-800 transition hover:bg-stone-100 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
                 >
-                  <FilePlus2 className="h-4 w-4" />
-                  + Registrar Orden Esperada
+                  <FilePlus2 className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
+                  Registrar Orden Esperada
                 </button>
                 <button
                   type="button"
                   onClick={openCreateClientModal}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                 >
-                  <UserPlus className="h-4 w-4" />
-                  + Nueva Cuenta de Acceso
+                  <UserPlus className="h-3.5 w-3.5" strokeWidth={1.5} />
+                  Nueva Cuenta de Acceso
                 </button>
               </div>
             </div>
 
             {lastPortalCredentials && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-700/20 bg-emerald-50 px-4 py-3 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-300">
                 <div>
                   <strong>Último acceso asignado ({lastPortalCredentials.nombre}):</strong>{' '}
-                  Correo <code className="text-white">{lastPortalCredentials.email}</code>
+                  Correo <code className="font-mono font-semibold">{lastPortalCredentials.email}</code>
                   {lastPortalCredentials.pin && (
                     <>
-                      {' '}· PIN <code className="text-white">{lastPortalCredentials.pin}</code>
+                      {' '}· PIN <code className="font-mono font-semibold">{lastPortalCredentials.pin}</code>
                     </>
                   )}
                 </div>
                 <button
                   type="button"
                   onClick={() => void handleCopyPortalCredentials(lastPortalCredentials)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-200 hover:bg-emerald-500/25"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/30 bg-white px-3 py-1.5 font-medium text-emerald-800 transition hover:bg-emerald-50 dark:border-emerald-500/40 dark:bg-[#1C1A18] dark:text-emerald-300"
                 >
-                  <Copy className="h-3.5 w-3.5" />
+                  <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
                   Copiar Link + Credenciales
                 </button>
               </div>
             )}
 
             {/* Tabla de Cuentas de Clientes */}
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="border-b border-stone-200 bg-[#FAF9F6] px-5 py-3 dark:border-stone-800 dark:bg-[#121110]">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Cuentas de Clientes Registrados ({clients.length})
                 </h3>
               </div>
-              <div className="overflow-x-auto xl:overflow-x-visible">
+              <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <tr className="border-b border-stone-200 bg-[#FAF9F6]/60 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110]/60 dark:text-stone-400">
                       <th className="px-4 py-3">Cliente / Titular</th>
                       <th className="px-4 py-3">Correo &amp; Acceso Portal</th>
-                      <th className="px-4 py-3">Cuentas Asignadas (Destino &amp; Moneda)</th>
+                      <th className="px-4 py-3">Cuentas Asignadas</th>
                       <th className="px-4 py-3 text-center">Fees (Zelle / Bin.)</th>
-                      <th className="px-4 py-3 text-right">Total Acreditado</th>
-                      <th className="px-4 py-3 text-right">Total Liquidado</th>
+                      <th className="px-4 py-3 text-right">Acreditado</th>
+                      <th className="px-4 py-3 text-right">Liquidado</th>
                       <th className="px-4 py-3 text-right">Saldo Disponible</th>
                       <th className="px-4 py-3 text-right">Acciones</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/70">
+                  <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                     {clients.length === 0 ? (
                       <tr>
                         <td
                           colSpan={8}
-                          className="px-6 py-10 text-center text-slate-400"
+                          className="px-6 py-10 text-center text-stone-500 dark:text-stone-400"
                         >
-                          Aún no hay cuentas de clientes registradas. Haz clic en &quot;+ Nueva Cuenta de Acceso&quot; para crear un usuario y asignarle su PIN del portal.
+                          Aún no hay cuentas de clientes registradas. Haz clic en &quot;Nueva Cuenta de Acceso&quot; para crear un usuario y asignarle su PIN del portal.
                         </td>
                       </tr>
                     ) : (
@@ -5327,32 +5988,32 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         const dispUsd = c.saldo_disponible_usd ?? Math.round((c.total_neto_usd - (c.total_liquidado_usd ?? 0)) * 100) / 100;
                         const dispUsdt = c.saldo_disponible_usdt ?? Math.round((c.total_neto_usdt - (c.total_liquidado_usdt ?? 0)) * 100) / 100;
                         return (
-                          <tr key={c.id} className="hover:bg-slate-800/40">
-                            <td className="px-4 py-3.5 font-semibold text-white">
+                          <tr key={c.id} className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
+                            <td className="px-4 py-3.5 font-semibold text-stone-900 dark:text-stone-100">
                               {c.nombre_titular}
-                              <div className="text-xs font-normal text-slate-400">
+                              <div className="text-xs font-normal text-stone-500 dark:text-stone-400">
                                 {c.pagos_conciliados_count} pago(s) conciliado(s)
                               </div>
                             </td>
-                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                            <td className="px-4 py-3.5 text-xs text-stone-600 dark:text-stone-300">
                               <div>{c.email ?? c.email_contacto ?? 'Sin email'}</div>
                               <div className="mt-1 flex items-center gap-2">
                                 {c.tiene_pin_configurado ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
-                                    <KeyRound className="h-2.5 w-2.5" />
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                    <KeyRound className="h-2.5 w-2.5" strokeWidth={1.5} />
                                     PIN Activo
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-400">
                                     Sin PIN
                                   </span>
                                 )}
                                 {c.telefono && (
-                                  <span className="text-slate-400">{c.telefono}</span>
+                                  <span className="text-stone-400">{c.telefono}</span>
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                            <td className="px-4 py-3.5 text-xs text-stone-600 dark:text-stone-300">
                               {c.cuentas_asignadas && c.cuentas_asignadas.length > 0 ? (
                                 <div className="space-y-1.5">
                                   {c.cuentas_asignadas.map((acc) => {
@@ -5360,17 +6021,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     return (
                                       <div
                                         key={acc.id}
-                                        className="flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-800 bg-slate-950/90 px-2.5 py-1.5"
+                                        className="flex flex-wrap items-center gap-1.5 rounded-lg border border-stone-200/80 bg-[#FAF9F6] px-2.5 py-1 dark:border-stone-800 dark:bg-[#121110]"
                                       >
                                         <span
-                                          className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
+                                          className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
                                         >
                                           {badge.label}
                                         </span>
-                                        <span className="font-mono text-[11px] font-semibold text-white">
+                                        <span className="font-mono text-[11px] font-medium text-stone-900 dark:text-stone-100">
                                           {acc.cuenta_receptora}
                                         </span>
-                                        <span className="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                                        <span className="rounded bg-stone-200/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-stone-700 dark:bg-stone-800 dark:text-stone-300">
                                           {acc.moneda}
                                         </span>
                                       </div>
@@ -5378,35 +6039,51 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   })}
                                 </div>
                               ) : (
-                                <span className="text-[11px] text-amber-300">
+                                <span className="text-[11px] text-amber-700 dark:text-amber-400">
                                   Sin cuentas asignadas (usa Editar)
                                 </span>
                               )}
                             </td>
-                            <td className="px-4 py-3.5 text-center font-mono text-xs text-violet-300">
+                            <td className="px-4 py-3.5 text-center font-mono text-xs tabular-nums text-stone-600 dark:text-stone-400">
                               {c.porcentaje_comision_zelle}% / {c.porcentaje_comision_binance}%
                             </td>
-                            <td className="px-4 py-3.5 text-right font-mono text-xs text-slate-200">
+                            <td className="px-4 py-3.5 text-right font-mono text-xs tabular-nums text-stone-900 dark:text-stone-100">
                               <div>{formatMoney(c.total_neto_usd, 'USD')}</div>
                               {c.total_neto_usdt > 0 && (
-                                <div className="text-amber-300">{formatMoney(c.total_neto_usdt, 'USDT')}</div>
+                                <div className="text-stone-500 dark:text-stone-400">{formatMoney(c.total_neto_usdt, 'USDT')}</div>
                               )}
                             </td>
-                            <td className="px-4 py-3.5 text-right font-mono text-xs text-rose-300">
+                            <td className="px-4 py-3.5 text-right font-mono text-xs tabular-nums text-stone-700 dark:text-stone-300">
                               <div>{formatMoney(c.total_liquidado_usd ?? 0, 'USD')}</div>
                               {(c.total_liquidado_usdt ?? 0) > 0 && (
-                                <div className="text-rose-400">{formatMoney(c.total_liquidado_usdt ?? 0, 'USDT')}</div>
+                                <div>{formatMoney(c.total_liquidado_usdt ?? 0, 'USDT')}</div>
                               )}
-                              <div className="text-[10px] text-slate-400 font-normal">
-                                {c.liquidaciones_count ?? 0} liquidación(es)
+                              <div className="font-sans text-[10px] text-stone-400">
+                                {c.liquidaciones_count ?? 0} liq.
                               </div>
                             </td>
-                            <td className="px-4 py-3.5 text-right font-mono font-bold">
-                              <div className="text-sm text-emerald-400">
+                            <td className="px-4 py-3.5 text-right font-mono font-semibold tabular-nums">
+                              <div
+                                className={`text-sm ${
+                                  dispUsd < 0
+                                    ? 'text-rose-700 dark:text-rose-400'
+                                    : dispUsd > 0
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : 'text-stone-900 dark:text-stone-100'
+                                }`}
+                              >
                                 {formatMoney(dispUsd, 'USD')}
                               </div>
                               {c.total_neto_usdt > 0 && (
-                                <div className="text-xs text-amber-300">
+                                <div
+                                  className={`text-xs ${
+                                    dispUsdt < 0
+                                      ? 'text-rose-700 dark:text-rose-400'
+                                      : dispUsdt > 0
+                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                        : 'text-stone-500'
+                                  }`}
+                                >
                                   {formatMoney(dispUsdt, 'USDT')}
                                 </div>
                               )}
@@ -5416,29 +6093,29 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => openLiquidationModal(c)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-emerald-600/30 px-2.5 py-1.5 text-xs font-semibold text-emerald-200 hover:bg-emerald-600 hover:text-white transition shadow-sm"
+                                  className="inline-flex items-center gap-1 rounded-lg bg-stone-900 px-2.5 py-1.5 text-xs font-medium text-stone-50 transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                   title="Liquidar saldo a favor del cliente o de un tercero"
                                 >
-                                  <Coins className="h-3.5 w-3.5 text-emerald-400" />
+                                  <Coins className="h-3.5 w-3.5" strokeWidth={1.5} />
                                   Liquidar
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => openEditClientModal(c)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-100 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
                                 >
-                                  <KeyRound className="h-3 w-3 text-emerald-400" />
-                                  Editar / PIN
+                                  <KeyRound className="h-3 w-3 text-stone-400" strokeWidth={1.5} />
+                                  Editar
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() =>
                                     void handleDeleteClient(c.id, c.nombre_titular)
                                   }
-                                  className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                                  className="rounded-lg p-1.5 text-stone-400 transition hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
                                   title="Eliminar cliente"
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                                 </button>
                               </div>
                             </td>
@@ -5452,16 +6129,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             </div>
 
             {/* Tabla de Órdenes de Pago Pendientes (Reportadas en el Portal) */}
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="border-b border-stone-200 bg-[#FAF9F6] px-5 py-3 dark:border-stone-800 dark:bg-[#121110]">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Órdenes / Reportes de Pago Pendientes ({pendingOrders.length})
                 </h3>
               </div>
-              <div className="overflow-x-auto xl:overflow-x-visible">
+              <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <tr className="border-b border-stone-200 bg-[#FAF9F6]/60 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110]/60 dark:text-stone-400">
                       <th className="px-4 py-3">Código Orden</th>
                       <th className="px-4 py-3">Cliente Titular</th>
                       <th className="px-4 py-3">Remitente Reportado</th>
@@ -5471,12 +6148,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <th className="px-4 py-3 text-right">Comprobante</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/70">
+                  <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                     {pendingOrders.length === 0 ? (
                       <tr>
                         <td
                           colSpan={7}
-                          className="px-6 py-8 text-center text-slate-400"
+                          className="px-6 py-8 text-center text-stone-500 dark:text-stone-400"
                         >
                           No hay órdenes de pago pendientes en este momento.
                         </td>
@@ -5485,27 +6162,27 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       pendingOrders.map((o) => {
                         const badge = getPlatformBadgeMeta(o.plataforma_esperada);
                         return (
-                          <tr key={o.id} className="hover:bg-slate-800/40">
-                            <td className="px-4 py-3 font-mono text-xs font-bold text-sky-300">
+                          <tr key={o.id} className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
+                            <td className="px-4 py-3 font-mono text-xs font-semibold text-stone-900 dark:text-stone-100">
                               {o.codigo_orden}
                             </td>
-                            <td className="px-4 py-3 font-medium text-white">
+                            <td className="px-4 py-3 font-medium text-stone-900 dark:text-stone-100">
                               {o.cliente_nombre}
                             </td>
-                            <td className="px-4 py-3 text-slate-300">
+                            <td className="px-4 py-3 text-stone-600 dark:text-stone-300">
                               {o.remitente_reportado || o.nombre_remitente_reportado}
                             </td>
                             <td className="px-4 py-3">
                               <span
-                                className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-semibold ${badge.badgeClass}`}
+                                className={`inline-flex rounded border px-2 py-0.5 text-[11px] font-medium ${badge.badgeClass}`}
                               >
                                 {badge.label}
                               </span>
                             </td>
-                            <td className="px-4 py-3 font-mono text-xs text-slate-400">
+                            <td className="px-4 py-3 font-mono text-xs text-stone-600 dark:text-stone-400">
                               {o.referencia_reportada ?? 'SIN-REF'}
                             </td>
-                            <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">
+                            <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                               {formatMoney(o.monto_esperado, o.moneda)}
                             </td>
                             <td className="px-4 py-3 text-right">
@@ -5514,31 +6191,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   <button
                                     type="button"
                                     onClick={() => void openLightboxForOrder(o)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-xs font-semibold text-sky-300 hover:bg-sky-500/25 cursor-pointer"
+                                    className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200"
                                   >
-                                    <Eye className="h-3.5 w-3.5" />
+                                    <Eye className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
                                     Ver Captura
                                   </button>
                                 ) : (
-                                  <span className="text-xs text-slate-500">
+                                  <span className="text-xs text-stone-400">
                                     Sin imagen
                                   </span>
                                 )}
                                 <button
                                   type="button"
                                   onClick={() => openManualOrderConfirmModal(o)}
-                                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer"
+                                  className="inline-flex items-center gap-1 rounded-md bg-stone-900 px-2.5 py-1 text-xs font-medium text-stone-50 hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                 >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  Confirmar Manual
+                                  <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  Confirmar
                                 </button>
                                 <button
                                   type="button"
                                   disabled={isRejectingOrderId === o.id}
                                   onClick={() => void handleRejectPendingOrder(o)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300 hover:bg-rose-500/30 disabled:opacity-50 cursor-pointer"
+                                  className="inline-flex items-center gap-1 rounded-md border border-rose-700/25 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                                   Descartar
                                 </button>
                               </div>
@@ -5558,89 +6235,89 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             PESTAÑA 4: GESTIÓN DE LIQUIDACIONES Y PAGOS A CLIENTES O TERCEROS
            ===================================================================== */}
         {activeTab === 'LIQUIDATIONS' && (
-          <div className="space-y-6">
+          <div className="space-y-5">
             {/* Cabecera y Métricas de Liquidación */}
-            <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
+            <div className="flex flex-col justify-between gap-4 rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm sm:flex-row sm:items-center dark:border-stone-800 dark:bg-[#1C1A18]">
               <div>
-                <div className="flex items-center gap-2 text-emerald-400">
-                  <Coins className="h-5 w-5" />
-                  <h2 className="text-lg font-bold text-white">
+                <div className="flex items-center gap-2">
+                  <Coins className="h-5 w-5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
+                  <h2 className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Liquidaciones y Pagos Realizados
                   </h2>
                 </div>
-                <p className="mt-1 text-xs text-slate-400">
-                  Registra liquidaciones parciales o totales de saldos acreditados a clientes o a las cuentas de terceros que indiquen, con motivos y deducción automática.
+                <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
+                  Registra liquidaciones parciales, totales o adelantos sobre saldos acreditados a clientes o terceros, con deducción y cierre de ciclo.
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => openLiquidationModal()}
-                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-950/60 hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <Plus className="h-4 w-4" />
-                + Registrar Liquidación
+                <Plus className="h-4 w-4" strokeWidth={1.5} />
+                Registrar Liquidación
               </button>
             </div>
 
             {/* Tarjetas de Métricas de Liquidación */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            <div className="grid grid-cols-1 divide-y divide-stone-200 rounded-xl border border-stone-200/90 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="p-4 sm:px-5">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Total Liquidado USD
                 </span>
-                <p className="mt-2 font-mono text-2xl font-bold text-emerald-400">
+                <p className="mt-1.5 font-mono text-2xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
                   {formatMoney(totalLiquidadoUsd, 'USD')}
                 </p>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-stone-500 dark:text-stone-400">
                   Salidas pagadas en Zelle / Bancario / Efectivo
                 </span>
               </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <div className="p-4 sm:px-5">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Total Liquidado USDT
                 </span>
-                <p className="mt-2 font-mono text-2xl font-bold text-amber-300">
+                <p className="mt-1.5 font-mono text-2xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
                   {formatMoney(totalLiquidadoUsdt, 'USDT')}
                 </p>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-stone-500 dark:text-stone-400">
                   Salidas Binance Pay / P2P / On-Chain
                 </span>
               </div>
 
-              <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+              <div className="p-4 sm:px-5">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Operaciones de Liquidación
                 </span>
-                <p className="mt-2 font-mono text-2xl font-bold text-sky-400">
+                <p className="mt-1.5 font-mono text-2xl font-semibold tracking-tight tabular-nums text-stone-900 dark:text-stone-100">
                   {liquidations.length}
                 </p>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-stone-500 dark:text-stone-400">
                   Liquidaciones registradas con deducción de saldo
                 </span>
               </div>
             </div>
 
             {/* Barra de Filtros */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200/90 bg-white p-3.5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
               <div className="relative min-w-[240px] flex-1">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-stone-400" strokeWidth={1.5} />
                 <input
                   type="text"
                   value={liqSearch}
                   onChange={(e) => setLiqSearch(e.target.value)}
                   placeholder="Buscar por código, cliente, destinatario o motivo..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-4 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-4 text-xs text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                 />
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400">Método:</span>
+                <span className="text-xs text-stone-500 dark:text-stone-400">Método:</span>
                 <select
                   value={liqMethodFilter}
                   onChange={(e) => setLiqMethodFilter(e.target.value)}
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+                  className="rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-1.5 text-xs text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
                 >
                   <option value="TODOS">Todos los Métodos</option>
                   <option value="ZELLE">Zelle</option>
@@ -5654,111 +6331,119 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             </div>
 
             {/* Tabla de Liquidaciones */}
-            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-              <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="border-b border-stone-200 bg-[#FAF9F6] px-5 py-3 dark:border-stone-800 dark:bg-[#121110]">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Historial de Liquidaciones ({filteredLiquidations.length})
                 </h3>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-left text-sm table-auto">
                   <thead>
-                    <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    <tr className="border-b border-stone-200 bg-[#FAF9F6]/60 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110]/60 dark:text-stone-400">
                       <th className="px-4 py-3">Código &amp; Fecha</th>
                       <th className="px-4 py-3">Cliente Titular</th>
-                      <th className="px-4 py-3">Destinatario / Beneficiario</th>
+                      <th className="px-4 py-3">Destinatario</th>
                       <th className="px-4 py-3">Motivo / Concepto</th>
-                      <th className="px-4 py-3">Método &amp; Referencia</th>
+                      <th className="px-4 py-3">Método &amp; Ref.</th>
                       <th className="px-4 py-3 text-right">Totales del Ciclo</th>
-                      <th className="px-4 py-3 text-right">Monto Liquidado</th>
+                      <th className="px-4 py-3 text-right">Liquidado</th>
                       <th className="px-4 py-3 text-right">Saldo Antes → Después</th>
                       <th className="px-4 py-3 text-center">Operador</th>
-                      <th className="px-4 py-3 text-right">Archivo / Capturas</th>
+                      <th className="px-4 py-3 text-right">Archivo</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/70">
+                  <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                     {filteredLiquidations.length === 0 ? (
                       <tr>
                         <td
                           colSpan={10}
-                          className="px-6 py-12 text-center text-slate-400"
+                          className="px-6 py-12 text-center text-stone-500 dark:text-stone-400"
                         >
-                          No se encontraron liquidaciones registradas. Haz clic en &quot;+ Registrar Liquidación&quot; para liquidar el saldo de un cliente.
+                          No se encontraron liquidaciones registradas. Haz clic en &quot;Registrar Liquidación&quot; para liquidar el saldo de un cliente.
                         </td>
                       </tr>
                     ) : (
                       filteredLiquidations.map((liq) => (
-                        <tr key={liq.id} className="hover:bg-slate-800/40">
+                        <tr key={liq.id} className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
                           <td className="px-4 py-3.5 font-mono text-xs">
                             <div className="flex flex-wrap items-center gap-1.5">
                               {liq.numero_ciclo && (
-                                <span className="inline-flex rounded-full border border-indigo-500/40 bg-indigo-500/20 px-2 py-0.5 font-sans text-[10px] font-bold text-indigo-200">
+                                <span className="inline-flex rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 font-sans text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
                                   Ciclo #{liq.numero_ciclo}
                                 </span>
                               )}
-                              <span className="font-bold text-emerald-400">
+                              <span className="font-semibold text-stone-900 dark:text-stone-100">
                                 {liq.codigo_liquidacion}
                               </span>
                             </div>
-                            <div className="mt-0.5 text-[11px] text-slate-400 font-sans">
+                            <div className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
                               {new Date(liq.created_at).toLocaleString('es-ES', {
                                 dateStyle: 'short',
                                 timeStyle: 'short',
                               })}
                             </div>
                           </td>
-                          <td className="px-4 py-3.5 font-semibold text-white">
+                          <td className="px-4 py-3.5 font-semibold text-stone-900 dark:text-stone-100">
                             {liq.cliente_nombre}
                           </td>
-                          <td className="px-4 py-3.5 text-xs text-slate-200">
-                            <div className="font-medium text-sky-300">{liq.destinatario_beneficiario}</div>
+                          <td className="px-4 py-3.5 text-xs font-medium text-stone-700 dark:text-stone-300">
+                            {liq.destinatario_beneficiario}
                           </td>
-                          <td className="px-4 py-3.5 text-xs text-slate-300 max-w-xs truncate" title={liq.motivo_concepto}>
+                          <td className="max-w-xs truncate px-4 py-3.5 text-xs text-stone-600 dark:text-stone-400" title={liq.motivo_concepto}>
                             {liq.motivo_concepto}
                           </td>
                           <td className="px-4 py-3.5 text-xs">
-                            <span className="inline-flex rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-200">
+                            <span className="inline-flex rounded border border-stone-200 bg-[#FAF9F6] px-2 py-0.5 text-[10px] font-medium text-stone-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300">
                               {liq.metodo_pago_salida}
                             </span>
                             {liq.referencia_salida && (
-                              <div className="mt-1 font-mono text-[11px] text-slate-400">
+                              <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-stone-400">
                                 Ref: {liq.referencia_salida}
                               </div>
                             )}
                           </td>
-                          <td className="whitespace-nowrap px-4 py-3.5 text-right font-mono text-xs">
-                            <div className="font-bold text-emerald-400">
+                          <td className="whitespace-nowrap px-4 py-3.5 text-right font-mono text-xs tabular-nums">
+                            <div className="font-semibold text-stone-900 dark:text-stone-100">
                               Neto: {formatMoney(Number(liq.ciclo_neto_total ?? 0), liq.moneda)}
                             </div>
-                            <div className="text-[10px] text-slate-400">
+                            <div className="text-[10px] text-stone-500 dark:text-stone-400">
                               {Number(liq.ciclo_pagos_count ?? 0)} pagos · Bruto{' '}
                               {formatMoney(Number(liq.ciclo_bruto_total ?? 0), liq.moneda)} · Com -
                               {formatMoney(Number(liq.ciclo_comision_total ?? 0), liq.moneda)}
                             </div>
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono font-bold text-rose-400 text-sm">
+                          <td className="px-4 py-3.5 text-right font-mono text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                             -{formatMoney(liq.monto_liquidado, liq.moneda)}
                           </td>
-                          <td className="px-4 py-3.5 text-right font-mono text-xs">
-                            <span className="text-slate-400">
+                          <td className="px-4 py-3.5 text-right font-mono text-xs tabular-nums">
+                            <span className="text-stone-500 dark:text-stone-400">
                               {formatMoney(liq.saldo_anterior, liq.moneda)}
                             </span>{' '}
-                            <span className="text-slate-500">→</span>{' '}
-                            <span className="font-bold text-emerald-400">
+                            <span className="text-stone-400">→</span>{' '}
+                            <span
+                              className={`font-semibold ${
+                                liq.saldo_restante < 0
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : liq.saldo_restante > 0
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-stone-900 dark:text-stone-100'
+                              }`}
+                            >
                               {formatMoney(liq.saldo_restante, liq.moneda)}
                             </span>
                           </td>
-                          <td className="px-4 py-3.5 text-center text-xs text-slate-400">
+                          <td className="px-4 py-3.5 text-center text-xs text-stone-500 dark:text-stone-400">
                             {liq.liquidado_por || 'ADMIN'}
                           </td>
                           <td className="px-4 py-3.5 text-right">
                             <button
                               type="button"
                               onClick={() => void openAdminLiquidationDetail(liq)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/25 cursor-pointer"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1.5 text-[11px] font-medium text-stone-700 transition hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
                             >
-                              <ImageIcon className="h-3.5 w-3.5 text-indigo-300" />
-                              Ver Pagos y Capturas
+                              <ImageIcon className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
+                              Ver Pagos
                             </button>
                           </td>
                         </tr>
@@ -5779,28 +6464,34 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               }}
             >
               <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
-                <Dialog.Content className="fixed left-1/2 top-1/2 z-40 flex max-h-[90vh] w-[95vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-2xl border border-indigo-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4">
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+                <Dialog.Content className="fixed left-1/2 top-1/2 z-40 flex max-h-[90vh] w-[95vw] max-w-6xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
                     <div>
-                      <Dialog.Title className="flex items-center gap-2 text-lg font-bold text-white">
-                        <Coins className="h-5 w-5 text-indigo-400" />
+                      <Dialog.Title className="flex items-center gap-2 font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
+                        <Coins className="h-5 w-5 text-stone-400" strokeWidth={1.5} />
                         {inspectedLiquidation?.numero_ciclo
                           ? `Ciclo #${inspectedLiquidation.numero_ciclo} · `
                           : 'Detalle del Ciclo Liquidado · '}
                         {inspectedLiquidation?.codigo_liquidacion} ({inspectedLiquidation?.cliente_nombre})
                       </Dialog.Title>
-                      <Dialog.Description className="mt-1 text-xs text-slate-400">
+                      <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                         Liquidado:{' '}
-                        <strong className="text-rose-400">
+                        <strong className="font-mono text-rose-700 dark:text-rose-400">
                           -{inspectedLiquidation ? formatMoney(inspectedLiquidation.monto_liquidado, inspectedLiquidation.moneda) : ''}
                         </strong>{' '}
                         · Saldo Antes → Después:{' '}
-                        <span className="font-mono text-slate-300">
+                        <span className="font-mono text-stone-700 dark:text-stone-300">
                           {inspectedLiquidation ? formatMoney(inspectedLiquidation.saldo_anterior, inspectedLiquidation.moneda) : ''}
                         </span>{' '}
                         →{' '}
-                        <strong className="font-mono text-emerald-400">
+                        <strong
+                          className={`font-mono ${
+                            (inspectedLiquidation?.saldo_restante ?? 0) < 0
+                              ? 'text-rose-700 dark:text-rose-400'
+                              : 'text-emerald-700 dark:text-emerald-400'
+                          }`}
+                        >
                           {inspectedLiquidation ? formatMoney(inspectedLiquidation.saldo_restante, inspectedLiquidation.moneda) : ''}
                         </strong>
                       </Dialog.Description>
@@ -5808,20 +6499,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <Dialog.Close asChild>
                       <button
                         type="button"
-                        className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
+                        className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 cursor-pointer dark:hover:bg-stone-800 dark:hover:text-stone-200"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-4 w-4" strokeWidth={1.5} />
                       </button>
                     </Dialog.Close>
                   </div>
 
                   {isLoadingAdminLiqItems ? (
-                    <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-300">
-                      <RefreshCw className="h-5 w-5 animate-spin text-indigo-400" />
+                    <div className="flex items-center justify-center gap-2 py-16 text-sm text-stone-500 dark:text-stone-400">
+                      <RefreshCw className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                       Cargando pagos y capturas archivadas...
                     </div>
                   ) : adminLiqItemsError ? (
-                    <div className="my-6 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-xs text-rose-200">
+                    <div className="my-6 rounded-xl border border-rose-700/25 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
                       {adminLiqItemsError}
                     </div>
                   ) : (
@@ -5841,39 +6532,39 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       return (
                         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
                           {adminLiqSummary && (
-                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                            <div className="grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200 bg-[#FAF9F6] sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]">
+                              <div className="p-3">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                                   Pagos del Ciclo
                                 </span>
-                                <p className="mt-1 font-mono text-lg font-bold text-white">
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                                   {adminLiqSummary.totalCount}
                                 </p>
-                                <span className="text-[11px] text-slate-400">
+                                <span className="text-[11px] text-stone-500 dark:text-stone-400">
                                   {adminLiqSummary.portalCount} capturas · {adminLiqSummary.directCount} directos
                                 </span>
                               </div>
-                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                              <div className="p-3">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                                   Bruto Archivado
                                 </span>
-                                <p className="mt-1 font-mono text-lg font-bold text-white">
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                                   {formatMoney(adminLiqSummary.totalBruto, inspectedLiquidation?.moneda ?? 'USD')}
                                 </p>
                               </div>
-                              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3">
-                                <span className="text-[11px] font-semibold uppercase text-slate-400">
+                              <div className="p-3">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                                   Comisión Retenida
                                 </span>
-                                <p className="mt-1 font-mono text-lg font-bold text-violet-300">
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                                   -{formatMoney(adminLiqSummary.totalComision, inspectedLiquidation?.moneda ?? 'USD')}
                                 </p>
                               </div>
-                              <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 p-3">
-                                <span className="text-[11px] font-semibold uppercase text-emerald-300">
+                              <div className="p-3">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                                   Neto Acreditado
                                 </span>
-                                <p className="mt-1 font-mono text-lg font-bold text-emerald-400">
+                                <p className="mt-1 font-mono text-lg font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                                   {formatMoney(adminLiqSummary.totalNeto, inspectedLiquidation?.moneda ?? 'USD')}
                                 </p>
                               </div>
@@ -5886,31 +6577,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               value={adminLiqSearch}
                               onChange={(e) => setAdminLiqSearch(e.target.value)}
                               placeholder="Buscar por remitente, ORD-, referencia bancaria o reportada..."
-                              className="w-full max-w-md rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+                              className="w-full max-w-md rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-xs text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
                             />
-                            <span className="text-xs text-slate-400">
-                              Mostrando {filtered.length} de {adminLiqItems.length} registros
+                            <span className="font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
+                              Mostrando {filtered.length} de {adminLiqItems.length}
                             </span>
                           </div>
 
-                          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-800">
+                          <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-stone-200 dark:border-stone-800">
                             <table className="w-full border-collapse text-left text-xs">
-                              <thead className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                              <thead className="sticky top-0 z-10 border-b border-stone-200 bg-[#FAF9F6] text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
                                 <tr>
                                   <th className="px-3 py-2.5">#</th>
-                                  <th className="px-3 py-2.5">Orden &amp; Fecha Correo</th>
-                                  <th className="px-3 py-2.5">Remitente (Correo / Orden)</th>
-                                  <th className="px-3 py-2.5">Referencia (Banco / Orden)</th>
+                                  <th className="px-3 py-2.5">Orden &amp; Fecha</th>
+                                  <th className="px-3 py-2.5">Remitente</th>
+                                  <th className="px-3 py-2.5">Referencia</th>
                                   <th className="px-3 py-2.5 text-right">Bruto</th>
                                   <th className="px-3 py-2.5 text-right">Comisión</th>
                                   <th className="px-3 py-2.5 text-right">Neto</th>
                                   <th className="px-3 py-2.5 text-right">Captura</th>
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-800/70 bg-slate-950/60">
+                              <tbody className="divide-y divide-stone-200/80 bg-white dark:divide-stone-800 dark:bg-[#1C1A18]">
                                 {filtered.length === 0 ? (
                                   <tr>
-                                    <td colSpan={8} className="px-6 py-8 text-center text-slate-400">
+                                    <td colSpan={8} className="px-6 py-8 text-center text-stone-500 dark:text-stone-400">
                                       No se encontraron pagos en este ciclo con ese criterio.
                                     </td>
                                   </tr>
@@ -5921,55 +6612,55 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     const c = Number(o.tx_monto_comision ?? 0);
                                     const n = Number(o.tx_monto_neto ?? 0);
                                     return (
-                                      <tr key={o.id} className="hover:bg-slate-800/40">
-                                        <td className="px-3 py-2.5 font-mono text-slate-500">
+                                      <tr key={o.id} className="hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
+                                        <td className="px-3 py-2.5 font-mono tabular-nums text-stone-400">
                                           {idx + 1}
                                         </td>
                                         <td className="whitespace-nowrap px-3 py-2.5">
-                                          <span className="font-mono font-bold text-sky-300">
+                                          <span className="font-mono font-semibold text-stone-900 dark:text-stone-100">
                                             {o.codigo_orden}
                                           </span>
                                           {isDirect && (
-                                            <span className="ml-1.5 rounded border border-indigo-500/40 bg-indigo-500/15 px-1.5 py-0.2 text-[9px] font-bold uppercase text-indigo-300">
+                                            <span className="ml-1.5 rounded border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[9px] font-medium uppercase text-stone-600 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
                                               Directa
                                             </span>
                                           )}
-                                          <div className="text-[10px] text-slate-400">
+                                          <div className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
                                             {formatDateTime(o.tx_fecha_correo ?? o.created_at)}
                                           </div>
                                         </td>
                                         <td className="px-3 py-2.5">
-                                          <div className="font-semibold text-white">
+                                          <div className="font-medium text-stone-900 dark:text-stone-100">
                                             {o.tx_remitente_correo || o.remitente_reportado}
                                           </div>
                                           {o.tx_remitente_correo &&
                                             o.remitente_reportado &&
                                             o.tx_remitente_correo.toLowerCase() !==
                                               o.remitente_reportado.toLowerCase() && (
-                                              <div className="text-[10px] text-slate-400">
+                                              <div className="text-[10px] text-stone-500 dark:text-stone-400">
                                                 Reportado: {o.remitente_reportado}
                                               </div>
                                             )}
                                         </td>
                                         <td className="whitespace-nowrap px-3 py-2.5 font-mono">
-                                          <div className="text-slate-200">
+                                          <div className="text-stone-800 dark:text-stone-200">
                                             {o.tx_referencia_correo || o.referencia_reportada || 'SIN-REF'}
                                           </div>
                                           {o.tx_referencia_correo &&
                                             o.referencia_reportada &&
                                             o.tx_referencia_correo !== o.referencia_reportada && (
-                                              <div className="text-[10px] text-slate-400">
+                                              <div className="text-[10px] text-stone-500 dark:text-stone-400">
                                                 En orden: {o.referencia_reportada}
                                               </div>
                                             )}
                                         </td>
-                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-white">
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono tabular-nums text-stone-900 dark:text-stone-100">
                                           {formatMoney(b, o.moneda)}
                                         </td>
-                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-violet-300">
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono tabular-nums text-stone-500 dark:text-stone-400">
                                           -{formatMoney(c, o.moneda)}
                                         </td>
-                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-bold text-emerald-400">
+                                        <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                                           {formatMoney(n, o.moneda)}
                                         </td>
                                         <td className="whitespace-nowrap px-3 py-2.5 text-right">
@@ -5977,14 +6668,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                             <button
                                               type="button"
                                               onClick={() => void openLightboxForOrder(o)}
-                                              className="inline-flex items-center gap-1 rounded-md border border-sky-500/40 bg-sky-500/15 px-2 py-1 text-[11px] font-semibold text-sky-300 hover:bg-sky-500/25 cursor-pointer"
+                                              className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-[#FAF9F6] px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200"
                                             >
-                                              <ImageIcon className="h-3 w-3" />
+                                              <ImageIcon className="h-3 w-3 text-stone-400" strokeWidth={1.5} />
                                               Ver Captura
                                             </button>
                                           ) : (
-                                            <span className="text-[10px] text-indigo-300/80">
-                                              Sin captura (Directa)
+                                            <span className="text-[10px] text-stone-400">
+                                              Sin captura
                                             </span>
                                           )}
                                         </td>
@@ -6009,18 +6700,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             PESTAÑA 5: CORREOS IMAP MONITOREADOS
            ===================================================================== */}
         {activeTab === 'MAILBOXES' && (
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-            <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-6 lg:col-span-7">
-              <div className="flex items-center justify-between gap-2.5 border-b border-slate-800 pb-4">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            <div className="rounded-xl border border-stone-200/90 bg-white p-6 shadow-sm lg:col-span-7 dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="flex items-center justify-between gap-2.5 border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div className="flex items-center gap-2.5">
-                  <Mail className="h-5 w-5 text-emerald-400" />
+                  <Mail className="h-5 w-5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
                   <div>
-                    <h2 className="text-lg font-bold text-white">
+                    <h2 className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                       {editingMailboxId
                         ? 'Editar Cuenta Receptora y Correo Monitoreado'
                         : 'Conectar Correo que Recibe Alertas (Zelle + Binance)'}
                     </h2>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-xs text-stone-500 dark:text-stone-400">
                       Define el correo monitoreado, la cuenta exacta a la que envían el pago y su moneda (`USD` o `USDT`).
                     </p>
                   </div>
@@ -6029,7 +6720,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="button"
                     onClick={resetMailboxForm}
-                    className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                    className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                   >
                     Cancelar edición
                   </button>
@@ -6041,8 +6732,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 className="mt-5 space-y-4"
               >
                 <div>
-                  <span className="block text-xs font-semibold uppercase tracking-wider text-slate-400">
-                    Autocompletar Servidor según tu Correo:
+                  <span className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                    Autocompletar Servidor según tu Correo
                   </span>
                   <div className="mt-2 flex flex-wrap gap-2">
                     <button
@@ -6051,7 +6742,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setMailboxHost('imap.gmail.com');
                         setMailboxPort('993');
                       }}
-                      className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
+                      className="rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:border-amber-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-amber-500"
                     >
                       Gmail / Workspace (imap.gmail.com)
                     </button>
@@ -6061,7 +6752,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setMailboxHost('outlook.office365.com');
                         setMailboxPort('993');
                       }}
-                      className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
+                      className="rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:border-amber-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-amber-500"
                     >
                       Outlook / Office 365
                     </button>
@@ -6071,7 +6762,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setMailboxHost('imap.secureserver.net');
                         setMailboxPort('993');
                       }}
-                      className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs font-medium text-sky-300 hover:border-sky-500"
+                      className="rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:border-amber-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-amber-500"
                     >
                       GoDaddy Workspace
                     </button>
@@ -6080,7 +6771,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Nombre / Alias de la Cuenta
                     </label>
                     <input
@@ -6088,18 +6779,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={mailboxAlias}
                       onChange={(e) => setMailboxAlias(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:focus:border-amber-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Canales Monitoreados
                     </label>
                     <select
                       value={mailboxBanks}
                       onChange={(e) => setMailboxBanks(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:focus:border-amber-500"
                     >
                       <option value="CITIBANK_TD_BINANCE">
                         Citibank, TD Bank y Binance (Todos)
@@ -6113,13 +6804,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/15 p-3.5">
-                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-emerald-300">
+                <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-3.5 dark:border-stone-800 dark:bg-[#121110]">
+                  <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
                     Datos visibles para el cliente en el Portal (/portal)
                   </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                     <div className="sm:col-span-4">
-                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                      <label className="block text-[11px] font-medium uppercase text-stone-500 dark:text-stone-400">
                         Plataforma Principal
                       </label>
                       <select
@@ -6130,7 +6821,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           setMailboxPlatform(nextPlat);
                           setMailboxCurrency(platformDefaultCurrency(nextPlat));
                         }}
-                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 text-xs text-white"
+                        className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100"
                       >
                         <option value="CITIBANK">Citibank Zelle</option>
                         <option value="TD_BANK">TD Bank Zelle</option>
@@ -6142,7 +6833,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       </select>
                     </div>
                     <div className="sm:col-span-5">
-                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                      <label className="block text-[11px] font-medium uppercase text-stone-500 dark:text-stone-400">
                         Cuenta a la que envían el pago
                       </label>
                       <input
@@ -6154,11 +6845,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         placeholder={
                           mailboxEmail || 'Ej. pagos@empresa.com o Pay ID'
                         }
-                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 font-mono text-xs text-white"
+                        className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2.5 py-2 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100"
                       />
                     </div>
                     <div className="sm:col-span-3">
-                      <label className="block text-[11px] font-semibold uppercase text-slate-300">
+                      <label className="block text-[11px] font-medium uppercase text-stone-500 dark:text-stone-400">
                         Moneda
                       </label>
                       <select
@@ -6166,7 +6857,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         onChange={(e) =>
                           setMailboxCurrency(e.target.value as CurrencyType)
                         }
-                        className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-2 font-mono text-xs text-white"
+                        className="mt-1 w-full rounded-lg border border-stone-200 bg-white px-2.5 py-2 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100"
                       >
                         <option value="USD">USD</option>
                         <option value="USDT">USDT</option>
@@ -6178,7 +6869,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Correo Electrónico a Monitorear
                     </label>
                     <input
@@ -6193,17 +6884,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         }
                       }}
                       placeholder="alertas-fintech@gmail.com"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Contraseña IMAP / App Password{' '}
-                      {editingMailboxId ? '(Opcional al editar)' : ''}
+                      {editingMailboxId ? '(Opcional)' : ''}
                     </label>
                     <div className="relative mt-1.5">
-                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" strokeWidth={1.5} />
                       <input
                         type="password"
                         required={!editingMailboxId}
@@ -6214,7 +6905,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             ? 'Dejar vacío para mantener contraseña actual'
                             : 'xxxx xxxx xxxx xxxx'
                         }
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 font-mono text-sm text-white"
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       />
                     </div>
                   </div>
@@ -6222,23 +6913,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Servidor IMAP
                     </label>
                     <div className="relative mt-1.5">
-                      <Server className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <Server className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" strokeWidth={1.5} />
                       <input
                         type="text"
                         required
                         value={mailboxHost}
                         onChange={(e) => setMailboxHost(e.target.value)}
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-9 pr-3 font-mono text-xs text-white"
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Puerto SSL
                     </label>
                     <input
@@ -6246,12 +6937,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={mailboxPort}
                       onChange={(e) => setMailboxPort(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Carpeta
                     </label>
                     <input
@@ -6259,17 +6950,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={mailboxFolder}
                       onChange={(e) => setMailboxFolder(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
-                <label className="flex items-center gap-2 pt-1 text-xs text-slate-300">
+                <label className="flex items-center gap-2 pt-1 text-xs text-stone-600 dark:text-stone-400">
                   <input
                     type="checkbox"
                     checked={verifyImapBeforeSave}
                     onChange={(e) => setVerifyImapBeforeSave(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-500"
+                    className="h-4 w-4 rounded border-stone-300 text-stone-900 dark:border-stone-700 dark:bg-stone-900"
                   />
                   Probar conexión IMAP en vivo antes de guardar (recomendado)
                 </label>
@@ -6278,14 +6969,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSavingMailbox}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500 disabled:opacity-60"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 py-2.5 text-sm font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSavingMailbox ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : editingMailboxId ? (
-                      <Pencil className="h-4 w-4" />
+                      <Pencil className="h-4 w-4" strokeWidth={1.5} />
                     ) : (
-                      <Plus className="h-4 w-4" />
+                      <Plus className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     {editingMailboxId
                       ? 'Guardar Cambios de la Cuenta Receptora'
@@ -6295,14 +6986,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </form>
             </div>
 
-            <div className="space-y-6 lg:col-span-5">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-5">
-                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+            <div className="space-y-5 lg:col-span-5">
+              <div className="rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                <h3 className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                   Correos Activos Monitoreados ({mailboxes.length})
                 </h3>
 
                 {mailboxes.length === 0 ? (
-                  <p className="mt-3 text-xs text-slate-400">
+                  <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">
                     Todavía no hay ningún buzón IMAP conectado.
                   </p>
                 ) : (
@@ -6316,34 +7007,34 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       return (
                         <div
                           key={mb.id}
-                          className="flex items-start justify-between gap-2 rounded-lg border border-slate-800 bg-slate-950 p-3.5"
+                          className="flex items-start justify-between gap-2 rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3.5 dark:border-stone-800 dark:bg-[#121110]"
                         >
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                              <span className="font-semibold text-white">
+                              <span className="h-2 w-2 rounded-full bg-emerald-700 dark:bg-emerald-400" />
+                              <span className="font-medium text-stone-900 dark:text-stone-100">
                                 {mb.email_address}
                               </span>
                               <span
-                                className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${badge.badgeClass}`}
+                                className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
                               >
                                 {badge.label}
                               </span>
-                              <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
+                              <span className="rounded bg-stone-200/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-stone-700 dark:bg-stone-800 dark:text-stone-300">
                                 {curr}
                               </span>
                             </div>
-                            <p className="mt-1 text-xs text-sky-300">
+                            <p className="mt-1 text-xs text-stone-600 dark:text-stone-400">
                               Enviar a:{' '}
-                              <span className="font-mono font-semibold text-white">
+                              <span className="font-mono font-semibold text-stone-900 dark:text-stone-100">
                                 {dest}
                               </span>
                             </p>
-                            <p className="mt-0.5 text-xs text-slate-400">
+                            <p className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
                               {mb.alias} · {mb.imap_host}:{mb.imap_port} (
                               {mb.mailbox_folder})
                             </p>
-                            <p className="mt-1 text-[11px] text-emerald-400">
+                            <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-400">
                               Estado: {mb.last_sync_status ?? 'Listo'} · Última
                               vez: {formatDateTime(mb.last_sync_at)}
                             </p>
@@ -6352,19 +7043,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             <button
                               type="button"
                               onClick={() => openEditMailbox(mb)}
-                              className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-200 hover:bg-slate-800"
+                              className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200"
                               title="Editar Cuenta / Moneda"
                             >
-                              <Pencil className="h-3 w-3 text-sky-400" />
+                              <Pencil className="h-3 w-3 text-stone-400" strokeWidth={1.5} />
                               Editar
                             </button>
                             <button
                               type="button"
                               onClick={() => void handleDeleteMailbox(mb.id)}
-                              className="rounded p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                              className="rounded-md p-1.5 text-stone-400 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
                               title="Eliminar buzón"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-4 w-4" strokeWidth={1.5} />
                             </button>
                           </div>
                         </div>
@@ -6374,26 +7065,26 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 )}
               </div>
 
-              <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-5">
-                <div className="flex items-center gap-2 text-sky-300">
-                  <HelpCircle className="h-5 w-5" />
-                  <h3 className="text-sm font-bold">
+              <div className="rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                <div className="flex items-center gap-2 text-stone-900 dark:text-stone-100">
+                  <HelpCircle className="h-4 w-4 text-amber-700 dark:text-amber-500" strokeWidth={1.5} />
+                  <h3 className="text-sm font-semibold">
                     Idempotencia Cruzada (Binance API + Email)
                   </h3>
                 </div>
-                <ol className="mt-3 list-decimal space-y-2.5 pl-4 text-xs leading-relaxed text-slate-300">
+                <ol className="mt-3 list-decimal space-y-2 pl-4 text-xs leading-relaxed text-stone-600 dark:text-stone-400">
                   <li>
-                    <strong>Correos Oficiales Soportados:</strong> Citibank (`@citibank.com`), TD Bank (`@tdbank.com` / `@td.com`) y Binance (`@binance.com`, `@directmail.binance.com`).
+                    <strong className="text-stone-800 dark:text-stone-200">Correos Oficiales Soportados:</strong> Citibank (`@citibank.com`), TD Bank (`@tdbank.com` / `@td.com`) y Binance (`@binance.com`, `@directmail.binance.com`).
                   </li>
                   <li>
-                    <strong>Binance API Oficial:</strong> Configura{' '}
-                    <code>BINANCE_API_KEY</code> y{' '}
-                    <code>BINANCE_API_SECRET</code> en <code>.env</code> para consultar Pay, P2P y Depósitos On-Chain en paralelo.
+                    <strong className="text-stone-800 dark:text-stone-200">Binance API Oficial:</strong> Configura{' '}
+                    <code className="font-mono">BINANCE_API_KEY</code> y{' '}
+                    <code className="font-mono">BINANCE_API_SECRET</code> en <code className="font-mono">.env</code> para consultar Pay, P2P y Depósitos On-Chain en paralelo.
                   </li>
                   <li>
-                    <strong>Cero Duplicados:</strong> Ambos canales generan la misma llave{' '}
-                    <code>dedup_key</code> (<code>PLATAFORMA:REFERENCIA:MONTO</code>) con{' '}
-                    <code>ON CONFLICT DO NOTHING</code>.
+                    <strong className="text-stone-800 dark:text-stone-200">Cero Duplicados:</strong> Ambos canales generan la misma llave{' '}
+                    <code className="font-mono">dedup_key</code> (<code className="font-mono">PLATAFORMA:REFERENCIA:MONTO</code>) con{' '}
+                    <code className="font-mono">ON CONFLICT DO NOTHING</code>.
                   </li>
                 </ol>
               </div>
@@ -6402,42 +7093,42 @@ export default function BankReconciliationPanel(): React.JSX.Element {
         )}
 
         {/* =====================================================================
-            PESTAÑA 4: USUARIOS Y CUENTAS PARA DISTINTOS NEGOCIOS
+            PESTAÑA 6: USUARIOS Y CUENTAS PARA DISTINTOS NEGOCIOS
            ===================================================================== */}
         {activeTab === 'BUSINESS_USERS' &&
           currentBusinessUser.rol === 'SUPER_ADMIN' && (
-            <div className="space-y-6">
-              <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/70 p-5 sm:flex-row sm:items-center">
+            <div className="space-y-5">
+              <div className="flex flex-col justify-between gap-4 rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm sm:flex-row sm:items-center dark:border-stone-800 dark:bg-[#1C1A18]">
                 <div>
-                  <h2 className="text-lg font-bold text-white">
+                  <h2 className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Cuentas de Acceso para Distintos Negocios
                   </h2>
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Crea usuarios independientes para cada negocio o comercio. Cada negocio inicia sesión en el panel con sus propios buzones IMAP, clientes y movimientos aislados.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={openCreateBusinessUserModal}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                 >
-                  <Plus className="h-4 w-4" />
-                  + Nueva Cuenta de Negocio
+                  <Plus className="h-4 w-4" strokeWidth={1.5} />
+                  Nueva Cuenta de Negocio
                 </button>
               </div>
 
               {lastBusinessCredentials && (
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 px-4 py-3 text-xs text-emerald-200">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-700/20 bg-emerald-50 px-4 py-3 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-300">
                   <div>
                     <strong>
                       Última cuenta creada ({lastBusinessCredentials.negocio}):
                     </strong>{' '}
-                    Correo <code className="text-white">{lastBusinessCredentials.email}</code>
+                    Correo <code className="font-mono font-semibold">{lastBusinessCredentials.email}</code>
                     {lastBusinessCredentials.password && (
                       <>
                         {' '}
                         · Contraseña{' '}
-                        <code className="text-white">
+                        <code className="font-mono font-semibold">
                           {lastBusinessCredentials.password}
                         </code>
                       </>
@@ -6448,24 +7139,24 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     onClick={() =>
                       void handleCopyBusinessCredentials(lastBusinessCredentials)
                     }
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 font-semibold text-emerald-200 hover:bg-emerald-500/25"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/30 bg-white px-3 py-1.5 font-medium text-emerald-800 hover:bg-emerald-50 dark:border-emerald-500/40 dark:bg-[#1C1A18] dark:text-emerald-300"
                   >
-                    <Copy className="h-3.5 w-3.5" />
+                    <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
                     Copiar Acceso del Negocio
                   </button>
                 </div>
               )}
 
-              <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/70 shadow-xl">
-                <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-3.5">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-slate-300">
+              <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                <div className="border-b border-stone-200 bg-[#FAF9F6] px-5 py-3 dark:border-stone-800 dark:bg-[#121110]">
+                  <h3 className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Negocios Registrados ({businessUsers.length})
                   </h3>
                 </div>
-                <div className="overflow-x-auto xl:overflow-x-visible">
+                <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-sm table-auto">
                     <thead>
-                      <tr className="border-b border-slate-800 bg-slate-950/40 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      <tr className="border-b border-stone-200 bg-[#FAF9F6]/60 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110]/60 dark:text-stone-400">
                         <th className="px-4 py-3">Negocio / Empresa</th>
                         <th className="px-4 py-3">Usuario &amp; Correo Login</th>
                         <th className="px-4 py-3">Rol</th>
@@ -6474,41 +7165,41 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         <th className="px-4 py-3 text-right">Acciones</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800/70">
+                    <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800">
                       {businessUsers.map((biz) => {
                         const isActiveScope = activeNegocioId === biz.id;
                         return (
-                          <tr key={biz.id} className="hover:bg-slate-800/40">
+                          <tr key={biz.id} className="transition hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50">
                             <td className="px-4 py-3.5">
-                              <div className="flex items-center gap-2 font-semibold text-white">
-                                <Briefcase className="h-4 w-4 text-violet-400" />
+                              <div className="flex items-center gap-2 font-semibold text-stone-900 dark:text-stone-100">
+                                <Briefcase className="h-4 w-4 text-stone-400" strokeWidth={1.5} />
                                 {biz.nombre_negocio}
                                 {isActiveScope && (
-                                  <span className="rounded-full border border-emerald-500/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                                  <span className="rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
                                     Viendo ahora
                                   </span>
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-3.5 text-xs text-slate-300">
-                              <div className="font-medium text-white">
+                            <td className="px-4 py-3.5 text-xs text-stone-600 dark:text-stone-300">
+                              <div className="font-medium text-stone-900 dark:text-stone-100">
                                 {biz.nombre_usuario}
                               </div>
-                              <div className="font-mono text-[11px] text-sky-300">
+                              <div className="font-mono text-[11px] text-stone-500 dark:text-stone-400">
                                 {biz.email}
                               </div>
                               {biz.telefono && (
-                                <div className="text-[11px] text-slate-400">
+                                <div className="text-[11px] text-stone-400">
                                   {biz.telefono}
                                 </div>
                               )}
                             </td>
                             <td className="px-4 py-3.5">
                               <span
-                                className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                                className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${
                                   biz.rol === 'SUPER_ADMIN'
-                                    ? 'border-violet-500/40 bg-violet-500/15 text-violet-300'
-                                    : 'border-sky-500/40 bg-sky-500/15 text-sky-300'
+                                    ? 'border-amber-700/25 bg-amber-50 text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400'
+                                    : 'border-stone-200 bg-[#FAF9F6] text-stone-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300'
                                 }`}
                               >
                                 {biz.rol === 'SUPER_ADMIN'
@@ -6516,12 +7207,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   : 'NEGOCIO'}
                               </span>
                             </td>
-                            <td className="px-4 py-3.5 text-xs text-slate-300">
+                            <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-stone-600 dark:text-stone-400">
                               {biz.mailboxes_count ?? 0} correo(s) ·{' '}
                               {biz.clients_count ?? 0} cliente(s) ·{' '}
                               {biz.transactions_count ?? 0} mov.
                             </td>
-                            <td className="px-4 py-3.5 text-xs text-slate-400">
+                            <td className="px-4 py-3.5 font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
                               {biz.last_login_at
                                 ? formatDateTime(biz.last_login_at)
                                 : 'Sin ingresos aún'}
@@ -6535,7 +7226,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                       handleSwitchBusinessScope(biz.id);
                                       setActiveTab('ALERTS');
                                     }}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-500/40 bg-violet-500/15 px-2.5 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-500/25"
+                                    className="inline-flex items-center gap-1 rounded-lg bg-stone-900 px-2.5 py-1.5 text-xs font-medium text-stone-50 hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                   >
                                     Ver Panel
                                   </button>
@@ -6543,9 +7234,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => openEditBusinessUserModal(biz)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                                  className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200"
                                 >
-                                  <KeyRound className="h-3 w-3 text-emerald-400" />
+                                  <KeyRound className="h-3 w-3 text-stone-400" strokeWidth={1.5} />
                                   Editar / Clave
                                 </button>
                                 {biz.rol !== 'SUPER_ADMIN' && (
@@ -6557,10 +7248,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                         biz.nombre_negocio
                                       )
                                     }
-                                    className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-950/60 hover:text-rose-300"
+                                    className="rounded-lg p-1.5 text-stone-400 hover:bg-rose-50 hover:text-rose-700 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
                                     title="Eliminar negocio"
                                   >
-                                    <Trash2 className="h-3.5 w-3.5" />
+                                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                                   </button>
                                 )}
                               </div>
@@ -6574,41 +7265,41 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               </div>
 
               {/* Tarjeta de Configuración de Motor IA / Visión OCR Multi-Proveedor */}
-              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <div className="space-y-4 rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-200 pb-3 dark:border-stone-800">
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
-                      <Bot className="h-5 w-5" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-stone-200 bg-[#FAF9F6] text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
+                      <Bot className="h-5 w-5" strokeWidth={1.5} />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">
+                      <h3 className="font-serif text-base font-medium text-stone-900 dark:text-stone-100">
                         Motor de Inteligencia Artificial (Visión OCR de Comprobantes)
                       </h3>
-                      <p className="text-xs text-slate-400">
-                        Compatible con Google Gemini (Gratis), Groq Cloud (Gratis) u OpenAI. Lee capturas Zelle y Binance y rellena los campos automáticamente.
+                      <p className="text-xs text-stone-500 dark:text-stone-400">
+                        Compatible con Google Gemini, Groq Cloud u OpenAI. Lee capturas Zelle y Binance y rellena los campos automáticamente.
                       </p>
                     </div>
                   </div>
                   <div>
                     {aiSettings?.hasGeminiKey ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-300">
-                        <span className="h-2 w-2 rounded-full bg-sky-400 animate-pulse" />
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/20 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-700 dark:bg-emerald-400" />
                         Google Gemini Activo ({aiSettings.geminiModel ?? 'gemini-3.5-flash-lite'}) · {aiSettings.geminiKeyPreview}
                       </span>
                     ) : aiSettings?.hasGroqKey ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-500/40 bg-orange-500/10 px-3 py-1 text-xs font-semibold text-orange-300">
-                        <span className="h-2 w-2 rounded-full bg-orange-400 animate-pulse" />
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/20 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-700 dark:bg-emerald-400" />
                         Groq Vision Activo ({aiSettings.groqModel ?? 'llama-3.2'}) · {aiSettings.groqKeyPreview}
                       </span>
                     ) : aiSettings?.hasOpenAiKey ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
-                        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/20 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-700 dark:bg-emerald-400" />
                         OpenAI Vision Activo ({aiSettings.openAiModel}) · {aiSettings.openAiKeyPreview}
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        Sin API Key configurada (Modo Manual / Vectorial)
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-700/25 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                        <AlertCircle className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        Sin API Key configurada (Modo Manual)
                       </span>
                     )}
                   </div>
@@ -6620,7 +7311,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 >
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                     <div className="sm:col-span-4">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                      <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                         Proveedor de Inteligencia Artificial
                       </label>
                       <select
@@ -6630,31 +7321,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             e.target.value as 'gemini' | 'openai' | 'groq'
                           )
                         }
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs font-semibold text-white focus:border-emerald-500 focus:outline-none"
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2.5 text-xs font-medium text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       >
                         <option value="gemini">
-                          ⭐ Google Gemini (100% Gratis - Recomendado)
+                          Google Gemini (Gratis - Recomendado)
                         </option>
                         <option value="groq">
-                          ⚡ Groq Cloud (Llama 3.2 Vision - Gratuito)
+                          Groq Cloud (Llama 3.2 Vision - Gratuito)
                         </option>
                         <option value="openai">
-                          🤖 OpenAI (gpt-4o-mini - De Pago)
+                          OpenAI (gpt-4o-mini - De Pago)
                         </option>
                       </select>
                     </div>
 
                     <div className="sm:col-span-5">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-300">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                           {selectedAiProvider === 'gemini'
                             ? 'Clave de Google Gemini (AI Studio)'
                             : selectedAiProvider === 'groq'
                               ? 'Clave de Groq API (gsk_...)'
                               : 'Clave de OpenAI API (sk-proj-...)'}
                         </label>
-                        <span className="text-[10px] text-slate-400">
-                          {selectedAiProvider === 'gemini' ? 'Empieza por AQ. o AIzaSy...' : selectedAiProvider === 'groq' ? 'Empieza por gsk_...' : 'Empieza por sk-...'}
+                        <span className="font-mono text-[10px] text-stone-400">
+                          {selectedAiProvider === 'gemini' ? 'AQ. o AIzaSy...' : selectedAiProvider === 'groq' ? 'gsk_...' : 'sk-...'}
                         </span>
                       </div>
                       <input
@@ -6686,33 +7377,33 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 ? `Actualizar clave OpenAI (${aiSettings.openAiKeyPreview})`
                                 : 'Pega tu clave sk-proj-...'
                         }
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2.5 text-xs text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                       />
                     </div>
 
-                    <div className="sm:col-span-3 flex items-end gap-2">
+                    <div className="flex items-end gap-2 sm:col-span-3">
                       <button
                         type="button"
                         onClick={() => void handleVerifyAiKey()}
                         disabled={isVerifyingAiConfig || isSavingAiConfig || !openAiInputKey.trim()}
-                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-950/40 px-3 py-2.5 text-xs font-semibold text-sky-300 shadow-md shadow-sky-950/40 hover:bg-sky-900/50 disabled:opacity-50"
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2.5 text-xs font-medium text-stone-800 hover:bg-stone-100 disabled:opacity-50 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
                       >
                         {isVerifyingAiConfig ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
                         ) : (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
                         )}
                         Probar
                       </button>
                       <button
                         type="submit"
                         disabled={isSavingAiConfig || isVerifyingAiConfig || !openAiInputKey.trim()}
-                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white shadow-md shadow-emerald-950/40 hover:bg-emerald-500 disabled:opacity-50"
+                        className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3 py-2.5 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-50 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                       >
                         {isSavingAiConfig ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
                         ) : (
-                          <Sparkles className="h-3.5 w-3.5" />
+                          <Sparkles className="h-3.5 w-3.5" strokeWidth={1.5} />
                         )}
                         Guardar
                       </button>
@@ -6722,33 +7413,33 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   {/* Feedback de verificación en vivo */}
                   {verifyFeedback && (
                     <div
-                      className={`rounded-lg border px-3.5 py-2 text-xs flex items-center gap-2 ${
+                      className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs ${
                         verifyFeedback.ok
-                          ? 'border-emerald-500/40 bg-emerald-950/40 text-emerald-200'
-                          : 'border-rose-500/40 bg-rose-950/40 text-rose-200'
+                          ? 'border-emerald-700/20 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : 'border-rose-700/25 bg-rose-50 text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400'
                       }`}
                     >
                       {verifyFeedback.ok ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={1.5} />
                       ) : (
-                        <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+                        <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.5} />
                       )}
                       <span>{verifyFeedback.message}</span>
                     </div>
                   )}
 
-                  {/* Enlaces de ayuda para obtener API keys gratis */}
-                  <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] text-slate-400">
-                    <span className="font-semibold text-slate-300">¿No tienes clave?</span>
+                  {/* Enlaces de ayuda */}
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] text-stone-500 dark:text-stone-400">
+                    <span className="font-medium text-stone-700 dark:text-stone-300">¿No tienes clave?</span>
                     {selectedAiProvider === 'gemini' && (
                       <a
                         href="https://aistudio.google.com/app/apikey"
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-semibold text-sky-400 hover:text-sky-300 underline"
+                        className="inline-flex items-center gap-1 font-medium text-amber-700 underline underline-offset-4 dark:text-amber-500"
                       >
-                        <ExternalLink className="h-3 w-3" />
-                        Obtener API Key GRATIS en Google AI Studio (sin tarjeta de crédito)
+                        <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
+                        Obtener API Key en Google AI Studio
                       </a>
                     )}
                     {selectedAiProvider === 'groq' && (
@@ -6756,10 +7447,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         href="https://console.groq.com/keys"
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-semibold text-orange-400 hover:text-orange-300 underline"
+                        className="inline-flex items-center gap-1 font-medium text-amber-700 underline underline-offset-4 dark:text-amber-500"
                       >
-                        <ExternalLink className="h-3 w-3" />
-                        Obtener API Key GRATIS en Groq Cloud (Llama 3.2 Vision)
+                        <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
+                        Obtener API Key en Groq Cloud
                       </a>
                     )}
                     {selectedAiProvider === 'openai' && (
@@ -6767,9 +7458,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         href="https://platform.openai.com/api-keys"
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-semibold text-emerald-400 hover:text-emerald-300 underline"
+                        className="inline-flex items-center gap-1 font-medium text-amber-700 underline underline-offset-4 dark:text-amber-500"
                       >
-                        <ExternalLink className="h-3 w-3" />
+                        <ExternalLink className="h-3 w-3" strokeWidth={1.5} />
                         Crear API Key en OpenAI Platform
                       </a>
                     )}
@@ -6791,23 +7482,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[95vw] max-w-5xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[95vw] max-w-5xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     {lightboxData?.title}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Comparativa visual entre el comprobante subido por el cliente y los datos extraídos por el motor bancario / Binance API.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -6864,15 +7555,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-12">
                     {/* Lado Izquierdo: Captura Subida */}
                     <div className="space-y-3 lg:col-span-6">
-                      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-sky-300">
+                      <div className="flex items-center justify-between text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                         <span>Comprobante Subido en Portal</span>
                         {lightboxData.order?.codigo_orden && (
-                          <span className="font-mono">
+                          <span className="font-mono text-stone-700 dark:text-stone-300">
                             {lightboxData.order.codigo_orden}
                           </span>
                         )}
                       </div>
-                      <div className="flex min-h-[340px] items-center justify-center rounded-xl border border-slate-800 bg-slate-950 p-3">
+                      <div className="flex min-h-[340px] items-center justify-center rounded-xl border border-stone-200 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={lightboxData.comprobanteBase64}
@@ -6881,11 +7572,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         />
                       </div>
                       {lightboxData.order?.datos_ocr_extraidos && (
-                        <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 text-xs">
-                          <div className="font-semibold text-slate-200">
+                        <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-3 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                          <div className="font-medium text-stone-800 dark:text-stone-200">
                             Validación OCR / Metadatos:
                           </div>
-                          <div className="mt-1 text-slate-400">
+                          <div className="mt-1 text-stone-500 dark:text-stone-400">
                             {lightboxData.order.datos_ocr_extraidos.observaciones ??
                               `Detectado: ${lightboxData.order.datos_ocr_extraidos.monto_detectado ?? ''} ${lightboxData.order.datos_ocr_extraidos.moneda_detectada ?? ''} · Ref: ${lightboxData.order.datos_ocr_extraidos.referencia_detectada ?? 'N/A'}`}
                           </div>
@@ -6897,33 +7588,33 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <div className="flex flex-col justify-between space-y-4 lg:col-span-6">
                       <div className="space-y-4">
                         {hasCriticalDisparity && (
-                          <div className="rounded-xl border border-rose-500/60 bg-rose-950/40 p-4 text-xs">
+                          <div className="rounded-xl border border-rose-700/30 bg-rose-50 p-4 text-xs dark:border-rose-500/40 dark:bg-rose-950/35">
                             <div className="flex items-start gap-3">
-                              <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400 mt-0.5" />
+                              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-700 dark:text-rose-400" strokeWidth={1.5} />
                               <div className="space-y-1.5">
-                                <p className="font-bold text-rose-200">
-                                  ⚠️ ALERTA DE DISPARIDAD CRÍTICA DE REMITENTE (Similitud: {Math.round(senderSimilarityScore * 100)}%)
+                                <p className="font-semibold text-rose-800 dark:text-rose-300">
+                                  ALERTA DE DISPARIDAD CRÍTICA DE REMITENTE (Similitud: {Math.round(senderSimilarityScore * 100)}%)
                                 </p>
-                                <p className="text-slate-300">
-                                  El nombre reportado por el cliente en el comprobante (<strong className="text-amber-300">&quot;{reportedSenderName}&quot;</strong>) 
-                                  no coincide con el remitente extraído del correo bancario (<strong className="text-white">&quot;{channelSenderName}&quot;</strong>), 
-                                  y las referencias (<span className="font-mono text-amber-200">{orderReference || 'SIN-REF'}</span> vs <span className="font-mono text-emerald-200">{channelReference}</span>) no concuerdan.
+                                <p className="text-stone-700 dark:text-stone-300">
+                                  El nombre reportado por el cliente en el comprobante (<strong className="text-amber-800 dark:text-amber-400">&quot;{reportedSenderName}&quot;</strong>)
+                                  no coincide con el remitente extraído del correo bancario (<strong className="text-stone-900 dark:text-stone-100">&quot;{channelSenderName}&quot;</strong>),
+                                  y las referencias (<span className="font-mono">{orderReference || 'SIN-REF'}</span> vs <span className="font-mono">{channelReference}</span>) no concuerdan.
                                 </p>
-                                <p className="text-rose-300/90 font-medium">
+                                <p className="font-medium text-rose-700 dark:text-rose-400">
                                   Precaución: No concilie esta fila a ciegas para evitar cruces indebidos de dinero entre personas distintas.
                                 </p>
 
                                 {legitimateMatchingTx && (
-                                  <div className="mt-3 rounded-lg border border-emerald-500/40 bg-emerald-950/60 p-3">
+                                  <div className="mt-3 rounded-lg border border-emerald-700/25 bg-white p-3 dark:border-emerald-500/35 dark:bg-[#1C1A18]">
                                     <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
                                       <div>
-                                        <p className="font-bold text-emerald-300">
+                                        <p className="font-semibold text-emerald-700 dark:text-emerald-400">
                                           Transacción Bancaria Legítima Encontrada:
                                         </p>
-                                        <p className="mt-0.5 text-slate-200">
+                                        <p className="mt-0.5 text-stone-700 dark:text-stone-300">
                                           <strong>{legitimateMatchingTx.remitente_o_contraparte}</strong> ·{' '}
-                                          <span className="font-mono text-emerald-400 font-semibold">{formatMoney(legitimateMatchingTx.monto_bruto, legitimateMatchingTx.moneda)}</span> ·{' '}
-                                          <span className="font-mono text-slate-400">Ref: {legitimateMatchingTx.referencia}</span> ({legitimateMatchingTx.estado})
+                                          <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">{formatMoney(legitimateMatchingTx.monto_bruto, legitimateMatchingTx.moneda)}</span> ·{' '}
+                                          <span className="font-mono text-stone-500">Ref: {legitimateMatchingTx.referencia}</span> ({legitimateMatchingTx.estado})
                                         </p>
                                       </div>
                                       <button
@@ -6931,10 +7622,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                         onClick={() => {
                                           setLightboxData((prev) => (prev ? { ...prev, tx: legitimateMatchingTx } : null));
                                         }}
-                                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-emerald-500 cursor-pointer shadow-md"
+                                        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-stone-900 px-3 py-1.5 text-xs font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950"
                                       >
-                                        <CheckCircle2 className="h-3.5 w-3.5" />
-                                        Ver Este Pago Coincidente
+                                        <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                        Ver Pago Coincidente
                                       </button>
                                     </div>
                                   </div>
@@ -6945,26 +7636,26 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         )}
 
                         {lightboxData.order && (
-                        <div className="rounded-xl border border-sky-500/30 bg-sky-950/20 p-4">
-                          <h4 className="text-xs font-bold uppercase tracking-wider text-sky-300">
+                        <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 dark:border-stone-800 dark:bg-[#121110]">
+                          <h4 className="text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
                             Datos Reportados por el Cliente
                           </h4>
                           <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
                             <div>
-                              <dt className="text-slate-400">Cliente Titular</dt>
-                              <dd className="mt-0.5 font-semibold text-white">
+                              <dt className="text-stone-500 dark:text-stone-400">Cliente Titular</dt>
+                              <dd className="mt-0.5 font-semibold text-stone-900 dark:text-stone-100">
                                 {lightboxData.order.cliente_nombre}
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Canal Esperado</dt>
-                              <dd className="mt-0.5 font-semibold text-white">
+                              <dt className="text-stone-500 dark:text-stone-400">Canal Esperado</dt>
+                              <dd className="mt-0.5 font-semibold text-stone-900 dark:text-stone-100">
                                 {lightboxData.order.plataforma_esperada}
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Monto Reportado</dt>
-                              <dd className="mt-0.5 font-mono font-bold text-emerald-400">
+                              <dt className="text-stone-500 dark:text-stone-400">Monto Reportado</dt>
+                              <dd className="mt-0.5 font-mono font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                                 {formatMoney(
                                   lightboxData.order.monto_esperado,
                                   lightboxData.order.moneda
@@ -6972,22 +7663,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Referencia Reportada</dt>
-                              <dd className="mt-0.5 font-mono text-white">
+                              <dt className="text-stone-500 dark:text-stone-400">Referencia Reportada</dt>
+                              <dd className="mt-0.5 font-mono text-stone-900 dark:text-stone-100">
                                 {lightboxData.order.referencia_reportada}
                               </dd>
                             </div>
                             <div className="col-span-2">
-                              <dt className="text-slate-400">Remitente Reportado</dt>
-                              <dd className="mt-0.5 font-semibold text-amber-300">
+                              <dt className="text-stone-500 dark:text-stone-400">Remitente Reportado</dt>
+                              <dd className="mt-0.5 font-semibold text-stone-900 dark:text-stone-100">
                                 {lightboxData.order.remitente_reportado ||
                                   lightboxData.order.nombre_remitente_reportado}
                               </dd>
                             </div>
                             {lightboxData.order.fecha_transferencia && (
                               <div className="col-span-2">
-                                <dt className="text-slate-400">Fecha de Transferencia (Comprobante)</dt>
-                                <dd className="mt-0.5 font-mono font-semibold text-sky-300">
+                                <dt className="text-stone-500 dark:text-stone-400">Fecha de Transferencia (Comprobante)</dt>
+                                <dd className="mt-0.5 font-mono font-medium tabular-nums text-stone-900 dark:text-stone-100">
                                   {lightboxData.order.fecha_transferencia}
                                 </dd>
                               </div>
@@ -6997,26 +7688,26 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       )}
 
                       {lightboxData.tx ? (
-                        <div className="rounded-xl border border-emerald-500/30 bg-slate-950 p-4">
-                          <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                        <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 dark:border-stone-800 dark:bg-[#121110]">
+                          <h4 className="text-[11px] font-medium uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                             Datos Extraídos del Canal ({lightboxData.tx.origen_deteccion})
                           </h4>
                           <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
                             <div>
-                              <dt className="text-slate-400">Plataforma Real</dt>
-                              <dd className="mt-0.5 font-semibold text-white">
+                              <dt className="text-stone-500 dark:text-stone-400">Plataforma Real</dt>
+                              <dd className="mt-0.5 font-semibold text-stone-900 dark:text-stone-100">
                                 {lightboxData.tx.plataforma}
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Estado Actual</dt>
-                              <dd className="mt-0.5 font-semibold text-amber-300">
+                              <dt className="text-stone-500 dark:text-stone-400">Estado Actual</dt>
+                              <dd className="mt-0.5 font-semibold text-amber-700 dark:text-amber-400">
                                 {lightboxData.tx.estado}
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Monto Bruto Real</dt>
-                              <dd className="mt-0.5 font-mono font-bold text-white">
+                              <dt className="text-stone-500 dark:text-stone-400">Monto Bruto Real</dt>
+                              <dd className="mt-0.5 font-mono font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                                 {formatMoney(
                                   lightboxData.tx.monto_bruto,
                                   lightboxData.tx.moneda
@@ -7024,44 +7715,44 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               </dd>
                             </div>
                             <div>
-                              <dt className="text-slate-400">Referencia Real</dt>
-                              <dd className="mt-0.5 font-mono text-emerald-300">
+                              <dt className="text-stone-500 dark:text-stone-400">Referencia Real</dt>
+                              <dd className="mt-0.5 font-mono font-semibold text-emerald-700 dark:text-emerald-400">
                                 {lightboxData.tx.referencia}
                               </dd>
                             </div>
                             <div className="col-span-2">
-                              <dt className="text-slate-400">
+                              <dt className="text-stone-500 dark:text-stone-400">
                                 Remitente / Contraparte Real
                               </dt>
-                              <dd className="mt-0.5 font-semibold text-white">
+                              <dd className="mt-0.5 font-semibold text-stone-900 dark:text-stone-100">
                                 {lightboxData.tx.remitente_o_contraparte}
                               </dd>
                             </div>
                             <div className="col-span-2">
-                              <dt className="text-slate-400">Dedup Key</dt>
-                              <dd className="mt-0.5 break-all font-mono text-[11px] text-slate-400">
+                              <dt className="text-stone-500 dark:text-stone-400">Dedup Key</dt>
+                              <dd className="mt-0.5 break-all font-mono text-[11px] text-stone-500 dark:text-stone-400">
                                 {lightboxData.tx.dedup_key}
                               </dd>
                             </div>
                           </dl>
                           {lightboxData.tx.nota_auditoria && (
-                            <p className="mt-3 rounded-lg bg-slate-900 p-2.5 text-xs text-slate-300">
+                            <p className="mt-3 rounded-lg border border-stone-200 bg-white p-2.5 text-xs text-stone-600 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300">
                               {lightboxData.tx.nota_auditoria}
                             </p>
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs text-slate-400">
+                        <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 text-xs text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
                           Aún no ha ingresado una transacción bancaria o de Binance que coincida con esta orden pendiente.
                         </div>
                       )}
                     </div>
 
-                    <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                    <div className="flex flex-wrap justify-end gap-2.5 border-t border-stone-200 pt-4 dark:border-stone-800">
                       <Dialog.Close asChild>
                         <button
                           type="button"
-                          className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                          className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                         >
                           Cerrar Visor
                         </button>
@@ -7079,9 +7770,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   void handleRejectPendingOrder(targetOrder);
                                 }
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-4 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/30 cursor-pointer"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                               Descartar Orden
                             </button>
                             <button
@@ -7093,9 +7784,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   openManualOrderConfirmModal(targetOrder);
                                 }
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 cursor-pointer"
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                             >
-                              <CheckCircle2 className="h-4 w-4" />
+                              <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                               Confirmar Manualmente (Sin Correo)
                             </button>
                           </>
@@ -7117,9 +7808,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 );
                               }
                             }}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-4 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                           >
-                            <UserCheck className="h-4 w-4" />
+                            <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
                             Conciliar Manualmente
                           </button>
                         )}
@@ -7137,9 +7828,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 setRevertReason('');
                               }
                             }}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-500/15 px-4 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/30"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
                           >
-                            <RotateCcw className="h-4 w-4" />
+                            <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
                             Deshacer Conciliación
                           </button>
                         )}
@@ -7164,23 +7855,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/85 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[95vw] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Confirmar Manualmente Captura del Cliente
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Aprueba y acredita esta orden enviada desde el portal aunque no haya llegado el correo del banco, o vincúlala con un correo DETECTADO.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -7228,58 +7919,58 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     className="mt-5 space-y-4"
                   >
                     {alreadyReconciledTx && (
-                      <div className="rounded-xl border border-rose-500/50 bg-rose-950/50 p-3.5 text-xs text-rose-200">
+                      <div className="rounded-xl border border-rose-700/25 bg-rose-50 p-3.5 text-xs text-rose-800 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-300">
                         <div className="flex items-start gap-2.5">
-                          <AlertTriangle className="h-4 w-4 shrink-0 text-rose-400 mt-0.5" />
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700 dark:text-rose-400" strokeWidth={1.5} />
                           <div>
-                            <p className="font-bold text-rose-200">
-                              ⚠️ Atención: Referencia ya conciliada previamente
+                            <p className="font-semibold">
+                              Atención: Referencia ya conciliada previamente
                             </p>
-                            <p className="mt-0.5 text-slate-300">
-                              La referencia <strong className="font-mono text-white">{selectedOrderForManualConfirm.referencia_reportada}</strong> ya fue conciliada y acreditada en el pago de <strong>{alreadyReconciledTx.remitente_o_contraparte}</strong> ({formatMoney(alreadyReconciledTx.monto_bruto, alreadyReconciledTx.moneda)} · Ref: <span className="font-mono">{alreadyReconciledTx.referencia}</span>). Si esta captura es repetida, te recomendamos usar <strong>&quot;Descartar&quot;</strong> para no acreditar el saldo dos veces.
+                            <p className="mt-0.5 text-stone-700 dark:text-stone-300">
+                              La referencia <strong className="font-mono">{selectedOrderForManualConfirm.referencia_reportada}</strong> ya fue conciliada y acreditada en el pago de <strong>{alreadyReconciledTx.remitente_o_contraparte}</strong> ({formatMoney(alreadyReconciledTx.monto_bruto, alreadyReconciledTx.moneda)} · Ref: <span className="font-mono">{alreadyReconciledTx.referencia}</span>). Si esta captura es repetida, usa <strong>&quot;Descartar&quot;</strong> para no acreditar el saldo dos veces.
                             </p>
                           </div>
                         </div>
                       </div>
                     )}
 
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 text-xs space-y-2.5">
+                    <div className="space-y-2.5 rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 text-xs dark:border-stone-800 dark:bg-[#121110]">
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">
+                        <span className="text-stone-500 dark:text-stone-400">
                           Orden:{' '}
-                          <strong className="font-mono text-sky-300">
+                          <strong className="font-mono text-stone-900 dark:text-stone-100">
                             {selectedOrderForManualConfirm.codigo_orden}
                           </strong>
                         </span>
-                        <span className="text-slate-400">
+                        <span className="text-stone-500 dark:text-stone-400">
                           Cliente Titular:{' '}
-                          <strong className="text-emerald-300">
+                          <strong className="text-emerald-700 dark:text-emerald-400">
                             {selectedOrderForManualConfirm.cliente_nombre}
                           </strong>
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">
+                        <span className="text-stone-500 dark:text-stone-400">
                           Remitente Reportado:{' '}
-                          <strong className="text-white">
+                          <strong className="text-stone-900 dark:text-stone-100">
                             {selectedOrderForManualConfirm.remitente_reportado ||
                               selectedOrderForManualConfirm.nombre_remitente_reportado}
                           </strong>
                         </span>
-                        <span className="text-slate-400">
+                        <span className="text-stone-500 dark:text-stone-400">
                           Ref:{' '}
-                          <strong className="font-mono text-amber-300">
+                          <strong className="font-mono text-amber-700 dark:text-amber-400">
                             {selectedOrderForManualConfirm.referencia_reportada || 'SIN-REF'}
                           </strong>
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 border-t border-slate-800 pt-3 text-center">
+                      <div className="grid grid-cols-3 divide-x divide-stone-200 border-t border-stone-200 pt-3 text-center dark:divide-stone-800 dark:border-stone-800">
                         <div>
-                          <span className="block text-[11px] uppercase text-slate-400">
+                          <span className="block text-[10px] uppercase tracking-wider text-stone-500">
                             Monto Bruto
                           </span>
-                          <span className="font-mono text-sm font-bold text-white">
+                          <span className="font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                             {formatMoney(
                               selectedOrderForManualConfirm.monto_esperado,
                               selectedOrderForManualConfirm.moneda
@@ -7287,18 +7978,18 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           </span>
                         </div>
                         <div>
-                          <span className="block text-[11px] uppercase text-slate-400">
+                          <span className="block text-[10px] uppercase tracking-wider text-stone-500">
                             Comisión ({feePct}%)
                           </span>
-                          <span className="font-mono text-sm font-semibold text-violet-300">
+                          <span className="font-mono text-sm font-semibold tabular-nums text-stone-700 dark:text-stone-300">
                             -{formatMoney(comision, selectedOrderForManualConfirm.moneda)}
                           </span>
                         </div>
                         <div>
-                          <span className="block text-[11px] uppercase text-emerald-400">
+                          <span className="block text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                             Neto a Acreditar
                           </span>
-                          <span className="font-mono text-sm font-bold text-emerald-400">
+                          <span className="font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                             {formatMoney(neto, selectedOrderForManualConfirm.moneda)}
                           </span>
                         </div>
@@ -7306,16 +7997,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                         Modo de Confirmación
                       </label>
                       <select
                         value={orderConfirmLinkedTxId}
                         onChange={(e) => setOrderConfirmLinkedTxId(e.target.value)}
-                        className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                        className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2.5 text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       >
                         <option value="">
-                          ✅ Acreditar directamente sin correo del banco (Confirmación Manual por Captura)
+                          Acreditar directamente sin correo del banco (Confirmación Manual por Captura)
                         </option>
                         {availableUnreconciledTxs.map((tx) => {
                           const isSameAmt =
@@ -7325,7 +8016,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             ) < 0.01;
                           return (
                             <option key={tx.id} value={tx.id}>
-                              {isSameAmt ? '★ [MISMO MONTO] ' : ''}
+                              {isSameAmt ? '[MISMO MONTO] ' : ''}
                               Vincular con correo DETECTADO: {tx.remitente_o_contraparte} ·{' '}
                               {formatMoney(tx.monto_bruto, tx.moneda)} · Ref: {tx.referencia} (
                               {formatDateTime(tx.fecha_transaccion)})
@@ -7336,22 +8027,22 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+                      <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                         Nota de Auditoría
                       </label>
                       <textarea
                         rows={2}
                         value={orderConfirmNotes}
                         onChange={(e) => setOrderConfirmNotes(e.target.value)}
-                        className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 focus:border-emerald-500 focus:outline-none"
+                        className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       />
                     </div>
 
-                    <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                    <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                       <Dialog.Close asChild>
                         <button
                           type="button"
-                          className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                          className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                         >
                           Cancelar
                         </button>
@@ -7359,12 +8050,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       <button
                         type="submit"
                         disabled={isSubmittingOrderConfirm}
-                        className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-60 cursor-pointer"
+                        className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                       >
                         {isSubmittingOrderConfirm ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                         ) : (
-                          <CheckCircle2 className="h-4 w-4" />
+                          <CheckCircle2 className="h-4 w-4" strokeWidth={1.5} />
                         )}
                         Confirmar y Acreditar ({formatMoney(neto, selectedOrderForManualConfirm.moneda)})
                       </button>
@@ -7389,25 +8080,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[95vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     {editingClientId
                       ? 'Editar Cuenta y PIN de Acceso'
                       : 'Crear Cuenta de Acceso al Portal'}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Define el correo, el PIN de ingreso en /portal, los porcentajes de comisión y las cuentas receptoras asignadas a este cliente.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -7417,7 +8108,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 className="mt-4 space-y-4"
               >
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Nombre del Cliente / Titular *
                   </label>
                   <input
@@ -7426,13 +8117,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={newClientName}
                     onChange={(e) => setNewClientName(e.target.value)}
                     placeholder="Ej. ALEJANDRO JOSE PEREZ"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Correo de Acceso al Portal *
                     </label>
                     <input
@@ -7441,11 +8132,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={newClientEmail}
                       onChange={(e) => setNewClientEmail(e.target.value)}
                       placeholder="cliente@correo.com"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       WhatsApp / Teléfono
                     </label>
                     <input
@@ -7453,20 +8144,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={newClientPhone}
                       onChange={(e) => setNewClientPhone(e.target.value)}
                       placeholder="+1 305..."
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       PIN de Acceso (4 a 6 dígitos) {editingClientId ? '(Opcional al editar)' : '*'}
                     </label>
                     <button
                       type="button"
                       onClick={handleGenerateRandomPin}
-                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+                      className="text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500"
                     >
                       Generar PIN aleatorio
                     </button>
@@ -7484,13 +8175,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         ? 'Dejar vacío para mantener PIN actual'
                         : 'Ej. 4829'
                     }
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm tracking-widest text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm tracking-widest text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Comisión Zelle (%)
                     </label>
                     <input
@@ -7501,11 +8192,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={newClientFeeZelle}
                       onChange={(e) => setNewClientFeeZelle(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Comisión Binance (%)
                     </label>
                     <input
@@ -7516,28 +8207,28 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={newClientFeeBinance}
                       onChange={(e) => setNewClientFeeBinance(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
                 {/* Cuentas Receptoras Asignadas */}
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-4">
+                <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 dark:border-stone-800 dark:bg-[#121110]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-300">
-                        Cuentas Receptoras Asignadas (A qué cuenta envía y Moneda)
+                      <h4 className="text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
+                        Cuentas Receptoras Asignadas (Destino y Moneda)
                       </h4>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
+                      <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
                         El cliente verá únicamente estas cuentas en /portal para saber a dónde enviar y en qué moneda.
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={handleAddCustomAssignedAccount}
-                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/25"
+                      className="inline-flex items-center gap-1 rounded-lg border border-stone-200 bg-white px-2.5 py-1 text-[11px] font-medium text-stone-800 hover:bg-stone-100 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200"
                     >
-                      <Plus className="h-3.5 w-3.5" />
+                      <Plus className="h-3.5 w-3.5" strokeWidth={1.5} />
                       Agregar Cuenta
                     </button>
                   </div>
@@ -7564,14 +8255,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               onClick={() => handleToggleMailboxAssignment(mb)}
                               className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
                                 assigned
-                                  ? 'border-emerald-500/50 bg-emerald-500/20 text-emerald-200'
-                                  : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-500'
+                                  ? 'border-emerald-700/30 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : 'border-stone-200 bg-white text-stone-600 hover:border-stone-300 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-400'
                               }`}
                             >
                               <Check
                                 className={`h-3 w-3 ${
                                   assigned ? 'opacity-100' : 'opacity-25'
                                 }`}
+                                strokeWidth={1.5}
                               />
                               <span>
                                 {platformDefaultLabel(
@@ -7586,7 +8278,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   )}
 
                   {newClientAssignedAccounts.length === 0 ? (
-                    <p className="mt-3 rounded-lg border border-dashed border-slate-800 px-3 py-2.5 text-center text-[11px] text-slate-400">
+                    <p className="mt-3 rounded-lg border border-dashed border-stone-300 px-3 py-2.5 text-center text-[11px] text-stone-500 dark:border-stone-700 dark:text-stone-400">
                       No hay cuentas asignadas todavía. Selecciona un buzón de arriba o haz clic en &quot;Agregar Cuenta&quot;.
                     </p>
                   ) : (
@@ -7594,10 +8286,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       {newClientAssignedAccounts.map((acc, idx) => (
                         <div
                           key={acc.id}
-                          className="grid grid-cols-1 gap-2 rounded-lg border border-slate-800 bg-slate-900/90 p-2.5 sm:grid-cols-12 sm:items-end"
+                          className="grid grid-cols-1 gap-2 rounded-lg border border-stone-200 bg-white p-2.5 sm:grid-cols-12 sm:items-end dark:border-stone-800 dark:bg-[#1C1A18]"
                         >
                           <div className="sm:col-span-3">
-                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                            <label className="block text-[10px] font-medium uppercase text-stone-500">
                               Plataforma
                             </label>
                             <select
@@ -7608,7 +8300,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                     .value as ExpectedPlatformType,
                                 })
                               }
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                              className="mt-1 w-full rounded border border-stone-200 bg-[#FAF9F6] px-2 py-1.5 text-xs text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                             >
                               <option value="CITIBANK">Citibank Zelle</option>
                               <option value="TD_BANK">TD Bank Zelle</option>
@@ -7620,7 +8312,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                             </select>
                           </div>
                           <div className="sm:col-span-4">
-                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                            <label className="block text-[10px] font-medium uppercase text-stone-500">
                               Cuenta a enviar (Correo / Pay ID / Wallet)
                             </label>
                             <input
@@ -7633,11 +8325,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 })
                               }
                               placeholder="ej. pagos@correo.com"
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 font-mono text-xs text-white"
+                              className="mt-1 w-full rounded border border-stone-200 bg-[#FAF9F6] px-2.5 py-1.5 font-mono text-xs text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                             />
                           </div>
                           <div className="sm:col-span-2">
-                            <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                            <label className="block text-[10px] font-medium uppercase text-stone-500">
                               Moneda
                             </label>
                             <select
@@ -7647,7 +8339,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   moneda: e.target.value as CurrencyType,
                                 })
                               }
-                              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs text-white"
+                              className="mt-1 w-full rounded border border-stone-200 bg-[#FAF9F6] px-2 py-1.5 font-mono text-xs text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                             >
                               <option value="USD">USD</option>
                               <option value="USDT">USDT</option>
@@ -7656,7 +8348,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           </div>
                           <div className="flex items-end gap-1.5 sm:col-span-3">
                             <div className="flex-1">
-                              <label className="block text-[10px] font-semibold uppercase text-slate-400">
+                              <label className="block text-[10px] font-medium uppercase text-stone-500">
                                 Etiqueta visible
                               </label>
                               <input
@@ -7668,16 +8360,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                   })
                                 }
                                 placeholder="Citibank Zelle"
-                                className="mt-1 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-xs text-white"
+                                className="mt-1 w-full rounded border border-stone-200 bg-[#FAF9F6] px-2 py-1.5 text-xs text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                               />
                             </div>
                             <button
                               type="button"
                               onClick={() => handleRemoveAssignedAccount(idx)}
-                              className="rounded border border-slate-700 p-1.5 text-slate-400 hover:border-rose-500/50 hover:text-rose-300"
+                              className="rounded border border-stone-200 p-1.5 text-stone-400 hover:border-rose-700/35 hover:text-rose-700 dark:border-stone-800 dark:hover:text-rose-400"
                               title="Quitar cuenta"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                             </button>
                           </div>
                         </div>
@@ -7686,11 +8378,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   )}
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cancelar
                     </button>
@@ -7698,12 +8390,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSavingClient}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSavingClient ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <UserPlus className="h-4 w-4" />
+                      <UserPlus className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     {editingClientId ? 'Actualizar Cuenta y PIN' : 'Crear Cuenta de Acceso'}
                   </button>
@@ -7721,23 +8413,23 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           onOpenChange={setIsNewOrderModalOpen}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Registrar Orden de Pago Esperada
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Registra una orden Zelle o Binance esperada para conciliación automática.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -7747,7 +8439,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 className="mt-4 space-y-4"
               >
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Cliente Titular *
                   </label>
                   <input
@@ -7757,7 +8449,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={orderClientName}
                     onChange={(e) => setOrderClientName(e.target.value)}
                     placeholder="Selecciona o escribe el nombre del cliente"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                   <datalist id="registered-clients-list">
                     {clients.map((c) => (
@@ -7767,7 +8459,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Remitente Zelle o Nickname Binance
                   </label>
                   <input
@@ -7775,13 +8467,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={orderZelleSender}
                     onChange={(e) => setOrderZelleSender(e.target.value)}
                     placeholder="Ej. ALEJANDRO JOSE PEREZ o CarlosMendoza_Pay"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Plataforma Destino
                     </label>
                     <select
@@ -7793,7 +8485,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           val.startsWith('BINANCE') ? 'USDT' : 'USD'
                         );
                       }}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="CITIBANK">Citibank Zelle</option>
                       <option value="TD_BANK">TD Bank Zelle</option>
@@ -7806,7 +8498,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Moneda
                     </label>
                     <select
@@ -7814,7 +8506,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       onChange={(e) =>
                         setOrderCurrency(e.target.value as CurrencyType)
                       }
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="USD">USD</option>
                       <option value="USDT">USDT</option>
@@ -7824,7 +8516,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Monto Exacto ({orderCurrency}) *
                     </label>
                     <input
@@ -7835,12 +8527,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={orderAmount}
                       onChange={(e) => setOrderAmount(e.target.value)}
                       placeholder="1450.00"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Referencia / Order ID / TxID
                     </label>
                     <input
@@ -7848,16 +8540,16 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={orderReference}
                       onChange={(e) => setOrderReference(e.target.value)}
                       placeholder="CITI992048112 o 293849201192"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cancelar
                     </button>
@@ -7865,12 +8557,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSavingOrder}
-                    className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSavingOrder ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <FilePlus2 className="h-4 w-4" />
+                      <FilePlus2 className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     Guardar Orden y Conciliar
                   </button>
@@ -7892,24 +8584,24 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Conciliación Manual Multi-Canal
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Asigna este depósito Zelle o Binance a su orden pendiente o cliente titular.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                     aria-label="Cerrar"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -7917,35 +8609,35 @@ export default function BankReconciliationPanel(): React.JSX.Element {
               {selectedAlertForMatch && (
                 <form
                   onSubmit={(e) => void handleConfirmManualReconciliation(e)}
-                  className="mt-5 space-y-5"
+                  className="mt-5 space-y-4"
                 >
-                  <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                    <div className="flex items-center justify-between text-xs text-slate-400">
+                  <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 dark:border-stone-800 dark:bg-[#121110]">
+                    <div className="flex items-center justify-between text-xs text-stone-500 dark:text-stone-400">
                       <span>
                         Plataforma:{' '}
-                        <strong className="text-white">
+                        <strong className="text-stone-900 dark:text-stone-100">
                           {selectedAlertForMatch.plataforma}
                         </strong>
                       </span>
                       <span>
                         Ref:{' '}
-                        <strong className="font-mono text-white">
+                        <strong className="font-mono text-stone-900 dark:text-stone-100">
                           {selectedAlertForMatch.referencia || 'N/A'}
                         </strong>
                       </span>
                     </div>
                     <div className="mt-2 text-sm">
-                      <span className="text-slate-400">Contraparte: </span>
-                      <strong className="text-amber-300">
+                      <span className="text-stone-500 dark:text-stone-400">Contraparte: </span>
+                      <strong className="text-stone-900 dark:text-stone-100">
                         {selectedAlertForMatch.remitente_o_contraparte}
                       </strong>
                     </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 border-t border-slate-800 pt-3 text-center">
+                    <div className="mt-3 grid grid-cols-3 divide-x divide-stone-200 border-t border-stone-200 pt-3 text-center dark:divide-stone-800 dark:border-stone-800">
                       <div>
-                        <span className="block text-[11px] uppercase text-slate-400">
+                        <span className="block text-[10px] uppercase tracking-wider text-stone-500">
                           Monto Bruto
                         </span>
-                        <span className="font-mono text-sm font-bold text-white">
+                        <span className="font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                           {formatMoney(
                             selectedAlertForMatch.monto_bruto,
                             selectedAlertForMatch.moneda
@@ -7953,10 +8645,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         </span>
                       </div>
                       <div>
-                        <span className="block text-[11px] uppercase text-slate-400">
+                        <span className="block text-[10px] uppercase tracking-wider text-stone-500">
                           Comisión ({selectedAlertForMatch.porcentaje_comision}%)
                         </span>
-                        <span className="font-mono text-sm font-semibold text-violet-300">
+                        <span className="font-mono text-sm font-semibold tabular-nums text-stone-700 dark:text-stone-300">
                           -
                           {formatMoney(
                             selectedAlertForMatch.monto_comision,
@@ -7965,10 +8657,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         </span>
                       </div>
                       <div>
-                        <span className="block text-[11px] uppercase text-emerald-400">
+                        <span className="block text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                           Neto a Acreditar
                         </span>
-                        <span className="font-mono text-sm font-bold text-emerald-400">
+                        <span className="font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                           {formatMoney(
                             selectedAlertForMatch.monto_neto,
                             selectedAlertForMatch.moneda
@@ -7981,7 +8673,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="select-pending-order"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       1. Vincular con Orden Pendiente (Opcional)
                     </label>
@@ -7998,7 +8690,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           setManualClientName(found.cliente_nombre);
                         }
                       }}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2.5 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="">
                         -- Asignación directa a un cliente --
@@ -8012,7 +8704,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           ) < 0.01;
                         return (
                           <option key={order.id} value={order.id}>
-                            {isExactAmount ? '★ [MONTO EXACTO] ' : ''}
+                            {isExactAmount ? '[MONTO EXACTO] ' : ''}
                             {order.codigo_orden} — {order.cliente_nombre} (
                             {formatMoney(order.monto_esperado, order.moneda)})
                           </option>
@@ -8024,7 +8716,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="manual-client-name"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       2. Cliente / Titular de Cuenta a Acreditar
                     </label>
@@ -8036,11 +8728,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={manualClientName}
                       onChange={(e) => setManualClientName(e.target.value)}
                       placeholder="Selecciona un cliente registrado o escribe su nombre"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                     />
                     {!selectedOrderId && selectedAlertForMatch && (
-                      <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
-                        <strong>⚠️ Regla de Conciliación:</strong> Estás por asignar directamente sin una orden de pago reportada. Un pago solo puede conciliarse a quien realmente lo haya enviado. El remitente bancario (<strong>{selectedAlertForMatch.remitente_o_contraparte}</strong>) debe coincidir con el cliente o estar en su lista de remitentes autorizados. Si es un tercero nuevo, el cliente debe reportar el comprobante desde su portal.
+                      <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-700/25 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-300">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" strokeWidth={1.5} />
+                        <span>
+                          <strong>Regla de Conciliación:</strong> Estás por asignar directamente sin una orden de pago reportada. El remitente bancario (<strong>{selectedAlertForMatch.remitente_o_contraparte}</strong>) debe coincidir con el cliente o estar en su lista de remitentes autorizados.
+                        </span>
                       </div>
                     )}
                   </div>
@@ -8048,7 +8743,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="manual-audit-notes"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       3. Justificación / Nota de Auditoría
                     </label>
@@ -8057,15 +8752,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       rows={3}
                       value={manualNotes}
                       onChange={(e) => setManualNotes(e.target.value)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                  <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                     <Dialog.Close asChild>
                       <button
                         type="button"
-                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                        className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                       >
                         Cancelar
                       </button>
@@ -8073,12 +8768,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <button
                       type="submit"
                       disabled={isSubmittingMatch}
-                      className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                     >
                       {isSubmittingMatch ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                       ) : (
-                        <CheckCircle2 className="h-4 w-4" />
+                        <CheckCircle2 className="h-4 w-4" strokeWidth={1.5} />
                       )}
                       Confirmar Conciliación (
                       {formatMoney(
@@ -8106,31 +8801,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <Dialog.Title className="text-base font-bold text-white">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-3 dark:border-stone-800">
+                <Dialog.Title className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                   Payload Original &amp; Llave de Idempotencia
                 </Dialog.Title>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
               {inspectedAlert && (
                 <div className="mt-4 space-y-3 text-xs">
-                  <div className="space-y-1 rounded-lg bg-slate-950 p-3 font-mono text-slate-300">
+                  <div className="space-y-1 rounded-lg border border-stone-200 bg-[#FAF9F6] p-3 font-mono text-stone-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300">
                     <div>External ID: {inspectedAlert.external_unique_id}</div>
-                    <div className="text-emerald-400">
+                    <div className="text-emerald-700 dark:text-emerald-400">
                       Dedup Key: {inspectedAlert.dedup_key}
                     </div>
                     <div>Origen: {inspectedAlert.origen_deteccion}</div>
                   </div>
-                  <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-800 bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-200">
+                  <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-stone-200 bg-[#FAF9F6] p-4 font-mono text-xs leading-relaxed text-stone-800 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200">
                     {inspectedAlert.raw_body ??
                       JSON.stringify(inspectedAlert.raw_payload, null, 2)}
                   </pre>
@@ -8145,25 +8840,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
            ===================================================================== */}
         <Dialog.Root open={isSimulatorOpen} onOpenChange={setIsSimulatorOpen}>
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Simulador Multi-Canal (Zelle + Binance Pay / P2P / On-Chain)
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Prueba en vivo{' '}
-                    <code className="text-sky-300">parseBankAlertEmail()</code>{' '}
-                    e idempotencia cruzada por <code>dedup_key</code>.
+                    <code className="font-mono text-amber-700 dark:text-amber-500">parseBankAlertEmail()</code>{' '}
+                    e idempotencia cruzada por <code className="font-mono">dedup_key</code>.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8182,7 +8877,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setSimSubject(tpl.subject);
                         setSimBody(tpl.body);
                       }}
-                      className="rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs font-medium text-sky-300 hover:border-sky-500/50"
+                      className="rounded-md border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 text-xs font-medium text-stone-700 hover:border-amber-700 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-amber-500"
                     >
                       {tpl.label}
                     </button>
@@ -8191,7 +8886,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Remitente (From)
                     </label>
                     <input
@@ -8199,11 +8894,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={simFrom}
                       onChange={(e) => setSimFrom(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Asunto (Subject)
                     </label>
                     <input
@@ -8211,13 +8906,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       required
                       value={simSubject}
                       onChange={(e) => setSimSubject(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Cuerpo del Correo (HTML o Texto Plano)
                   </label>
                   <textarea
@@ -8225,15 +8920,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     required
                     value={simBody}
                     onChange={(e) => setSimBody(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200"
+                    className="mt-1 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] p-3 font-mono text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cerrar
                     </button>
@@ -8241,12 +8936,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSimulating}
-                    className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-5 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSimulating ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <Cpu className="h-4 w-4" />
+                      <Cpu className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     Ejecutar Parseo e Insertar
                   </button>
@@ -8269,25 +8964,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-40 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div>
-                  <Dialog.Title className="text-lg font-bold text-white">
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     {editingBusinessUserId
                       ? 'Editar Cuenta de Negocio y Clave'
                       : 'Crear Cuenta Nueva para Negocio'}
                   </Dialog.Title>
-                  <Dialog.Description className="mt-1 text-xs text-slate-400">
+                  <Dialog.Description className="mt-1 text-xs text-stone-500 dark:text-stone-400">
                     Define el negocio, correo y contraseña para su acceso independiente al panel de conciliación.
                   </Dialog.Description>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8297,7 +8992,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 className="mt-4 space-y-4"
               >
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
+                  <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                     Nombre del Negocio / Empresa *
                   </label>
                   <input
@@ -8306,13 +9001,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={bizName}
                     onChange={(e) => setBizName(e.target.value)}
                     placeholder="Ej. Inversiones Caribe LLC"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Nombre del Usuario Responsable *
                     </label>
                     <input
@@ -8321,11 +9016,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={bizOwnerName}
                       onChange={(e) => setBizOwnerName(e.target.value)}
                       placeholder="Ej. María González"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Teléfono / WhatsApp
                     </label>
                     <input
@@ -8333,14 +9028,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={bizPhone}
                       onChange={(e) => setBizPhone(e.target.value)}
                       placeholder="+1 305..."
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Correo de Inicio de Sesión *
                     </label>
                     <input
@@ -8349,12 +9044,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={bizEmail}
                       onChange={(e) => setBizEmail(e.target.value)}
                       placeholder="admin@negocio.com"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Tipo de Cuenta
                     </label>
                     <select
@@ -8365,7 +9060,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       onChange={(e) =>
                         setBizRole(e.target.value as BusinessUserRole)
                       }
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-60"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 disabled:opacity-60 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="NEGOCIO">Negocio Independiente</option>
                       <option value="SUPER_ADMIN">Super Admin</option>
@@ -8375,14 +9070,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
 
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-xs font-semibold uppercase text-slate-300">
+                    <label className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
                       Contraseña de Acceso{' '}
                       {editingBusinessUserId ? '(Opcional al editar)' : '*'}
                     </label>
                     <button
                       type="button"
                       onClick={handleGenerateRandomBizPassword}
-                      className="text-[11px] font-semibold text-emerald-400 hover:text-emerald-300"
+                      className="text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500"
                     >
                       Generar clave aleatoria
                     </button>
@@ -8398,15 +9093,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         ? 'Dejar vacío para mantener contraseña actual'
                         : 'Mínimo 4 caracteres'
                     }
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm text-white"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 font-mono text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
-                <div className="flex justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cancelar
                     </button>
@@ -8414,12 +9109,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSavingBusinessUser}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSavingBusinessUser ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <Briefcase className="h-4 w-4" />
+                      <Briefcase className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     {editingBusinessUserId
                       ? 'Guardar Cambios'
@@ -8442,21 +9137,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-rose-500/30 bg-slate-900 p-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 text-rose-400">
-                  <RotateCcw className="h-5 w-5" />
-                  <Dialog.Title className="text-lg font-bold text-white">
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-3 dark:border-stone-800">
+                <div className="flex items-center gap-2 text-rose-700 dark:text-rose-400">
+                  <RotateCcw className="h-4 w-4" strokeWidth={1.5} />
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Deshacer Conciliación
                   </Dialog.Title>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8466,11 +9161,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   onSubmit={handleConfirmRevertReconciliation}
                   className="mt-4 space-y-4"
                 >
-                  <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 text-xs text-rose-200">
-                    <p className="font-semibold text-rose-300">
+                  <div className="rounded-xl border border-rose-700/25 bg-rose-50 p-4 text-xs text-rose-800 dark:border-rose-500/35 dark:bg-rose-950/35 dark:text-rose-300">
+                    <p className="font-semibold">
                       ¿Estás seguro de que deseas revertir esta conciliación?
                     </p>
-                    <p className="mt-1 text-slate-300">
+                    <p className="mt-1 text-stone-700 dark:text-stone-300">
                       Esta acción devolverá la transacción al estado de{' '}
                       <strong>REVISIÓN MANUAL</strong>, desvinculará la orden de
                       pago (si existe), recalculará inmediatamente el saldo del
@@ -8479,39 +9174,39 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </p>
                   </div>
 
-                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4 text-xs">
-                    <div className="grid grid-cols-2 gap-3 text-slate-300">
+                  <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-4 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                    <div className="grid grid-cols-2 gap-3 text-stone-600 dark:text-stone-300">
                       <div>
-                        <span className="block text-slate-500">Canal / Banco:</span>
-                        <span className="font-medium text-white">
+                        <span className="block text-stone-400">Canal / Banco:</span>
+                        <span className="font-medium text-stone-900 dark:text-stone-100">
                           {alertToRevert.plataforma}
                         </span>
                       </div>
                       <div>
-                        <span className="block text-slate-500">
+                        <span className="block text-stone-400">
                           Referencia / TxID:
                         </span>
-                        <span className="font-mono font-medium text-white">
+                        <span className="font-mono font-medium text-stone-900 dark:text-stone-100">
                           {alertToRevert.referencia || 'N/A'}
                         </span>
                       </div>
                       <div>
-                        <span className="block text-slate-500">Remitente:</span>
-                        <span className="font-medium text-white">
+                        <span className="block text-stone-400">Remitente:</span>
+                        <span className="font-medium text-stone-900 dark:text-stone-100">
                           {alertToRevert.remitente_o_contraparte}
                         </span>
                       </div>
                       <div>
-                        <span className="block text-slate-500">
+                        <span className="block text-stone-400">
                           Cliente Acreditado:
                         </span>
-                        <span className="font-semibold text-amber-400">
+                        <span className="font-semibold text-amber-700 dark:text-amber-400">
                           {alertToRevert.cliente_asignado_nombre || 'N/A'}
                         </span>
                       </div>
-                      <div className="col-span-2 flex items-center justify-between border-t border-slate-800 pt-2 font-mono">
-                        <span className="text-slate-400">Monto Acreditado:</span>
-                        <span className="text-base font-bold text-emerald-400">
+                      <div className="col-span-2 flex items-center justify-between border-t border-stone-200 pt-2 font-mono dark:border-stone-800">
+                        <span className="text-stone-500">Monto Acreditado:</span>
+                        <span className="text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                           {formatMoney(
                             alertToRevert.monto_neto,
                             alertToRevert.moneda
@@ -8524,7 +9219,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="revert-reason"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       Motivo de la Reversión *
                     </label>
@@ -8535,15 +9230,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={revertReason}
                       onChange={(e) => setRevertReason(e.target.value)}
                       placeholder="Ej. Conciliado por error al cliente equivocado, comprobante duplicado, etc."
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-rose-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                     />
                   </div>
 
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                  <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                     <Dialog.Close asChild>
                       <button
                         type="button"
-                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                        className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                       >
                         Cancelar
                       </button>
@@ -8551,12 +9246,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <button
                       type="submit"
                       disabled={isSubmittingRevert}
-                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-700 px-5 py-2 text-xs font-medium text-white hover:bg-rose-800 disabled:opacity-60"
                     >
                       {isSubmittingRevert ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                       ) : (
-                        <RotateCcw className="h-4 w-4" />
+                        <RotateCcw className="h-4 w-4" strokeWidth={1.5} />
                       )}
                       Confirmar Reversión
                     </button>
@@ -8577,20 +9272,20 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-rose-500/40 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-              <div className="flex items-start justify-between border-b border-slate-800 pb-4">
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-start justify-between border-b border-stone-200 pb-4 dark:border-stone-800">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-500/15 text-rose-400">
-                    <Trash2 className="h-5 w-5" />
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-rose-700/20 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-950/40 dark:text-rose-400">
+                    <Trash2 className="h-4 w-4" strokeWidth={1.5} />
                   </div>
                   <div>
-                    <Dialog.Title className="text-base font-bold text-white">
+                    <Dialog.Title className="font-serif text-lg font-medium tracking-tight text-stone-900 dark:text-stone-100">
                       {alertsToDiscard.length === 1
                         ? 'Eliminar Correo de la Lista Activa'
                         : `Eliminar ${alertsToDiscard.length} Correos Seleccionados`}
                     </Dialog.Title>
-                    <Dialog.Description className="mt-0.5 text-xs text-slate-400">
+                    <Dialog.Description className="mt-0.5 text-xs text-stone-500 dark:text-stone-400">
                       Correos propios o transferencias que nadie va a confirmar
                     </Dialog.Description>
                   </div>
@@ -8598,9 +9293,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8611,28 +9306,28 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   className="mt-4 space-y-4"
                 >
                   {alertsToDiscard.length === 1 ? (
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3.5 text-xs space-y-1.5">
+                    <div className="space-y-1.5 rounded-xl border border-stone-200 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Remitente:</span>
-                        <span className="font-semibold text-white">
+                        <span className="text-stone-500">Remitente:</span>
+                        <span className="font-semibold text-stone-900 dark:text-stone-100">
                           {alertsToDiscard[0]?.remitente_o_contraparte || 'Desconocido'}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Referencia:</span>
-                        <span className="font-mono text-slate-200">
+                        <span className="text-stone-500">Referencia:</span>
+                        <span className="font-mono text-stone-700 dark:text-stone-300">
                           {alertsToDiscard[0]?.referencia || 'SIN-REF'}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Fecha Correo:</span>
-                        <span className="text-slate-200">
+                        <span className="text-stone-500">Fecha Correo:</span>
+                        <span className="font-mono tabular-nums text-stone-700 dark:text-stone-300">
                           {formatDateTime(alertsToDiscard[0]?.fecha_transaccion ?? null)}
                         </span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-slate-400">Monto:</span>
-                        <span className="font-mono font-bold text-rose-300">
+                        <span className="text-stone-500">Monto:</span>
+                        <span className="font-mono font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                           {formatMoney(
                             alertsToDiscard[0]?.monto_bruto ?? 0,
                             alertsToDiscard[0]?.moneda ?? 'USD'
@@ -8641,32 +9336,32 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       </div>
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3.5 text-xs space-y-2">
+                    <div className="space-y-2 rounded-xl border border-stone-200 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">Cantidad seleccionada:</span>
-                        <span className="font-bold text-white">
+                        <span className="text-stone-500">Cantidad seleccionada:</span>
+                        <span className="font-semibold text-stone-900 dark:text-stone-100">
                           {alertsToDiscard.length} correos sin conciliar
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-400">Monto total excluido:</span>
-                        <span className="font-mono font-bold text-rose-300">
+                        <span className="text-stone-500">Monto total excluido:</span>
+                        <span className="font-mono font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                           $
                           {alertsToDiscard
                             .reduce((acc, item) => acc + Number(item.monto_bruto || 0), 0)
                             .toFixed(2)}
                         </span>
                       </div>
-                      <div className="max-h-28 overflow-y-auto border-t border-slate-800 pt-2 space-y-1">
+                      <div className="max-h-28 space-y-1 overflow-y-auto border-t border-stone-200 pt-2 dark:border-stone-800">
                         {alertsToDiscard.map((item) => (
                           <div
                             key={item.id}
-                            className="flex items-center justify-between text-[11px] text-slate-300"
+                            className="flex items-center justify-between text-[11px] text-stone-600 dark:text-stone-300"
                           >
                             <span className="truncate pr-2">
                               {item.remitente_o_contraparte} · {item.referencia || 'SIN-REF'}
                             </span>
-                            <span className="font-mono font-semibold text-white">
+                            <span className="font-mono font-semibold tabular-nums text-stone-900 dark:text-stone-100">
                               {formatMoney(item.monto_bruto, item.moneda)}
                             </span>
                           </div>
@@ -8678,7 +9373,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="discard-reason"
-                      className="block text-xs font-semibold uppercase tracking-wide text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       Motivo de eliminación
                     </label>
@@ -8694,8 +9389,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           onClick={() => setDiscardReason(preset)}
                           className={`rounded-full border px-2.5 py-1 text-[11px] transition cursor-pointer ${
                             discardReason === preset
-                              ? 'border-rose-400/60 bg-rose-500/20 text-rose-200'
-                              : 'border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-600 hover:text-slate-200'
+                              ? 'border-rose-700/35 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-300'
+                              : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400'
                           }`}
                         >
                           {preset}
@@ -8708,19 +9403,19 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={discardReason}
                       onChange={(e) => setDiscardReason(e.target.value)}
                       placeholder="Ej. Transferencia propia, no pertenece a ningún cliente..."
-                      className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-rose-500 focus:outline-none"
+                      className="mt-2 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-rose-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                     />
                   </div>
 
-                  <p className="rounded-lg border border-slate-800 bg-slate-950/70 p-2.5 text-[11px] leading-relaxed text-slate-400">
-                    El correo desaparecerá de la lista activa y de los totales pendientes, y el sincronizador IMAP <strong className="text-slate-200">no volverá a descargarlo</strong>. Si lo necesitas en el futuro, podrás restaurarlo desde <strong className="text-slate-200">«Ver Correos Eliminados»</strong>.
+                  <p className="rounded-lg border border-stone-200 bg-[#FAF9F6] p-2.5 text-[11px] leading-relaxed text-stone-500 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400">
+                    El correo desaparecerá de la lista activa y de los totales pendientes, y el sincronizador IMAP <strong className="text-stone-700 dark:text-stone-200">no volverá a descargarlo</strong>. Si lo necesitas en el futuro, podrás restaurarlo desde <strong className="text-stone-700 dark:text-stone-200">«Eliminados»</strong>.
                   </p>
 
-                  <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                  <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                     <Dialog.Close asChild>
                       <button
                         type="button"
-                        className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 cursor-pointer"
+                        className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 cursor-pointer dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                       >
                         Cancelar
                       </button>
@@ -8728,12 +9423,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <button
                       type="submit"
                       disabled={isSubmittingDiscard}
-                      className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-5 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-60 cursor-pointer"
+                      className="inline-flex items-center gap-2 rounded-lg bg-rose-700 px-5 py-2 text-xs font-medium text-white hover:bg-rose-800 disabled:opacity-60 cursor-pointer"
                     >
                       {isSubmittingDiscard ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                       ) : (
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="h-4 w-4" strokeWidth={1.5} />
                       )}
                       Confirmar Eliminación
                     </button>
@@ -8755,21 +9450,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/30 bg-slate-900 p-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 text-emerald-400">
-                  <UserCheck className="h-5 w-5" />
-                  <Dialog.Title className="text-lg font-bold text-white">
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-3 dark:border-stone-800">
+                <div className="flex items-center gap-2">
+                  <UserCheck className="h-4 w-4 text-stone-400" strokeWidth={1.5} />
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Asignación Masiva por Lote
                   </Dialog.Title>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8778,13 +9473,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 onSubmit={handleConfirmBatchReconciliation}
                 className="mt-4 space-y-4"
               >
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-xs text-emerald-200">
-                  <p className="font-semibold text-emerald-300">
+                <div className="rounded-xl border border-emerald-700/20 bg-emerald-50 p-3.5 text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/35 dark:text-emerald-300">
+                  <p className="font-semibold">
                     Estás por adjudicar {selectedAlertIds.length} pagos seleccionados.
                   </p>
-                  <p className="mt-1 text-slate-300">
+                  <p className="mt-1 text-stone-700 dark:text-stone-300">
                     Monto total a conciliar:{' '}
-                    <strong className="font-mono text-emerald-400">
+                    <strong className="font-mono tabular-nums text-emerald-700 dark:text-emerald-400">
                       $
                       {alerts
                         .filter((a) => selectedAlertIds.includes(a.id))
@@ -8799,7 +9494,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div>
                   <label
                     htmlFor="batch-client-select"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                   >
                     Cliente Titular a Acreditar *
                   </label>
@@ -8811,9 +9506,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={batchTargetClient}
                     onChange={(e) => setBatchTargetClient(e.target.value)}
                     placeholder="Escribe o selecciona un cliente registrado"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                   />
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">
                     Selecciona de la lista de clientes registrados o escribe el nombre exacto.
                   </p>
                 </div>
@@ -8821,7 +9516,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div>
                   <label
                     htmlFor="batch-notes"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                   >
                     Motivo / Nota de Auditoría
                   </label>
@@ -8831,15 +9526,15 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={batchNotes}
                     onChange={(e) => setBatchNotes(e.target.value)}
                     placeholder="Ej. Asignación masiva autorizada por comprobantes históricos"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500"
                   />
                 </div>
 
-                <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cancelar
                     </button>
@@ -8847,12 +9542,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSubmittingBatch}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSubmittingBatch ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <CheckCircle2 className="h-4 w-4" />
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     Confirmar Asignación ({selectedAlertIds.length} Pagos)
                   </button>
@@ -8861,6 +9556,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+
         {/* Modal Registrar Liquidación de Fondos a Cliente o Tercero */}
         <Dialog.Root
           open={isLiquidationModalOpen}
@@ -8872,21 +9568,21 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           }}
         >
           <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm" />
-            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-emerald-500/40 bg-slate-900 p-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2 text-emerald-400">
-                  <Coins className="h-5 w-5" />
-                  <Dialog.Title className="text-lg font-bold text-white">
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-stone-950/50 backdrop-blur-sm" />
+            <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[94vw] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-stone-200/90 bg-white p-6 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-3 dark:border-stone-800">
+                <div className="flex items-center gap-2">
+                  <Coins className="h-4 w-4 text-stone-400" strokeWidth={1.5} />
+                  <Dialog.Title className="font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
                     Registrar Liquidación de Fondos
                   </Dialog.Title>
                 </div>
                 <Dialog.Close asChild>
                   <button
                     type="button"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
+                    className="rounded-lg p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-700 dark:hover:bg-stone-800 dark:hover:text-stone-200"
                   >
-                    <X className="h-5 w-5" />
+                    <X className="h-4 w-4" strokeWidth={1.5} />
                   </button>
                 </Dialog.Close>
               </div>
@@ -8895,8 +9591,8 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div
                   className={`mt-4 rounded-xl border p-3.5 text-xs ${
                     liquidationFeedback.ok
-                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                      : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                      ? 'border-emerald-700/20 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300'
+                      : 'border-rose-700/25 bg-rose-50 text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400'
                   }`}
                 >
                   {liquidationFeedback.message}
@@ -8908,7 +9604,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div>
                   <label
                     htmlFor="liq-client-select"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                   >
                     Cliente Titular *
                   </label>
@@ -8923,7 +9619,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         setLiqDestinatario(`A favor de ${found.nombre_titular}`);
                       }
                     }}
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   >
                     {clients.map((c) => {
                       const disp = c.saldo_disponible_usd ?? Math.round((c.total_neto_usd - (c.total_liquidado_usd ?? 0)) * 100) / 100;
@@ -8947,32 +9643,35 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   const isOver = remaining < -0.009;
 
                   return (
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5 text-xs space-y-2">
-                      <div className="flex justify-between items-center text-slate-400">
+                    <div className="space-y-2 rounded-xl border border-stone-200 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                      <div className="flex items-center justify-between text-stone-500 dark:text-stone-400">
                         <span>Saldo Disponible Actual:</span>
-                        <span className={`font-mono font-bold text-sm ${maxAvail < 0 ? 'text-rose-400' : 'text-white'}`}>
+                        <span className={`font-mono text-sm font-semibold tabular-nums ${maxAvail < 0 ? 'text-rose-700 dark:text-rose-400' : 'text-stone-900 dark:text-stone-100'}`}>
                           {formatMoney(maxAvail, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
-                      <div className="flex justify-between items-center text-slate-400">
+                      <div className="flex items-center justify-between text-stone-500 dark:text-stone-400">
                         <span>Monto a Liquidar:</span>
-                        <span className="font-mono font-bold text-rose-400 text-sm">
+                        <span className="font-mono text-sm font-semibold tabular-nums text-rose-700 dark:text-rose-400">
                           -{formatMoney(numInput, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
-                      <div className="border-t border-slate-800 pt-1.5 flex justify-between items-center">
-                        <span className="font-semibold text-slate-300">
+                      <div className="flex items-center justify-between border-t border-stone-200 pt-1.5 dark:border-stone-800">
+                        <span className="font-medium text-stone-700 dark:text-stone-300">
                           {isOver ? 'Saldo en Contra Resultante (Adelanto):' : 'Saldo Restante Resultante:'}
                         </span>
-                        <span className={`font-mono font-bold text-base ${isOver ? 'text-amber-400' : 'text-emerald-400'}`}>
+                        <span className={`font-mono text-base font-semibold tabular-nums ${isOver ? 'text-rose-700 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
                           {formatMoney(remaining, liqMoneda)} {liqMoneda === 'USD' ? 'USD' : ''}
                         </span>
                       </div>
                       {isOver && (
-                        <p className="rounded-lg border border-amber-500/30 bg-amber-950/35 px-2.5 py-2 text-[11px] font-medium text-amber-200">
-                          ⚠️ Liquidación por encima del saldo actual (+{formatMoney(Math.abs(remaining), liqMoneda)} de adelanto/cuadre). Permitido: el cliente quedará con saldo negativo de{' '}
-                          <strong className="font-mono text-amber-300">{formatMoney(remaining, liqMoneda)}</strong> y se descontará automáticamente de sus próximos pagos conciliados.
-                        </p>
+                        <div className="flex items-start gap-2 rounded-lg border border-amber-700/25 bg-amber-50 px-2.5 py-2 text-[11px] font-medium text-amber-900 dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-300">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700 dark:text-amber-400" strokeWidth={1.5} />
+                          <span>
+                            Liquidación por encima del saldo actual (+{formatMoney(Math.abs(remaining), liqMoneda)} de adelanto/cuadre). Permitido: el cliente quedará con saldo negativo de{' '}
+                            <strong className="font-mono text-rose-700 dark:text-rose-400">{formatMoney(remaining, liqMoneda)}</strong> y se descontará automáticamente de sus próximos pagos conciliados.
+                          </span>
+                        </div>
                       )}
                     </div>
                   );
@@ -8984,7 +9683,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     <div className="flex items-center justify-between">
                       <label
                         htmlFor="liq-amount"
-                        className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                        className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                       >
                         Monto a Liquidar *
                       </label>
@@ -8998,14 +9697,14 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 : (selectedClientForLiq.saldo_disponible_usd ?? Math.round((selectedClientForLiq.total_neto_usd - (selectedClientForLiq.total_liquidado_usd ?? 0)) * 100) / 100);
                             setLiqMonto(Math.max(0, maxAvail).toFixed(2));
                           }}
-                          className="text-[10px] text-emerald-400 hover:underline font-semibold"
+                          className="text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500"
                         >
                           Liquidar Todo
                         </button>
                       )}
                     </div>
                     <div className="relative mt-1.5">
-                      <span className="absolute left-3 top-2 text-slate-400 font-mono text-sm">$</span>
+                      <span className="absolute left-3 top-2 font-mono text-sm text-stone-400">$</span>
                       <input
                         id="liq-amount"
                         type="number"
@@ -9015,7 +9714,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                         value={liqMonto}
                         onChange={(e) => setLiqMonto(e.target.value)}
                         placeholder="Ej. 2000.00"
-                        className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2 pl-7 pr-3 font-mono text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-7 pr-3 font-mono text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                       />
                     </div>
                   </div>
@@ -9023,7 +9722,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="liq-currency"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       Moneda
                     </label>
@@ -9031,7 +9730,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       id="liq-currency"
                       value={liqMoneda}
                       onChange={(e) => setLiqMoneda(e.target.value as CurrencyType)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="USD">USD</option>
                       <option value="USDT">USDT</option>
@@ -9043,7 +9742,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div>
                   <label
                     htmlFor="liq-dest"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                   >
                     Destinatario / Beneficiario del Pago *
                   </label>
@@ -9054,9 +9753,9 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={liqDestinatario}
                     onChange={(e) => setLiqDestinatario(e.target.value)}
                     placeholder="Ej. A equis persona / Carlos Perez (0414-1234567)"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
-                  <p className="mt-1 text-[11px] text-slate-400">
+                  <p className="mt-1 text-[11px] text-stone-500 dark:text-stone-400">
                     Nombre o cuenta de la persona que recibe el dinero.
                   </p>
                 </div>
@@ -9065,7 +9764,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 <div>
                   <label
                     htmlFor="liq-motivo"
-                    className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                    className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                   >
                     Motivo / Concepto de Liquidación *
                   </label>
@@ -9076,7 +9775,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     value={liqMotivo}
                     onChange={(e) => setLiqMotivo(e.target.value)}
                     placeholder="Ej. Liquidación solicitada por WhatsApp / Pago a proveedor"
-                    className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                   />
                 </div>
 
@@ -9085,7 +9784,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="liq-metodo"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       Método de Salida
                     </label>
@@ -9093,7 +9792,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       id="liq-metodo"
                       value={liqMetodo}
                       onChange={(e) => setLiqMetodo(e.target.value as LiquidationPaymentMethod)}
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-xs text-stone-900 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     >
                       <option value="ZELLE">Zelle</option>
                       <option value="PAGO_MOVIL">Pago Móvil</option>
@@ -9107,7 +9806,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <div>
                     <label
                       htmlFor="liq-ref"
-                      className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+                      className="block text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400"
                     >
                       Referencia de Salida
                     </label>
@@ -9117,25 +9816,25 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                       value={liqReferencia}
                       onChange={(e) => setLiqReferencia(e.target.value)}
                       placeholder="Ej. 6475855297 / TxID"
-                      className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3.5 py-2 text-xs font-mono text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                      className="mt-1.5 w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3.5 py-2 font-mono text-xs text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100"
                     />
                   </div>
                 </div>
 
                 {/* Checkbox Archivar ciclo actual */}
-                <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                  <label className="flex items-start gap-2.5 cursor-pointer text-xs text-slate-300">
+                <div className="rounded-xl border border-stone-200 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                  <label className="flex cursor-pointer items-start gap-2.5 text-xs text-stone-600 dark:text-stone-300">
                     <input
                       type="checkbox"
                       checked={liqArchivar}
                       onChange={(e) => setLiqArchivar(e.target.checked)}
-                      className="mt-0.5 rounded border-slate-700 text-emerald-600 focus:ring-emerald-500"
+                      className="mt-0.5 rounded border-stone-300 text-stone-900 dark:border-stone-700 dark:bg-stone-900"
                     />
                     <div>
-                      <span className="font-semibold text-white">
+                      <span className="font-medium text-stone-900 dark:text-stone-100">
                         Archivar comprobantes del ciclo actual
                       </span>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
+                      <p className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
                         Cierra las capturas conciliadas previas para que el portal del cliente quede con cero historial de capturas activas en el nuevo ciclo.
                       </p>
                     </div>
@@ -9143,11 +9842,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 </div>
 
                 {/* Botones de acción */}
-                <div className="flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+                <div className="flex items-center justify-end gap-3 border-t border-stone-200 pt-4 dark:border-stone-800">
                   <Dialog.Close asChild>
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800"
+                      className="rounded-lg border border-stone-200 px-4 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 dark:border-stone-800 dark:text-stone-300 dark:hover:bg-stone-900"
                     >
                       Cancelar
                     </button>
@@ -9155,12 +9854,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                   <button
                     type="submit"
                     disabled={isSubmittingLiquidation}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-5 py-2 text-xs font-medium text-stone-50 hover:bg-stone-800 disabled:opacity-60 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                   >
                     {isSubmittingLiquidation ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <CheckCircle2 className="h-4 w-4" />
+                      <CheckCircle2 className="h-4 w-4" strokeWidth={1.5} />
                     )}
                     Confirmar Liquidación
                   </button>
