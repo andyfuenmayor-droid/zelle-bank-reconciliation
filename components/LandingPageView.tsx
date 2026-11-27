@@ -12,11 +12,11 @@ import {
   Lock,
   LogIn,
   ShieldCheck,
-  Sparkles,
   UploadCloud,
   Wallet,
   Zap,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 
 interface LandingPageViewProps {
   onOpenLoginModal?: () => void;
@@ -34,31 +34,36 @@ const SUPPORTED_CHANNELS: ReadonlyArray<{
     name: 'Citibank Zelle®',
     currency: 'USD',
     desc: 'Detección automática de transferencias Zelle entrantes en español e inglés con confirmación instantánea.',
-    badgeClass: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+    badgeClass:
+      'border-stone-200 bg-stone-100 text-stone-800 dark:border-stone-700 dark:bg-stone-800/80 dark:text-stone-200',
   },
   {
     name: 'TD Bank Zelle®',
     currency: 'USD',
     desc: 'Monitoreo continuo de alertas TD Bank y conciliación por referencia exacta o nombre del remitente.',
-    badgeClass: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+    badgeClass:
+      'border-emerald-700/25 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-300',
   },
   {
     name: 'Binance Pay',
     currency: 'USDT',
     desc: 'Validación instantánea vía Pay ID / Transaction ID combinando notificaciones oficiales y API de Binance.',
-    badgeClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+    badgeClass:
+      'border-amber-700/25 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-300',
   },
   {
     name: 'Binance P2P',
     currency: 'USDT',
     desc: 'Conciliación automatizada de órdenes C2C completadas vinculadas directamente al número de orden.',
-    badgeClass: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300',
+    badgeClass:
+      'border-amber-700/25 bg-amber-50/70 text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-300',
   },
   {
     name: 'Red USDT (TRC20 / BEP20 / ERC20)',
     currency: 'USDT',
     desc: 'Verificación de depósitos On-Chain mediante TxID con acreditación neta automática a la billetera del cliente.',
-    badgeClass: 'border-purple-500/30 bg-purple-500/10 text-purple-300',
+    badgeClass:
+      'border-stone-300 bg-[#FAF9F6] text-stone-700 dark:border-stone-700 dark:bg-[#121110] dark:text-stone-300',
   },
 ];
 
@@ -68,45 +73,53 @@ export default function LandingPageView({
   onBackToDashboard,
 }: LandingPageViewProps): React.JSX.Element {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Navegación superior */}
-      <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-500/40 bg-emerald-500/15 text-emerald-400">
-              <ShieldCheck className="h-5 w-5" />
+    <div className="min-h-screen bg-[#FAF9F6] text-stone-900 dark:bg-[#121110] dark:text-stone-100">
+      {/* Cabecera Editorial */}
+      <header className="sticky top-0 z-30 border-b border-stone-200/90 bg-[#FAF9F6]/90 backdrop-blur-sm dark:border-stone-800 dark:bg-[#121110]/90">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-stone-200 bg-white text-stone-800 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200">
+              <ShieldCheck className="h-4 w-4 text-amber-700 dark:text-amber-500" strokeWidth={1.5} />
             </span>
             <div>
-              <div className="text-sm font-bold tracking-tight text-white sm:text-base">
-                ConciliaPay FinTech
+              <div className="font-serif text-lg font-medium leading-none tracking-tight text-stone-900 sm:text-xl dark:text-stone-100">
+                ConciliarCuenta
               </div>
-              <div className="text-[11px] text-slate-400">
+              <div className="mt-0.5 text-[11px] text-stone-500 dark:text-stone-400">
                 Tesorería Multi-Canal Zelle &amp; Binance
               </div>
             </div>
           </div>
 
-          <nav className="hidden items-center gap-6 text-xs font-medium text-slate-300 md:flex">
+          <nav className="hidden items-center gap-7 text-xs font-medium text-stone-600 md:flex dark:text-stone-400">
             <a
               href="#como-funciona"
-              className="transition hover:text-emerald-400"
+              className="transition hover:text-stone-900 dark:hover:text-stone-100"
             >
               Cómo Funciona
             </a>
-            <a href="#canales" className="transition hover:text-emerald-400">
+            <a
+              href="#canales"
+              className="transition hover:text-stone-900 dark:hover:text-stone-100"
+            >
               Canales Soportados
             </a>
-            <a href="#seguridad" className="transition hover:text-emerald-400">
+            <a
+              href="#seguridad"
+              className="transition hover:text-stone-900 dark:hover:text-stone-100"
+            >
               Seguridad y Auditoría
             </a>
           </nav>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+
             <Link
               href="/portal"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/40 bg-sky-500/10 px-3.5 py-2 text-xs font-semibold text-sky-300 transition hover:bg-sky-500/20"
+              className="hidden items-center gap-1.5 rounded-lg border border-stone-200/90 bg-white px-3.5 py-2 text-xs font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 sm:inline-flex dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:border-stone-700"
             >
-              <Wallet className="h-3.5 w-3.5" />
+              <Wallet className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
               Portal Clientes
             </Link>
 
@@ -114,26 +127,26 @@ export default function LandingPageView({
               <button
                 type="button"
                 onClick={onBackToDashboard}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <LayoutDashboard className="h-3.5 w-3.5" />
+                <LayoutDashboard className="h-3.5 w-3.5" strokeWidth={1.5} />
                 Ir al Panel
               </button>
             ) : onOpenLoginModal ? (
               <button
                 type="button"
                 onClick={onOpenLoginModal}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <LogIn className="h-3.5 w-3.5" />
+                <LogIn className="h-3.5 w-3.5" strokeWidth={1.5} />
                 Acceso Negocios
               </button>
             ) : (
               <Link
                 href="/?login=1"
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-950/50 transition hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <LogIn className="h-3.5 w-3.5" />
+                <LogIn className="h-3.5 w-3.5" strokeWidth={1.5} />
                 Acceso Negocios
               </Link>
             )}
@@ -141,24 +154,23 @@ export default function LandingPageView({
         </div>
       </header>
 
-      {/* Hero Principal */}
-      <section className="relative overflow-hidden border-b border-slate-800/80 bg-gradient-to-b from-slate-900/70 via-slate-950 to-slate-950 py-16 sm:py-24">
+      {/* Hero Editorial */}
+      <section className="border-b border-stone-200/90 py-16 sm:py-24 dark:border-stone-800">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="mx-auto max-w-3xl text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-300">
-              <Sparkles className="h-3.5 w-3.5" />
-              PLATAFORMA AUTOMATIZADA DE CONCILIACIÓN DE PAGOS
+            <span className="inline-flex items-center gap-2 rounded-full border border-stone-200/90 bg-white px-3.5 py-1 text-[11px] font-medium uppercase tracking-widest text-amber-700 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18] dark:text-amber-500">
+              Conciliación Bancaria &amp; Cripto de Precisión
             </span>
 
-            <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-white sm:text-5xl">
-              Conciliación Automática de Pagos{' '}
-              <span className="bg-gradient-to-r from-emerald-400 to-sky-400 bg-clip-text text-transparent">
+            <h1 className="mt-6 font-serif text-4xl font-medium tracking-tight text-stone-900 sm:text-5xl lg:text-[54px] lg:leading-[1.08] dark:text-stone-100">
+              Conciliación automática de pagos{' '}
+              <span className="italic text-amber-700 dark:text-amber-500">
                 Zelle y Binance
               </span>{' '}
-              en Tiempo Real
+              en tiempo real
             </h1>
 
-            <p className="mt-5 text-sm leading-relaxed text-slate-300 sm:text-base">
+            <p className="mx-auto mt-5 max-w-2xl text-sm leading-relaxed text-stone-600 sm:text-base dark:text-stone-400">
               Recibe pagos de terceros sin perder horas revisando capturas y
               correos bancarios. Nuestro motor verifica automáticamente cada
               depósito en Citibank, TD Bank y Binance, acredita el saldo neto de
@@ -166,173 +178,181 @@ export default function LandingPageView({
               entorno privado.
             </p>
 
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3.5">
+            <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
               <Link
                 href="/portal"
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3.5 text-sm font-bold text-white shadow-xl shadow-emerald-950/50 transition hover:bg-emerald-500"
+                className="inline-flex items-center gap-2 rounded-lg bg-stone-900 px-6 py-3 text-sm font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <UploadCloud className="h-4 w-4" />
-                Reportar Pago en Portal (/portal)
-                <ArrowRight className="h-4 w-4" />
+                <UploadCloud className="h-4 w-4" strokeWidth={1.5} />
+                Reportar Pago en Portal
+                <ArrowRight className="h-4 w-4" strokeWidth={1.5} />
               </Link>
 
               {isAuthenticated && onBackToDashboard ? (
                 <button
                   type="button"
                   onClick={onBackToDashboard}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-6 py-3.5 text-sm font-semibold text-white transition hover:border-emerald-500/50 hover:bg-slate-800"
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-6 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 cursor-pointer dark:border-stone-700 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-900"
                 >
-                  <LayoutDashboard className="h-4 w-4 text-emerald-400" />
+                  <LayoutDashboard className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Abrir Mi Panel de Negocio
                 </button>
               ) : onOpenLoginModal ? (
                 <button
                   type="button"
                   onClick={onOpenLoginModal}
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-6 py-3.5 text-sm font-semibold text-white transition hover:border-emerald-500/50 hover:bg-slate-800"
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-6 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 cursor-pointer dark:border-stone-700 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-900"
                 >
-                  <Building2 className="h-4 w-4 text-sky-400" />
+                  <Building2 className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Iniciar Sesión (Panel Negocios)
                 </button>
               ) : (
                 <Link
                   href="/?login=1"
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-6 py-3.5 text-sm font-semibold text-white transition hover:border-emerald-500/50 hover:bg-slate-800"
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-6 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 dark:border-stone-700 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-900"
                 >
-                  <Building2 className="h-4 w-4 text-sky-400" />
+                  <Building2 className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Iniciar Sesión (Panel Negocios)
                 </Link>
               )}
             </div>
           </div>
 
-          {/* 3 tarjetas resumen */}
-          <div className="mt-14 grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-              <div className="flex items-center gap-2.5 text-emerald-400">
-                <Zap className="h-5 w-5" />
-                <h3 className="text-sm font-bold text-white">
-                  Match Instantáneo
-                </h3>
+          {/* Franja Editorial de 3 Pilares con divisores hairline */}
+          <div className="mt-16 overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+            <div className="grid grid-cols-1 divide-y divide-stone-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0 dark:divide-stone-800">
+              <div className="p-6">
+                <div className="flex items-center gap-2.5">
+                  <Zap className="h-4 w-4 text-amber-700 dark:text-amber-500" strokeWidth={1.5} />
+                  <h3 className="font-serif text-base font-medium text-stone-900 dark:text-stone-100">
+                    Match Instantáneo
+                  </h3>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                  Cruce automático por moneda, monto exacto y referencia bancaria o
+                  Order ID/TxID en menos de 1 segundo.
+                </p>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Cruce automático por moneda, monto exacto y referencia bancaria o
-                Order ID/TxID en menos de 1 segundo.
-              </p>
-            </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-              <div className="flex items-center gap-2.5 text-sky-400">
-                <DollarSign className="h-5 w-5" />
-                <h3 className="text-sm font-bold text-white">
-                  Portal Claro para Terceros
-                </h3>
+              <div className="p-6">
+                <div className="flex items-center gap-2.5">
+                  <DollarSign className="h-4 w-4 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
+                  <h3 className="font-serif text-base font-medium text-stone-900 dark:text-stone-100">
+                    Portal Claro para Terceros
+                  </h3>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                  Cada cliente ve exactamente qué cuenta receptora tiene asignada,
+                  en qué moneda pagar (USD/USDT) y su saldo neto disponible.
+                </p>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Cada cliente ve exactamente qué cuenta receptora tiene asignada,
-                en qué moneda pagar (USD/USDT) y su saldo neto disponible.
-              </p>
-            </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
-              <div className="flex items-center gap-2.5 text-amber-400">
-                <Lock className="h-5 w-5" />
-                <h3 className="text-sm font-bold text-white">
-                  Cuentas Multi-Negocio
-                </h3>
+              <div className="p-6">
+                <div className="flex items-center gap-2.5">
+                  <Lock className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
+                  <h3 className="font-serif text-base font-medium text-stone-900 dark:text-stone-100">
+                    Cuentas Multi-Negocio
+                  </h3>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                  Crea cuentas independientes para distintos comercios o empresas,
+                  cada uno con sus propios buzones IMAP, clientes y reportes.
+                </p>
               </div>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Crea cuentas independientes para distintos comercios o empresas,
-                cada uno con sus propios buzones IMAP, clientes y reportes.
-              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Cómo funciona */}
+      {/* Flujo Operativo */}
       <section
         id="como-funciona"
-        className="border-b border-slate-800/80 py-16 sm:py-20"
+        className="border-b border-stone-200/90 py-16 sm:py-20 dark:border-stone-800"
       >
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="max-w-2xl">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-              FLUJO OPERATIVO
+            <span className="text-[11px] font-medium uppercase tracking-widest text-amber-700 dark:text-amber-500">
+              Flujo Operativo
             </span>
-            <h2 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+            <h2 className="mt-2 font-serif text-2xl font-medium tracking-tight text-stone-900 sm:text-3xl dark:text-stone-100">
               Cómo funciona el servicio para tus clientes
             </h2>
-            <p className="mt-2 text-sm text-slate-400">
+            <p className="mt-2 text-sm text-stone-600 dark:text-stone-400">
               Un proceso sencillo, transparente y auditado desde que el tercero
               envía los fondos hasta que el cliente visualiza su saldo liquidable.
             </p>
           </div>
 
-          <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-3">
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-              <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 font-mono text-sm font-bold text-emerald-300">
+          <div className="mt-10 grid grid-cols-1 gap-5 md:grid-cols-3">
+            <div className="rounded-xl border border-stone-200/90 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 bg-[#FAF9F6] font-mono text-xs font-semibold tabular-nums text-amber-700 dark:border-stone-700 dark:bg-[#121110] dark:text-amber-500">
                 01
               </div>
-              <h3 className="mt-4 text-base font-bold text-white">
+              <h3 className="mt-4 font-serif text-lg font-medium text-stone-900 dark:text-stone-100">
                 El cliente envía el pago a la cuenta asignada
               </h3>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Al entrar a <code>/portal</code> con su correo y PIN, visualiza la
-                cuenta destino exacta asignada (por ejemplo Zelle Citibank o
-                Binance USDT) con botón de copia rápida.
+              <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                Al entrar a{' '}
+                <code className="rounded border border-stone-200 bg-[#FAF9F6] px-1 py-0.5 font-mono text-[11px] text-stone-700 dark:border-stone-700 dark:bg-[#121110] dark:text-stone-300">
+                  /portal
+                </code>{' '}
+                con su correo y PIN, visualiza la cuenta destino exacta asignada
+                (Zelle Citibank, TD Bank o Binance USDT) con copia rápida.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-              <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-sky-500/20 font-mono text-sm font-bold text-sky-300">
+            <div className="rounded-xl border border-stone-200/90 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 bg-[#FAF9F6] font-mono text-xs font-semibold tabular-nums text-amber-700 dark:border-stone-700 dark:bg-[#121110] dark:text-amber-500">
                 02
               </div>
-              <h3 className="mt-4 text-base font-bold text-white">
+              <h3 className="mt-4 font-serif text-lg font-medium text-stone-900 dark:text-stone-100">
                 Sube la captura y datos del remitente
               </h3>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                Reporta el monto exacto, el nombre del titular tercero que realizó
-                la transferencia, el código de confirmación y adjunta el
-                comprobante desde su teléfono.
+              <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
+                Adjunta o pega el comprobante desde su teléfono o PC. El lector
+                IA OCR extrae el monto exacto, el titular tercero y el código de
+                confirmación automáticamente.
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-              <div className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/20 font-mono text-sm font-bold text-amber-300">
+            <div className="rounded-xl border border-stone-200/90 bg-white p-6 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
+              <div className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-stone-200 bg-[#FAF9F6] font-mono text-xs font-semibold tabular-nums text-emerald-700 dark:border-stone-700 dark:bg-[#121110] dark:text-emerald-400">
                 03
               </div>
-              <h3 className="mt-4 text-base font-bold text-white">
+              <h3 className="mt-4 font-serif text-lg font-medium text-stone-900 dark:text-stone-100">
                 Conciliación y acreditación automática
               </h3>
-              <p className="mt-2 text-xs leading-relaxed text-slate-400">
+              <p className="mt-2 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
                 El motor cruza la alerta oficial del banco o Binance, descuenta
                 la comisión configurada y acredita al instante el monto neto en
-                USD o USDT en la billetera del cliente.
+                USD o USDT en la libreta del cliente.
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Canales soportados */}
-      <section id="canales" className="border-b border-slate-800/80 py-16 sm:py-20">
+      {/* Canales Soportados */}
+      <section
+        id="canales"
+        className="border-b border-stone-200/90 py-16 sm:py-20 dark:border-stone-800"
+      >
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-sky-400">
-                COBERTURA MULTI-CANAL
+              <span className="text-[11px] font-medium uppercase tracking-widest text-amber-700 dark:text-amber-500">
+                Cobertura Multi-Canal
               </span>
-              <h2 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+              <h2 className="mt-2 font-serif text-2xl font-medium tracking-tight text-stone-900 sm:text-3xl dark:text-stone-100">
                 Bancos y redes soportadas
               </h2>
             </div>
             <Link
               href="/portal"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 hover:text-emerald-300"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 transition hover:text-amber-800 dark:text-amber-500 dark:hover:text-amber-400"
             >
               Ir al Portal de Clientes
-              <ArrowRight className="h-3.5 w-3.5" />
+              <ArrowRight className="h-3.5 w-3.5" strokeWidth={1.5} />
             </Link>
           </div>
 
@@ -340,24 +360,24 @@ export default function LandingPageView({
             {SUPPORTED_CHANNELS.map((ch) => (
               <div
                 key={ch.name}
-                className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 transition hover:border-slate-700"
+                className="rounded-xl border border-stone-200/90 bg-white p-5 shadow-sm transition hover:border-stone-300 dark:border-stone-800 dark:bg-[#1C1A18] dark:hover:border-stone-700"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span
-                    className={`inline-flex rounded-lg border px-2.5 py-1 text-xs font-bold ${ch.badgeClass}`}
+                    className={`inline-flex rounded-md border px-2.5 py-0.5 text-xs font-medium ${ch.badgeClass}`}
                   >
                     {ch.name}
                   </span>
-                  <span className="inline-flex items-center gap-1 font-mono text-xs font-bold text-slate-300">
+                  <span className="inline-flex items-center gap-1 font-mono text-xs font-semibold tabular-nums text-stone-700 dark:text-stone-300">
                     {ch.currency === 'USDT' ? (
-                      <Coins className="h-3.5 w-3.5 text-amber-400" />
+                      <Coins className="h-3.5 w-3.5 text-amber-700 dark:text-amber-500" strokeWidth={1.5} />
                     ) : (
-                      <DollarSign className="h-3.5 w-3.5 text-emerald-400" />
+                      <DollarSign className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
                     )}
                     {ch.currency}
                   </span>
                 </div>
-                <p className="mt-3 text-xs leading-relaxed text-slate-400">
+                <p className="mt-3 text-xs leading-relaxed text-stone-500 dark:text-stone-400">
                   {ch.desc}
                 </p>
               </div>
@@ -369,16 +389,16 @@ export default function LandingPageView({
       {/* Seguridad y Auditoría */}
       <section id="seguridad" className="py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="grid grid-cols-1 items-center gap-8 rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900/80 to-emerald-950/20 p-6 sm:p-10 lg:grid-cols-12">
+          <div className="grid grid-cols-1 items-center gap-8 rounded-2xl border border-stone-200/90 bg-white p-6 shadow-sm sm:p-10 lg:grid-cols-12 dark:border-stone-800 dark:bg-[#1C1A18]">
             <div className="lg:col-span-7">
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-emerald-400">
-                <CheckCircle2 className="h-4 w-4" />
-                CONTROL Y TRAZABILIDAD FINTECH
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-widest text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                Control y Trazabilidad FinTech
               </span>
-              <h2 className="mt-2 text-2xl font-bold text-white sm:text-3xl">
+              <h2 className="mt-2 font-serif text-2xl font-medium tracking-tight text-stone-900 sm:text-3xl dark:text-stone-100">
                 Cero duplicados, auditoría de capturas y control por negocio
               </h2>
-              <p className="mt-3 text-sm leading-relaxed text-slate-300">
+              <p className="mt-3 text-sm leading-relaxed text-stone-600 dark:text-stone-400">
                 Cada movimiento recibido cuenta con llave única de idempotencia,
                 respaldo visual del comprobante en alta resolución, cálculo
                 inmutable de comisiones en PostgreSQL y acceso independiente por
@@ -389,35 +409,35 @@ export default function LandingPageView({
             <div className="flex flex-col gap-3 lg:col-span-5">
               <Link
                 href="/portal"
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3.5 text-sm font-bold text-white transition hover:bg-emerald-500"
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-stone-900 px-5 py-3 text-sm font-medium text-stone-50 transition hover:bg-stone-800 dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
               >
-                <Wallet className="h-4 w-4" />
+                <Wallet className="h-4 w-4" strokeWidth={1.5} />
                 Entrar al Portal de Clientes
               </Link>
               {isAuthenticated && onBackToDashboard ? (
                 <button
                   type="button"
                   onClick={onBackToDashboard}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:border-sky-500/50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-stone-300 bg-[#FAF9F6] px-5 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-white cursor-pointer dark:border-stone-700 dark:bg-[#121110] dark:text-stone-200 dark:hover:border-stone-600"
                 >
-                  <LayoutDashboard className="h-4 w-4 text-sky-400" />
+                  <LayoutDashboard className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Regresar al Panel de Administración
                 </button>
               ) : onOpenLoginModal ? (
                 <button
                   type="button"
                   onClick={onOpenLoginModal}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:border-sky-500/50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-stone-300 bg-[#FAF9F6] px-5 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-white cursor-pointer dark:border-stone-700 dark:bg-[#121110] dark:text-stone-200 dark:hover:border-stone-600"
                 >
-                  <LogIn className="h-4 w-4 text-sky-400" />
+                  <LogIn className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Acceso para Operadores y Negocios
                 </button>
               ) : (
                 <Link
                   href="/?login=1"
-                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-5 py-3.5 text-sm font-semibold text-white transition hover:border-sky-500/50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg border border-stone-300 bg-[#FAF9F6] px-5 py-3 text-sm font-medium text-stone-800 transition hover:border-stone-400 hover:bg-white dark:border-stone-700 dark:bg-[#121110] dark:text-stone-200 dark:hover:border-stone-600"
                 >
-                  <LogIn className="h-4 w-4 text-sky-400" />
+                  <LogIn className="h-4 w-4 text-stone-500 dark:text-stone-400" strokeWidth={1.5} />
                   Acceso para Operadores y Negocios
                 </Link>
               )}
@@ -426,9 +446,11 @@ export default function LandingPageView({
         </div>
       </section>
 
-      <footer className="border-t border-slate-800/80 py-8 text-center text-xs text-slate-500">
-        ConciliaPay FinTech · Plataforma Multi-Canal de Conciliación Zelle &amp;
-        Binance
+      <footer className="border-t border-stone-200/90 py-8 text-center text-xs text-stone-500 dark:border-stone-800 dark:text-stone-400">
+        <span className="font-serif font-medium text-stone-700 dark:text-stone-300">
+          ConciliarCuenta
+        </span>{' '}
+        · Plataforma Multi-Canal de Conciliación Zelle &amp; Binance
       </footer>
     </div>
   );
