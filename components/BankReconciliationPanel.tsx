@@ -804,7 +804,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   );
   const [adminLiqSearch, setAdminLiqSearch] = useState<string>('');
 
-  // Estado exclusivamente visual (Cinta Financiera, Menú Acciones, Inspector Master-Detail)
+  // Estado exclusivamente visual (Cinta Financiera, Menú Acciones, Inspector Drawer bajo demanda)
   const [activeFinanceChannel, setActiveFinanceChannel] = useState<
     'ZELLE' | 'BINANCE'
   >('ZELLE');
@@ -817,8 +817,11 @@ export default function BankReconciliationPanel(): React.JSX.Element {
   >(null);
   const [isLoadingInspectorPreview, setIsLoadingInspectorPreview] =
     useState<boolean>(false);
-  const [isMobileInspectorOpen, setIsMobileInspectorOpen] =
+  const [isInspectorDrawerOpen, setIsInspectorDrawerOpen] =
     useState<boolean>(false);
+  const [isPendingCapturesCollapsed, setIsPendingCapturesCollapsed] =
+    useState<boolean>(false);
+  const [copiedRefId, setCopiedRefId] = useState<string | null>(null);
 
   const openAdminLiquidationDetail = async (
     liq: ClientLiquidationRecord
@@ -2878,19 +2881,31 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     });
   };
 
-  // Inspector Master-Detail (solo presentación y vista previa perezosa)
+  // Inspector Drawer bajo demanda (solo presentación y vista previa perezosa al abrir)
   const selectedInspectorAlert = useMemo<BankEmailAlertRecord | null>(() => {
-    if (filteredAlerts.length === 0) return null;
-    if (selectedInspectorAlertId) {
-      const found = filteredAlerts.find((a) => a.id === selectedInspectorAlertId);
-      if (found) return found;
+    if (!selectedInspectorAlertId) return null;
+    return (
+      filteredAlerts.find((a) => a.id === selectedInspectorAlertId) ??
+      alerts.find((a) => a.id === selectedInspectorAlertId) ??
+      null
+    );
+  }, [filteredAlerts, alerts, selectedInspectorAlertId]);
+
+  const handleCopyReference = useCallback((alertId: string, refText: string) => {
+    if (!refText || refText === 'SIN-REF') return;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(refText).then(() => {
+        setCopiedRefId(alertId);
+        window.setTimeout(() => {
+          setCopiedRefId((prev) => (prev === alertId ? null : prev));
+        }, 1500);
+      });
     }
-    return filteredAlerts[0] ?? null;
-  }, [filteredAlerts, selectedInspectorAlertId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    if (!selectedInspectorAlert) {
+    if (!isInspectorDrawerOpen || !selectedInspectorAlert) {
       setInspectorPreviewBase64(null);
       setIsLoadingInspectorPreview(false);
       return;
@@ -2936,7 +2951,7 @@ export default function BankReconciliationPanel(): React.JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [selectedInspectorAlert, findAssociatedCaptureOrder]);
+  }, [isInspectorDrawerOpen, selectedInspectorAlert, findAssociatedCaptureOrder]);
 
   // =========================================================================
   // HANDLERS: LOGIN DE USUARIOS / NEGOCIOS Y GESTIÓN MULTI-NEGOCIO
@@ -3989,8 +4004,24 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           )}
         </section>
 
-        {/* Barra de Estado de Conciliación con Filtros Rápidos Clickeables */}
-        <div className="mb-5 flex flex-wrap items-center gap-2 text-xs">
+        {/* Barra de Estado de Conciliación (Control Principal de Estado, sin duplicar select) */}
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('ALERTS');
+              setStatusFilter('TODOS');
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition cursor-pointer ${
+              statusFilter === 'TODOS' && activeTab === 'ALERTS'
+                ? 'border-stone-900 bg-stone-900 text-stone-50 dark:border-stone-200 dark:bg-stone-100 dark:text-stone-950'
+                : 'border-stone-200/90 bg-white text-stone-700 hover:border-stone-300 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700'
+            }`}
+            title="Mostrar todos los estados"
+          >
+            <span>Todos</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -3999,12 +4030,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'CONCILIADO' ? 'TODOS' : 'CONCILIADO'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition cursor-pointer ${
               statusFilter === 'CONCILIADO' && activeTab === 'ALERTS'
                 ? 'border-emerald-700 bg-emerald-700 text-white dark:border-emerald-500 dark:bg-emerald-500/20 dark:text-emerald-300'
                 : 'border-stone-200/90 bg-white text-stone-700 hover:border-emerald-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-emerald-500/40'
             }`}
-            title="Clic para filtrar únicamente pagos conciliados"
+            title="Filtrar únicamente pagos conciliados"
           >
             <CheckCircle2
               className={`h-3.5 w-3.5 ${
@@ -4028,12 +4059,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'REVISION_MANUAL' ? 'TODOS' : 'REVISION_MANUAL'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition cursor-pointer ${
               statusFilter === 'REVISION_MANUAL' && activeTab === 'ALERTS'
                 ? 'border-amber-700 bg-amber-700 text-white dark:border-amber-500 dark:bg-amber-500/20 dark:text-amber-300'
                 : 'border-stone-200/90 bg-white text-stone-700 hover:border-amber-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-amber-500/40'
             }`}
-            title="Clic para filtrar únicamente pagos en revisión manual"
+            title="Filtrar únicamente pagos en revisión manual"
           >
             <AlertTriangle
               className={`h-3.5 w-3.5 ${
@@ -4057,12 +4088,12 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                 prev === 'DETECTADO' ? 'TODOS' : 'DETECTADO'
               );
             }}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-medium transition cursor-pointer ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition cursor-pointer ${
               statusFilter === 'DETECTADO' && activeTab === 'ALERTS'
                 ? 'border-amber-700 bg-amber-700 text-white dark:border-amber-500 dark:bg-amber-500/20 dark:text-amber-300'
                 : 'border-stone-200/90 bg-white text-stone-700 hover:border-amber-700/40 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-amber-500/40'
             }`}
-            title="Clic para filtrar pagos detectados sin orden vinculada"
+            title="Filtrar pagos detectados sin orden vinculada"
           >
             <Clock
               className={`h-3.5 w-3.5 ${
@@ -4078,11 +4109,32 @@ export default function BankReconciliationPanel(): React.JSX.Element {
             </span>
           </button>
 
+          {showDiscardedHistory && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('ALERTS');
+                setStatusFilter((prev) =>
+                  prev === 'DESCARTADO' ? 'TODOS' : 'DESCARTADO'
+                );
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-medium transition cursor-pointer ${
+                statusFilter === 'DESCARTADO' && activeTab === 'ALERTS'
+                  ? 'border-rose-700 bg-rose-700 text-white dark:border-rose-500 dark:bg-rose-500/20 dark:text-rose-300'
+                  : 'border-rose-700/25 bg-rose-50/70 text-rose-700 hover:border-rose-700/40 dark:border-rose-500/35 dark:bg-rose-950/30 dark:text-rose-400'
+              }`}
+              title="Filtrar únicamente correos eliminados o descartados"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+              <span>Eliminados</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setActiveTab('CLIENTS')}
-            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white px-3 py-1.5 font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700"
-            title="Clic para ir a la pestaña de clientes y órdenes pendientes"
+            className="inline-flex items-center gap-1.5 rounded-full border border-stone-200/90 bg-white px-3 py-1 font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-300 dark:hover:border-stone-700"
+            title="Ir a la pestaña de clientes y órdenes pendientes"
           >
             <Wallet className="h-3.5 w-3.5 text-stone-400 dark:text-stone-500" strokeWidth={1.5} />
             <span>Órdenes Pendientes</span>
@@ -4092,561 +4144,420 @@ export default function BankReconciliationPanel(): React.JSX.Element {
           </button>
 
           {selectedClientFilter !== 'TODOS' && (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-700/30 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-700/30 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300">
               <UserCheck className="h-3.5 w-3.5 shrink-0" strokeWidth={1.5} />
               <span>
-                Titular:{' '}
-                <strong className="font-semibold">
-                  {selectedClientFilter === 'SIN_ASIGNAR'
-                    ? 'Sin Asignar (En Espera)'
-                    : clients.find((c) => c.id === selectedClientFilter)?.nombre_titular ?? selectedClientFilter}
-                </strong>
+                {selectedClientFilter === 'SIN_ASIGNAR'
+                  ? 'Sin Asignar'
+                  : clients.find((c) => c.id === selectedClientFilter)?.nombre_titular ?? selectedClientFilter}
               </span>
               <button
                 type="button"
                 onClick={() => setSelectedClientFilter('TODOS')}
-                className="ml-1 inline-flex items-center gap-0.5 rounded-full bg-amber-700/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 transition hover:bg-amber-700/25 cursor-pointer dark:bg-amber-500/20 dark:text-amber-200 dark:hover:bg-amber-500/30"
-                title="Quitar filtro de cliente"
+                className="ml-0.5 rounded-full p-0.5 text-amber-800 transition hover:bg-amber-700/15 cursor-pointer dark:text-amber-200 dark:hover:bg-amber-500/20"
+                title="Quitar filtro de titular"
               >
                 <X className="h-3 w-3" strokeWidth={1.5} />
-                Limpiar
               </button>
             </div>
-          )}
-
-          {statusFilter !== 'TODOS' && (
-            <button
-              type="button"
-              onClick={() => setStatusFilter('TODOS')}
-              className="px-2 py-1 text-xs font-medium text-stone-500 underline underline-offset-4 transition hover:text-stone-900 cursor-pointer dark:text-stone-400 dark:hover:text-stone-100"
-            >
-              Mostrar todos
-            </button>
           )}
         </div>
 
         {/* =====================================================================
-            PESTAÑA 1: ESPACIO DE TRABAJO MASTER-DETAIL DE TRANSACCIONES
+            PESTAÑA 1: LEDGER EDITORIAL DE ANCHO COMPLETO + DRAWER BAJO DEMANDA
            ===================================================================== */}
         {activeTab === 'ALERTS' && (
           <>
-            <section
-              aria-label="Filtros de Conciliación"
-              className="mb-5 rounded-xl border border-stone-200/90 bg-white p-4 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]"
-            >
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-                <div className="relative md:col-span-4">
-                  <Search
-                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
-                    strokeWidth={1.5}
-                  />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar por remitente, TxID, referencia..."
-                    className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
-                  />
-                </div>
+            {(() => {
+              const hasActiveFilters = Boolean(
+                searchQuery.trim() ||
+                  selectedClientFilter !== 'TODOS' ||
+                  platformFilter !== 'TODOS' ||
+                  movementFilter !== 'RECIBIDO' ||
+                  statusFilter !== 'TODOS' ||
+                  selectedCycleFilter !== 'ACTIVO' ||
+                  showDiscardedHistory
+              );
+              const selectedCycleLiq =
+                selectedCycleFilter !== 'ACTIVO' &&
+                selectedCycleFilter !== 'TODOS'
+                  ? liquidations.find((l) => l.id === selectedCycleFilter) ?? null
+                  : null;
 
-                {/* Filtro por Cliente Titular */}
-                <div className="md:col-span-3">
-                  <div className="relative">
-                    <UserCheck
-                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
-                      strokeWidth={1.5}
-                    />
-                    <select
-                      value={selectedClientFilter}
-                      onChange={(e) => setSelectedClientFilter(e.target.value)}
-                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm font-medium text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
-                    >
-                      <option value="TODOS">Todos los Titulares</option>
-                      <option value="SIN_ASIGNAR">Sin Cliente (En Espera)</option>
-                      {clients.map((c) => {
-                        const cSaldo =
-                          Math.round(
-                            Number(
-                              c.saldo_disponible_usd ??
-                                c.total_neto_usd - (c.total_liquidado_usd ?? 0)
-                            ) * 100
-                          ) / 100;
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {c.nombre_titular} ({formatMoney(cSaldo, 'USD')} pendiente)
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="relative">
-                    <Building2
-                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
-                      strokeWidth={1.5}
-                    />
-                    <select
-                      value={platformFilter}
-                      onChange={(e) =>
-                        setPlatformFilter(e.target.value as 'TODOS' | PlatformType)
-                      }
-                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
-                    >
-                      <option value="TODOS">Todas Plataformas</option>
-                      <option value="CITIBANK">Citibank (Zelle)</option>
-                      <option value="TD_BANK">TD Bank (Zelle)</option>
-                      <option value="BINANCE_PAY">Binance Pay</option>
-                      <option value="BINANCE_P2P">Binance P2P</option>
-                      <option value="BINANCE_ONCHAIN">
-                        Depósitos Red (On-Chain)
-                      </option>
-                      <option value="OTRO">Otro</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="md:col-span-1">
-                  <select
-                    value={movementFilter}
-                    onChange={(e) =>
-                      setMovementFilter(
-                        e.target.value as 'TODOS' | MovementType
-                      )
-                    }
-                    className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-2 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
-                  >
-                    <option value="TODOS">Flujos</option>
-                    <option value="RECIBIDO">Recibido</option>
-                    <option value="ENVIADO">Enviado</option>
-                  </select>
-                </div>
-
-                <div className="md:col-span-2">
-                  <div className="relative">
-                    <Filter
-                      className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
-                      strokeWidth={1.5}
-                    />
-                    <select
-                      value={statusFilter}
-                      onChange={(e) =>
-                        setStatusFilter(e.target.value as 'TODOS' | AlertStatus)
-                      }
-                      className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-2 pl-9 pr-3 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
-                    >
-                      <option value="TODOS">Todos Estados</option>
-                      <option value="CONCILIADO">Conciliado</option>
-                      <option value="REVISION_MANUAL">Revisión Manual</option>
-                      <option value="DETECTADO">Detectado</option>
-                      {showDiscardedHistory && (
-                        <option value="DESCARTADO">Eliminados / Descartados</option>
-                      )}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-stone-200/80 pt-3 dark:border-stone-800">
-                <p className="text-xs text-stone-500 dark:text-stone-400">
-                  {selectedCycleFilter !== 'ACTIVO' && selectedCycleFilter !== 'TODOS'
-                    ? (() => {
-                        const selLiq = liquidations.find(
-                          (l) => l.id === selectedCycleFilter
-                        );
-                        return selLiq
-                          ? `Mostrando exclusivamente ${
-                              selLiq.numero_ciclo
-                                ? `Ciclo #${selLiq.numero_ciclo}`
-                                : 'ciclo liquidado'
-                            } · ${selLiq.cliente_nombre} (${selLiq.codigo_liquidacion}) en modo solo lectura.`
-                          : 'Mostrando pagos del ciclo liquidado seleccionado (solo lectura).';
-                      })()
-                    : showLiquidatedHistory && showDiscardedHistory
-                      ? 'Mostrando ciclo activo + historial liquidado + correos eliminados/descartados.'
-                      : showLiquidatedHistory
-                        ? 'Mostrando ciclo activo + historial ya liquidado y archivado (solo lectura).'
-                        : showDiscardedHistory
-                          ? 'Mostrando ciclo activo + correos eliminados/descartados (puedes restaurarlos).'
-                          : 'Mostrando únicamente el ciclo activo actual (liquidados y eliminados ocultos).'}
-                </p>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Selector directo de Ciclos */}
-                  <div className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 dark:border-stone-800 dark:bg-[#121110]">
-                    <span className="text-[11px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
-                      Ciclo:
-                    </span>
-                    <select
-                      value={selectedCycleFilter}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setSelectedCycleFilter(val);
-                        setShowLiquidatedHistory(val !== 'ACTIVO');
-                      }}
-                      className="max-w-[260px] bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer dark:text-stone-200"
-                    >
-                      <option value="ACTIVO">
-                        Ciclo Actual (Activo) · {financialMetrics.pagosConciliadosCount} conc. · Neto{' '}
-                        {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')}
-                      </option>
-                      <option value="TODOS">Todos los Ciclos (Activo + Historial)</option>
-                      {liquidations
-                        .filter(
-                          (l) =>
-                            selectedClientFilter === 'TODOS' ||
-                            selectedClientFilter === 'SIN_ASIGNAR' ||
-                            l.cliente_id === selectedClientFilter
-                        )
-                        .map((l) => {
-                          const pagosCount = Number(l.ciclo_pagos_count ?? 0);
-                          const netoTotal = Number(l.ciclo_neto_total ?? 0);
-                          const liqTotal = Number(l.monto_liquidado ?? 0);
-                          return (
-                            <option key={l.id} value={l.id}>
-                              {l.numero_ciclo ? `Ciclo #${l.numero_ciclo}` : 'Ciclo'} ·{' '}
-                              {l.cliente_nombre} · {pagosCount} pagos · Neto{' '}
-                              {formatMoney(netoTotal, l.moneda)} · Liq -
-                              {formatMoney(liqTotal, l.moneda)} (
-                              {new Date(l.created_at).toLocaleDateString('es-ES', {
-                                day: '2-digit',
-                                month: 'short',
-                              })}
-                              )
-                            </option>
-                          );
-                        })}
-                    </select>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowDiscardedHistory((prev) => {
-                        const next = !prev;
-                        if (!next && statusFilter === 'DESCARTADO') {
-                          setStatusFilter('TODOS');
-                        }
-                        return next;
-                      });
-                    }}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
-                      showDiscardedHistory
-                        ? 'border-rose-700/35 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-400'
-                        : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 hover:text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700'
-                    }`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    {showDiscardedHistory ? 'Ocultar Eliminados' : 'Eliminados'}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO') {
-                        setShowLiquidatedHistory(false);
-                        setSelectedCycleFilter('ACTIVO');
-                      } else {
-                        setShowLiquidatedHistory(true);
-                        setSelectedCycleFilter('TODOS');
-                      }
-                    }}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition cursor-pointer ${
-                      showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
-                        ? 'border-amber-700/35 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-400'
-                        : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 hover:text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700'
-                    }`}
-                  >
-                    {showLiquidatedHistory || selectedCycleFilter !== 'ACTIVO'
-                      ? 'Volver al Ciclo Actual'
-                      : 'Historial Liquidado'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Resumen de Totales del Ciclo Seleccionado */}
-              {(() => {
-                const selectedCycleLiq =
-                  selectedCycleFilter !== 'ACTIVO' &&
-                  selectedCycleFilter !== 'TODOS'
-                    ? liquidations.find((l) => l.id === selectedCycleFilter) ?? null
-                    : null;
-
-                if (selectedCycleLiq) {
-                  const isUsdtCycle = selectedCycleLiq.moneda === 'USDT';
-                  const cyclePagos =
-                    Number(selectedCycleLiq.ciclo_pagos_count ?? 0) || alerts.length;
-                  const cycleBruto = Number(selectedCycleLiq.ciclo_bruto_total ?? 0);
-                  const cycleComision = Number(selectedCycleLiq.ciclo_comision_total ?? 0);
-                  const cycleNeto = Number(selectedCycleLiq.ciclo_neto_total ?? 0);
-                  const viewBruto = isUsdtCycle
-                    ? visibleTableTotals.brutoConciliadoUsdt
-                    : visibleTableTotals.brutoConciliadoUsd;
-                  const viewCom = isUsdtCycle
-                    ? visibleTableTotals.comisionUsdt
-                    : visibleTableTotals.comisionUsd;
-                  const viewNeto = isUsdtCycle
-                    ? visibleTableTotals.netoUsdt
-                    : visibleTableTotals.netoUsd;
-                  const isSubFiltered = visibleTableTotals.totalRows !== cyclePagos;
-                  const cycleRestante = Number(selectedCycleLiq.saldo_restante ?? 0);
-
-                  return (
-                    <div className="mt-3 grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6]/70 sm:grid-cols-5 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
-                      <div className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
-                          {selectedCycleLiq.numero_ciclo
-                            ? `Ciclo #${selectedCycleLiq.numero_ciclo} · ${selectedCycleLiq.cliente_nombre}`
-                            : selectedCycleLiq.cliente_nombre}
-                        </span>
-                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                          {cyclePagos} pagos
-                        </p>
-                        <span className="font-mono text-[10px] text-stone-500 dark:text-stone-400">
-                          {isSubFiltered
-                            ? `En vista: ${visibleTableTotals.totalRows} de ${cyclePagos}`
-                            : selectedCycleLiq.codigo_liquidacion}
-                        </span>
-                      </div>
-
-                      <div className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                          Bruto del Ciclo
-                        </span>
-                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                          {formatMoney(cycleBruto, selectedCycleLiq.moneda)}
-                        </p>
-                        {isSubFiltered && (
-                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
-                            En vista: {formatMoney(viewBruto, selectedCycleLiq.moneda)}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                          Comisión del Ciclo
-                        </span>
-                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                          -{formatMoney(cycleComision, selectedCycleLiq.moneda)}
-                        </p>
-                        {isSubFiltered && (
-                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
-                            En vista: -{formatMoney(viewCom, selectedCycleLiq.moneda)}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                          Neto del Ciclo
-                        </span>
-                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                          {formatMoney(cycleNeto, selectedCycleLiq.moneda)}
-                        </p>
-                        {isSubFiltered && (
-                          <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
-                            En vista: {formatMoney(viewNeto, selectedCycleLiq.moneda)}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                          Liquidado / Restante
-                        </span>
-                        <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                          -{formatMoney(Number(selectedCycleLiq.monto_liquidado ?? 0), selectedCycleLiq.moneda)}
-                        </p>
-                        <span
-                          className={`font-mono text-[10px] tabular-nums ${
-                            cycleRestante < 0
-                              ? 'text-rose-700 dark:text-rose-400'
-                              : 'text-emerald-700 dark:text-emerald-400'
-                          }`}
+              return (
+                <section
+                  aria-label="Filtros de Conciliación"
+                  className="mb-4 rounded-xl border border-stone-200/90 bg-white px-4 py-3 shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]"
+                >
+                  {/* Fila 1: Búsqueda + Titular + Plataforma + Flujo */}
+                  <div className="grid grid-cols-1 gap-2.5 md:grid-cols-12">
+                    <div className="relative md:col-span-5">
+                      <Search
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                        strokeWidth={1.5}
+                      />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Buscar por remitente, TxID, referencia..."
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-1.5 pl-9 pr-8 text-sm text-stone-900 placeholder-stone-400 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-100 dark:placeholder-stone-500 dark:focus:border-amber-500"
+                      />
+                      {searchQuery.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-stone-400 transition hover:bg-stone-200/70 hover:text-stone-700 cursor-pointer dark:hover:bg-stone-800 dark:hover:text-stone-200"
+                          title="Limpiar búsqueda"
+                          aria-label="Limpiar búsqueda"
                         >
-                          Restante: {formatMoney(cycleRestante, selectedCycleLiq.moneda)}
-                        </span>
+                          <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="md:col-span-3">
+                      <div className="relative">
+                        <UserCheck
+                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                          strokeWidth={1.5}
+                        />
+                        <select
+                          value={selectedClientFilter}
+                          onChange={(e) => setSelectedClientFilter(e.target.value)}
+                          className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-1.5 pl-9 pr-3 text-sm font-medium text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
+                        >
+                          <option value="TODOS">Todos los Titulares</option>
+                          <option value="SIN_ASIGNAR">Sin Cliente (En Espera)</option>
+                          {clients.map((c) => {
+                            const cSaldo =
+                              Math.round(
+                                Number(
+                                  c.saldo_disponible_usd ??
+                                    c.total_neto_usd - (c.total_liquidado_usd ?? 0)
+                                ) * 100
+                              ) / 100;
+                            return (
+                              <option key={c.id} value={c.id}>
+                                {c.nombre_titular} ({formatMoney(cSaldo, 'USD')})
+                              </option>
+                            );
+                          })}
+                        </select>
                       </div>
                     </div>
-                  );
-                }
 
-                const hasUsdtRows =
-                  visibleTableTotals.brutoAllUsdt > 0 ||
-                  visibleTableTotals.netoUsdt > 0;
-                const activeCycleTitle =
-                  selectedCycleFilter === 'TODOS'
-                    ? 'Todos los Ciclos (Vista)'
-                    : 'Ciclo Actual (Vista)';
-
-                return (
-                  <div className="mt-3 grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6]/70 sm:grid-cols-4 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
-                    <div className="px-3 py-2.5">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        {activeCycleTitle}
-                      </span>
-                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                        {visibleTableTotals.conciliadosCount} conciliados
-                      </p>
-                      <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
-                        {visibleTableTotals.totalRows} filas · {visibleTableTotals.pendientesCount} por conciliar
-                      </span>
+                    <div className="md:col-span-2">
+                      <div className="relative">
+                        <Building2
+                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400 dark:text-stone-500"
+                          strokeWidth={1.5}
+                        />
+                        <select
+                          value={platformFilter}
+                          onChange={(e) =>
+                            setPlatformFilter(e.target.value as 'TODOS' | PlatformType)
+                          }
+                          className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] py-1.5 pl-9 pr-3 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
+                        >
+                          <option value="TODOS">Todas Plataformas</option>
+                          <option value="CITIBANK">Citibank (Zelle)</option>
+                          <option value="TD_BANK">TD Bank (Zelle)</option>
+                          <option value="BINANCE_PAY">Binance Pay</option>
+                          <option value="BINANCE_P2P">Binance P2P</option>
+                          <option value="BINANCE_ONCHAIN">
+                            Depósitos Red (On-Chain)
+                          </option>
+                          <option value="OTRO">Otro</option>
+                        </select>
+                      </div>
                     </div>
 
-                    <div className="px-3 py-2.5">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        Bruto Conciliado
-                      </span>
-                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                        {formatMoney(visibleTableTotals.brutoConciliadoUsd, 'USD')}
-                      </p>
-                      {hasUsdtRows ? (
-                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
-                          {formatMoney(visibleTableTotals.brutoConciliadoUsdt, 'USDT')}
-                        </span>
-                      ) : visibleTableTotals.brutoPendienteUsd > 0 ? (
-                        <span className="font-mono text-[10px] tabular-nums text-amber-700 dark:text-amber-400">
-                          Sin conciliar: {formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}
-                        </span>
-                      ) : null}
+                    <div className="md:col-span-2">
+                      <select
+                        value={movementFilter}
+                        onChange={(e) =>
+                          setMovementFilter(
+                            e.target.value as 'TODOS' | MovementType
+                          )
+                        }
+                        className="w-full rounded-lg border border-stone-200 bg-[#FAF9F6] px-3 py-1.5 text-sm text-stone-800 focus:border-amber-700 focus:outline-none dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:focus:border-amber-500"
+                      >
+                        <option value="TODOS">Todos los Flujos</option>
+                        <option value="RECIBIDO">Solo Recibidos</option>
+                        <option value="ENVIADO">Solo Enviados</option>
+                      </select>
                     </div>
+                  </div>
 
-                    <div className="px-3 py-2.5">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        Comisión Retenida
-                      </span>
-                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                        -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
-                      </p>
-                      {hasUsdtRows && (
-                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
-                          -{formatMoney(visibleTableTotals.comisionUsdt, 'USDT')}
+                  {/* Fila 2: Selector Unificado de Ciclo + Eliminados + Resumen Inline cuando hay filtros */}
+                  <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-stone-200/80 pt-2.5 dark:border-stone-800">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-[#FAF9F6] px-2.5 py-1 dark:border-stone-800 dark:bg-[#121110]">
+                        <Filter
+                          className="h-3.5 w-3.5 text-amber-700 dark:text-amber-500"
+                          strokeWidth={1.5}
+                        />
+                        <span className="text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                          Ciclo:
                         </span>
+                        <select
+                          value={selectedCycleFilter}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSelectedCycleFilter(val);
+                            setShowLiquidatedHistory(val !== 'ACTIVO');
+                          }}
+                          className="max-w-[280px] bg-transparent text-xs font-medium text-stone-800 focus:outline-none cursor-pointer dark:text-stone-200"
+                        >
+                          <option value="ACTIVO">
+                            Ciclo Actual (Activo) · {financialMetrics.pagosConciliadosCount} conc. · Neto{' '}
+                            {formatMoney(financialMetrics.zelleCicloNetoUsd ?? 0, 'USD')}
+                          </option>
+                          <option value="TODOS">Todos los Ciclos (Activo + Historial Liquidado)</option>
+                          {liquidations
+                            .filter(
+                              (l) =>
+                                selectedClientFilter === 'TODOS' ||
+                                selectedClientFilter === 'SIN_ASIGNAR' ||
+                                l.cliente_id === selectedClientFilter
+                            )
+                            .map((l) => {
+                              const pagosCount = Number(l.ciclo_pagos_count ?? 0);
+                              const netoTotal = Number(l.ciclo_neto_total ?? 0);
+                              const liqTotal = Number(l.monto_liquidado ?? 0);
+                              return (
+                                <option key={l.id} value={l.id}>
+                                  {l.numero_ciclo ? `Ciclo #${l.numero_ciclo}` : 'Ciclo'} ·{' '}
+                                  {l.cliente_nombre} · {pagosCount} pagos · Neto{' '}
+                                  {formatMoney(netoTotal, l.moneda)} · Liq -
+                                  {formatMoney(liqTotal, l.moneda)} (
+                                  {new Date(l.created_at).toLocaleDateString('es-ES', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                  })}
+                                  )
+                                </option>
+                              );
+                            })}
+                        </select>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDiscardedHistory((prev) => {
+                            const next = !prev;
+                            if (!next && statusFilter === 'DESCARTADO') {
+                              setStatusFilter('TODOS');
+                            }
+                            return next;
+                          });
+                        }}
+                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition cursor-pointer ${
+                          showDiscardedHistory
+                            ? 'border-rose-700/35 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-950/40 dark:text-rose-400'
+                            : 'border-stone-200 bg-[#FAF9F6] text-stone-600 hover:border-stone-300 hover:text-stone-900 dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700'
+                        }`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                        {showDiscardedHistory ? 'Ocultar Eliminados' : 'Eliminados'}
+                      </button>
+
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery('');
+                            setSelectedClientFilter('TODOS');
+                            setPlatformFilter('TODOS');
+                            setMovementFilter('RECIBIDO');
+                            setStatusFilter('TODOS');
+                            setSelectedCycleFilter('ACTIVO');
+                            setShowLiquidatedHistory(false);
+                            setShowDiscardedHistory(false);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-stone-500 transition hover:bg-stone-100 hover:text-stone-900 cursor-pointer dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                        >
+                          <RotateCcw className="h-3 w-3" strokeWidth={1.5} />
+                          Limpiar filtros
+                        </button>
                       )}
                     </div>
 
-                    <div className="px-3 py-2.5">
-                      <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                        Neto Acreditado
-                      </span>
-                      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                        {formatMoney(visibleTableTotals.netoUsd, 'USD')}
-                      </p>
-                      {hasUsdtRows && (
-                        <span className="font-mono text-[10px] tabular-nums text-stone-500 dark:text-stone-400">
-                          {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
+                    {/* Resumen Compacto Inline (sin duplicar la Cinta Financiera) */}
+                    {!selectedCycleLiq && (
+                      <div className="flex flex-wrap items-center gap-3 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                        <span>
+                          Vista:{' '}
+                          <strong className="text-stone-900 dark:text-stone-100">
+                            {visibleTableTotals.conciliadosCount}
+                          </strong>{' '}
+                          conc. / {visibleTableTotals.totalRows} filas
                         </span>
-                      )}
-                    </div>
+                        {visibleTableTotals.brutoPendienteUsd > 0 && (
+                          <span className="text-amber-700 dark:text-amber-400">
+                            Por conciliar:{' '}
+                            <strong>
+                              {formatMoney(visibleTableTotals.brutoPendienteUsd, 'USD')}
+                            </strong>
+                          </span>
+                        )}
+                        {hasActiveFilters && (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            Neto vista:{' '}
+                            <strong>{formatMoney(visibleTableTotals.netoUsd, 'USD')}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
-                );
-              })()}
-            </section>
 
-            {/* Barra de Acciones Masivas por Lote */}
-            {selectedAlertIds.length > 0 && (
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-900/15 bg-stone-900 px-4 py-3 text-stone-50 shadow-sm dark:border-stone-700 dark:bg-[#1C1A18] dark:text-stone-100">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-stone-800 font-mono text-xs font-semibold tabular-nums text-stone-100 dark:bg-stone-800">
-                    {selectedAlertIds.length}
-                  </span>
-                  <div>
-                    <p className="text-sm font-medium">
-                      {selectedAlertIds.length} movimientos seleccionados para lote
-                    </p>
-                    <p className="text-xs text-stone-300 dark:text-stone-400">
-                      Monto total bruto:{' '}
-                      <strong className="font-mono tabular-nums text-white dark:text-stone-100">
-                        $
-                        {alerts
-                          .filter((a) => selectedAlertIds.includes(a.id))
-                          .reduce((sum, a) => sum + a.monto_bruto, 0)
-                          .toFixed(2)}{' '}
-                        USD
-                      </strong>
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const receivedOnlyIds = alerts
-                        .filter(
-                          (a) =>
-                            selectedAlertIds.includes(a.id) &&
-                            a.tipo_movimiento === 'RECIBIDO'
-                        )
-                        .map((a) => a.id);
-                      if (receivedOnlyIds.length === 0) {
-                        setBannerMessage({
-                          type: 'warning',
-                          text: 'Solo se pueden asignar al cliente pagos de tipo RECIBIDO. Los correos ENVIADOS solo pueden eliminarse.',
-                        });
-                        return;
-                      }
-                      if (receivedOnlyIds.length !== selectedAlertIds.length) {
-                        setSelectedAlertIds(receivedOnlyIds);
-                      }
-                      setBatchTargetClient('');
-                      setBatchNotes('Asignación masiva por lote (auditoría)');
-                      setIsBatchModalOpen(true);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-3.5 py-2 text-xs font-medium text-stone-950 transition hover:bg-white cursor-pointer"
-                  >
-                    <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    Asignar seleccionados al cliente
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const selectedRecords = alerts.filter((a) =>
-                        selectedAlertIds.includes(a.id)
+                  {/* Banda Detallada SOLO cuando se audita un Ciclo Histórico específico */}
+                  {selectedCycleLiq &&
+                    (() => {
+                      const isUsdtCycle = selectedCycleLiq.moneda === 'USDT';
+                      const cyclePagos =
+                        Number(selectedCycleLiq.ciclo_pagos_count ?? 0) || alerts.length;
+                      const cycleBruto = Number(selectedCycleLiq.ciclo_bruto_total ?? 0);
+                      const cycleComision = Number(selectedCycleLiq.ciclo_comision_total ?? 0);
+                      const cycleNeto = Number(selectedCycleLiq.ciclo_neto_total ?? 0);
+                      const viewBruto = isUsdtCycle
+                        ? visibleTableTotals.brutoConciliadoUsdt
+                        : visibleTableTotals.brutoConciliadoUsd;
+                      const viewCom = isUsdtCycle
+                        ? visibleTableTotals.comisionUsdt
+                        : visibleTableTotals.comisionUsd;
+                      const viewNeto = isUsdtCycle
+                        ? visibleTableTotals.netoUsdt
+                        : visibleTableTotals.netoUsd;
+                      const isSubFiltered = visibleTableTotals.totalRows !== cyclePagos;
+                      const cycleRestante = Number(selectedCycleLiq.saldo_restante ?? 0);
+
+                      return (
+                        <div className="mt-3 grid grid-cols-2 divide-y divide-stone-200 rounded-lg border border-stone-200/90 bg-[#FAF9F6]/70 sm:grid-cols-5 sm:divide-x sm:divide-y-0 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
+                          <div className="px-3 py-2">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-500">
+                              {selectedCycleLiq.numero_ciclo
+                                ? `Ciclo #${selectedCycleLiq.numero_ciclo} · ${selectedCycleLiq.cliente_nombre}`
+                                : selectedCycleLiq.cliente_nombre}
+                            </span>
+                            <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                              {cyclePagos} pagos
+                            </p>
+                            <span className="font-mono text-[10px] text-stone-500 dark:text-stone-400">
+                              {isSubFiltered
+                                ? `En vista: ${visibleTableTotals.totalRows} de ${cyclePagos}`
+                                : selectedCycleLiq.codigo_liquidacion}
+                            </span>
+                          </div>
+
+                          <div className="px-3 py-2">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Bruto del Ciclo
+                            </span>
+                            <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                              {formatMoney(cycleBruto, selectedCycleLiq.moneda)}
+                            </p>
+                            {isSubFiltered && (
+                              <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
+                                En vista: {formatMoney(viewBruto, selectedCycleLiq.moneda)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="px-3 py-2">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Comisión del Ciclo
+                            </span>
+                            <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                              -{formatMoney(cycleComision, selectedCycleLiq.moneda)}
+                            </p>
+                            {isSubFiltered && (
+                              <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
+                                En vista: -{formatMoney(viewCom, selectedCycleLiq.moneda)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="px-3 py-2">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Neto del Ciclo
+                            </span>
+                            <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                              {formatMoney(cycleNeto, selectedCycleLiq.moneda)}
+                            </p>
+                            {isSubFiltered && (
+                              <span className="font-mono text-[10px] text-amber-700 dark:text-amber-400">
+                                En vista: {formatMoney(viewNeto, selectedCycleLiq.moneda)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="px-3 py-2">
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                              Liquidado / Restante
+                            </span>
+                            <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                              -{formatMoney(Number(selectedCycleLiq.monto_liquidado ?? 0), selectedCycleLiq.moneda)}
+                            </p>
+                            <span
+                              className={`font-mono text-[10px] tabular-nums ${
+                                cycleRestante < 0
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : 'text-emerald-700 dark:text-emerald-400'
+                              }`}
+                            >
+                              Restante: {formatMoney(cycleRestante, selectedCycleLiq.moneda)}
+                            </span>
+                          </div>
+                        </div>
                       );
-                      openDiscardModalForAlerts(selectedRecords);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-700 px-3.5 py-2 text-xs font-medium text-white transition hover:bg-rose-600 cursor-pointer"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-                    Eliminar ({selectedAlertIds.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedAlertIds([])}
-                    className="rounded-lg border border-stone-700 px-3 py-2 text-xs font-medium text-stone-300 transition hover:bg-stone-800 cursor-pointer"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            )}
+                    })()}
+                </section>
+              );
+            })()}
 
             {/* =================================================================
-                SECCIÓN: CAPTURAS ENVIADAS POR EL CLIENTE PENDIENTES
+                SECCIÓN COLAPSABLE: CAPTURAS ENVIADAS POR EL CLIENTE PENDIENTES
                ================================================================= */}
             {pendingOrders.length > 0 && (
               <section
                 aria-label="Capturas Enviadas por el Cliente Pendientes de Confirmar"
-                className="mb-5 overflow-hidden rounded-xl border border-amber-700/25 bg-white shadow-sm dark:border-amber-500/30 dark:bg-[#1C1A18]"
+                className="mb-4 overflow-hidden rounded-xl border border-amber-700/25 bg-white shadow-sm dark:border-amber-500/30 dark:bg-[#1C1A18]"
               >
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-700/15 bg-amber-50/70 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-950/20">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-700/15 bg-amber-50/70 px-4 py-2.5 dark:border-amber-500/20 dark:bg-amber-950/20">
                   <div className="flex items-center gap-2.5">
                     <span className="flex h-6 w-6 items-center justify-center rounded-md border border-amber-700/30 bg-white font-mono text-xs font-semibold tabular-nums text-amber-800 dark:border-amber-500/40 dark:bg-[#121110] dark:text-amber-400">
                       {pendingOrders.length}
                     </span>
                     <div>
-                      <h3 className="text-sm font-semibold text-stone-900 dark:text-stone-100">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-900 dark:text-stone-100">
                         Capturas Enviadas por el Cliente en Espera de Confirmación Manual
                       </h3>
-                      <p className="text-xs text-stone-600 dark:text-stone-400">
-                        Comprobantes subidos desde el portal que aún no conciliaron automáticamente. Revisa la captura, confirma manualmente o descarta duplicados.
-                      </p>
+                      {!isPendingCapturesCollapsed && (
+                        <p className="text-[11px] text-stone-600 dark:text-stone-400">
+                          Comprobantes subidos desde el portal que aún no conciliaron automáticamente.
+                        </p>
+                      )}
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPendingCapturesCollapsed((prev) => !prev)}
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-700/25 bg-white/80 px-2.5 py-1 text-[11px] font-medium text-amber-900 transition hover:bg-white cursor-pointer dark:border-amber-500/30 dark:bg-[#121110]/70 dark:text-amber-300 dark:hover:bg-[#121110]"
+                  >
+                    <span>{isPendingCapturesCollapsed ? 'Mostrar' : 'Contraer'}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform ${
+                        isPendingCapturesCollapsed ? '' : 'rotate-180'
+                      }`}
+                      strokeWidth={1.5}
+                    />
+                  </button>
                 </div>
 
+                {!isPendingCapturesCollapsed && (
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-left text-xs table-auto">
                     <thead>
@@ -4828,49 +4739,433 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                     </tbody>
                   </table>
                 </div>
+                )}
               </section>
             )}
 
             {/* =================================================================
-                ESPACIO DE TRABAJO MASTER-DETAIL (60% LISTA / 40% INSPECTOR STICKY)
+                LEDGER EDITORIAL DE ANCHO COMPLETO (100% ESCRITORIO / TARJETAS MÓVIL)
                ================================================================= */}
-            <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-12">
-              {/* IZQUIERDA (7 cols ≈ 60%): Lista Editorial Seleccionable */}
-              <section
-                aria-label="Lista de Movimientos Bancarios"
-                className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm lg:col-span-7 dark:border-stone-800 dark:bg-[#1C1A18]"
-              >
-                {/* Cabecera de Lista */}
-                <div className="flex items-center justify-between gap-3 border-b border-stone-200 bg-[#FAF9F6] px-4 py-2.5 dark:border-stone-800 dark:bg-[#121110]">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={
-                        eligibleAlertsForBatch.length > 0 &&
-                        eligibleAlertsForBatch.every((a) =>
-                          selectedAlertIds.includes(a.id)
-                        )
-                      }
-                      onChange={toggleSelectAllEligible}
-                      className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
-                      title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
-                    />
-                    <span className="text-xs font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                      Movimientos ({filteredAlerts.length})
-                    </span>
-                  </div>
-                  <span className="hidden font-mono text-[11px] tabular-nums text-stone-500 sm:inline dark:text-stone-400">
-                    Selecciona una fila para inspeccionar
+            <section
+              aria-label="Lista de Movimientos Bancarios"
+              className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]"
+            >
+              {/* Cabecera del Ledger */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 bg-[#FAF9F6] px-4 py-2.5 dark:border-stone-800 dark:bg-[#121110]">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={
+                      eligibleAlertsForBatch.length > 0 &&
+                      eligibleAlertsForBatch.every((a) =>
+                        selectedAlertIds.includes(a.id)
+                      )
+                    }
+                    onChange={toggleSelectAllEligible}
+                    className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer lg:hidden dark:border-stone-700 dark:bg-stone-900"
+                    title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
+                  />
+                  <span className="text-xs font-medium uppercase tracking-wider text-stone-600 dark:text-stone-300">
+                    Movimientos ({filteredAlerts.length})
                   </span>
+                  {selectedAlertIds.length > 0 && (
+                    <span className="inline-flex items-center rounded-full border border-amber-700/30 bg-amber-50 px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-300">
+                      {selectedAlertIds.length} en lote
+                    </span>
+                  )}
                 </div>
+                <span className="hidden text-[11px] text-stone-500 sm:inline dark:text-stone-400">
+                  Haz clic en cualquier fila para abrir el detalle completo
+                </span>
+              </div>
 
-                {/* Filas Editoriales */}
-                {filteredAlerts.length === 0 ? (
-                  <div className="px-6 py-14 text-center text-sm text-stone-500 dark:text-stone-400">
-                    No se encontraron transacciones con los filtros seleccionados.
+              {filteredAlerts.length === 0 ? (
+                <div className="px-6 py-14 text-center text-sm text-stone-500 dark:text-stone-400">
+                  No se encontraron transacciones con los filtros seleccionados.
+                </div>
+              ) : (
+                <>
+                  {/* VISTA ESCRITORIO (lg+): Tabla Editorial 8 Columnas (100% Ancho) */}
+                  <div className="hidden overflow-x-auto lg:block">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-stone-200 bg-[#FAF9F6]/80 text-[11px] font-medium uppercase tracking-wider text-stone-500 dark:border-stone-800 dark:bg-[#121110]/80 dark:text-stone-400">
+                          <th className="w-10 px-3 py-2.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={
+                                eligibleAlertsForBatch.length > 0 &&
+                                eligibleAlertsForBatch.every((a) =>
+                                  selectedAlertIds.includes(a.id)
+                                )
+                              }
+                              onChange={toggleSelectAllEligible}
+                              className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
+                              title="Seleccionar / deseleccionar todos los pagos elegibles para lote"
+                            />
+                          </th>
+                          <th className="px-3 py-2.5">Canal / Fecha</th>
+                          <th className="px-3 py-2.5">Remitente / Referencia</th>
+                          <th className="px-3 py-2.5">Titular / Orden</th>
+                          <th className="px-3 py-2.5 text-right">Bruto / Com.</th>
+                          <th className="px-3 py-2.5 text-right">Neto</th>
+                          <th className="px-3 py-2.5">Estado</th>
+                          <th className="px-3 py-2.5 text-right">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-200/80 dark:divide-stone-800/90">
+                        {filteredAlerts.map((alert) => {
+                          const badge = getPlatformBadgeMeta(alert.plataforma);
+                          const candidateOrder = findAssociatedCaptureOrder(alert);
+                          const hasCapture = Boolean(
+                            alert.has_capture ||
+                              alert.comprobante_base64 ||
+                              candidateOrder?.has_capture ||
+                              candidateOrder?.comprobante_base64
+                          );
+                          const isBatchSelected = selectedAlertIds.includes(alert.id);
+                          const isInspected =
+                            isInspectorDrawerOpen &&
+                            selectedInspectorAlert?.id === alert.id;
+                          const reportedSender =
+                            alert.remitente_reportado ||
+                            candidateOrder?.remitente_reportado ||
+                            candidateOrder?.nombre_remitente_reportado ||
+                            null;
+                          const reportedCode =
+                            alert.codigo_orden || candidateOrder?.codigo_orden || null;
+                          const reportedRef =
+                            alert.referencia_reportada ||
+                            candidateOrder?.referencia_reportada ||
+                            null;
+                          const senderSimilarity =
+                            reportedSender && alert.remitente_o_contraparte
+                              ? calculateSenderSimilarity(
+                                  reportedSender,
+                                  alert.remitente_o_contraparte
+                                )
+                              : 1;
+                          const isRefVerified = referencesMatch(
+                            reportedRef,
+                            alert.referencia
+                          );
+                          const hasNameDisparity = Boolean(
+                            reportedSender &&
+                              alert.remitente_o_contraparte &&
+                              senderSimilarity < 0.65 &&
+                              !(isRefVerified && senderSimilarity >= 0.4)
+                          );
+                          const canBatchSelect =
+                            alert.estado !== 'CONCILIADO' &&
+                            alert.estado !== 'DESCARTADO' &&
+                            !alert.liquidado_at;
+                          const isPendingRow =
+                            !alert.liquidado_at &&
+                            (alert.estado === 'DETECTADO' ||
+                              alert.estado === 'REVISION_MANUAL');
+
+                          return (
+                            <tr
+                              key={alert.id}
+                              onClick={() => {
+                                setSelectedInspectorAlertId(alert.id);
+                                setIsInspectorDrawerOpen(true);
+                              }}
+                              className={`group transition cursor-pointer ${
+                                isInspected
+                                  ? 'bg-amber-50/50 dark:bg-amber-950/25'
+                                  : isBatchSelected
+                                    ? 'bg-stone-100/80 dark:bg-stone-800/40'
+                                    : 'hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50'
+                              } ${
+                                isPendingRow
+                                  ? 'shadow-[inset_2px_0_0_0_rgba(180,83,9,0.5)] dark:shadow-[inset_2px_0_0_0_rgba(245,158,11,0.45)]'
+                                  : ''
+                              }`}
+                            >
+                              {/* 1. Checkbox Lote */}
+                              <td
+                                className="px-3 py-2.5 text-center"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {canBatchSelect ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={isBatchSelected}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={() => toggleSelectAlert(alert.id)}
+                                    className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
+                                  />
+                                ) : (
+                                  <span className="text-xs text-stone-300 dark:text-stone-700">
+                                    ·
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 2. Canal & Fecha */}
+                              <td className="whitespace-nowrap px-3 py-2.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
+                                  >
+                                    {badge.label}
+                                  </span>
+                                  {alert.tipo_movimiento === 'RECIBIDO' ? (
+                                    <span
+                                      title="Pago Recibido"
+                                      className="inline-flex items-center text-emerald-700 dark:text-emerald-400"
+                                    >
+                                      <ArrowDownLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title="Salida / Enviado"
+                                      className="inline-flex items-center text-rose-700 dark:text-rose-400"
+                                    >
+                                      <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                                  {formatDateTime(alert.fecha_transaccion)}
+                                </div>
+                              </td>
+
+                              {/* 3. Remitente & Referencia con copia rápida */}
+                              <td className="max-w-[260px] px-3 py-2.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="truncate text-[13px] font-medium text-stone-900 dark:text-stone-100">
+                                    {alert.remitente_o_contraparte || (
+                                      <span className="italic text-amber-700 dark:text-amber-400">
+                                        Remitente no identificado
+                                      </span>
+                                    )}
+                                  </span>
+                                  {hasNameDisparity && (
+                                    <span
+                                      title={`Reportado en portal como: ${reportedSender}`}
+                                      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400"
+                                    >
+                                      <AlertTriangle className="h-2.5 w-2.5" strokeWidth={1.75} />
+                                      Nombre
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 flex items-center gap-1.5">
+                                  <span className="truncate font-mono text-[11px] text-stone-500 dark:text-stone-400">
+                                    {alert.referencia || 'SIN-REF'}
+                                  </span>
+                                  {alert.referencia && alert.referencia !== 'SIN-REF' && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyReference(alert.id, alert.referencia || '');
+                                      }}
+                                      className={`inline-flex shrink-0 items-center rounded p-0.5 transition cursor-pointer ${
+                                        copiedRefId === alert.id
+                                          ? 'text-emerald-700 dark:text-emerald-400'
+                                          : 'text-stone-400 opacity-0 hover:bg-stone-200/70 hover:text-stone-700 group-hover:opacity-100 dark:text-stone-500 dark:hover:bg-stone-800 dark:hover:text-stone-200'
+                                      }`}
+                                      title={
+                                        copiedRefId === alert.id
+                                          ? 'Referencia copiada'
+                                          : 'Copiar referencia'
+                                      }
+                                    >
+                                      {copiedRefId === alert.id ? (
+                                        <Check className="h-3 w-3" strokeWidth={2} />
+                                      ) : (
+                                        <Copy className="h-3 w-3" strokeWidth={1.5} />
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 4. Titular / Orden */}
+                              <td className="whitespace-nowrap px-3 py-2.5">
+                                {alert.cliente_asignado_nombre ? (
+                                  <div className="inline-flex items-center gap-1.5 text-xs font-medium text-stone-800 dark:text-stone-200">
+                                    <UserCheck
+                                      className="h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-400"
+                                      strokeWidth={1.5}
+                                    />
+                                    <span>{alert.cliente_asignado_nombre}</span>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-stone-400 dark:text-stone-500">
+                                    Sin asignar
+                                  </span>
+                                )}
+                                {reportedCode && (
+                                  <div className="mt-0.5 font-mono text-[10px] text-stone-500 dark:text-stone-400">
+                                    {reportedCode}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 5. Bruto / Comisión */}
+                              <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono tabular-nums">
+                                <div className="text-xs text-stone-700 dark:text-stone-300">
+                                  {formatMoney(alert.monto_bruto, alert.moneda)}
+                                </div>
+                                {alert.estado === 'CONCILIADO' &&
+                                  alert.monto_comision > 0 && (
+                                    <div className="mt-0.5 text-[10px] text-stone-500 dark:text-stone-400">
+                                      -{formatMoney(alert.monto_comision, alert.moneda)} ({alert.porcentaje_comision}%)
+                                    </div>
+                                  )}
+                              </td>
+
+                              {/* 6. Neto */}
+                              <td className="whitespace-nowrap px-3 py-2.5 text-right font-mono text-[13px] font-semibold tabular-nums tracking-tight">
+                                <span
+                                  className={
+                                    alert.tipo_movimiento === 'ENVIADO'
+                                      ? 'text-rose-700 dark:text-rose-400'
+                                      : alert.estado === 'CONCILIADO'
+                                        ? 'text-emerald-700 dark:text-emerald-400'
+                                        : 'text-stone-900 dark:text-stone-100'
+                                  }
+                                >
+                                  {alert.estado === 'CONCILIADO'
+                                    ? formatMoney(alert.monto_neto, alert.moneda)
+                                    : formatMoney(alert.monto_bruto, alert.moneda)}
+                                </span>
+                              </td>
+
+                              {/* 7. Estado */}
+                              <td className="whitespace-nowrap px-3 py-2.5">
+                                {alert.liquidado_at ? (
+                                  <span className="inline-flex items-center rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                                    {alert.numero_ciclo
+                                      ? `CICLO #${alert.numero_ciclo}`
+                                      : 'LIQUIDADO'}
+                                  </span>
+                                ) : alert.estado === 'CONCILIADO' ? (
+                                  <span className="inline-flex items-center rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                    CONCILIADO
+                                  </span>
+                                ) : alert.estado === 'REVISION_MANUAL' ? (
+                                  <span className="inline-flex items-center rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                    REVISIÓN MANUAL
+                                  </span>
+                                ) : alert.estado === 'DETECTADO' ? (
+                                  <span className="inline-flex items-center rounded-full border border-amber-700/25 bg-amber-50/70 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
+                                    DETECTADO
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center rounded-full border border-rose-700/25 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                                    ELIMINADO
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 8. Acciones Directas Inline (1 clic, stopPropagation) */}
+                              <td
+                                className="whitespace-nowrap px-3 py-2.5 text-right"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div className="inline-flex items-center justify-end gap-1">
+                                  {alert.estado !== 'CONCILIADO' &&
+                                    alert.estado !== 'DESCARTADO' &&
+                                    !alert.liquidado_at &&
+                                    alert.tipo_movimiento === 'RECIBIDO' && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          openManualReconciliationModal(
+                                            alert,
+                                            candidateOrder
+                                          )
+                                        }
+                                        className="inline-flex items-center gap-1 rounded-md border border-amber-700/35 bg-amber-50/80 px-2.5 py-1 text-[11px] font-medium text-amber-900 transition hover:border-amber-700 hover:bg-amber-700 hover:text-white cursor-pointer dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-300 dark:hover:border-amber-500 dark:hover:bg-amber-500 dark:hover:text-stone-950"
+                                        title="Conciliar y acreditar este movimiento"
+                                      >
+                                        Conciliar
+                                      </button>
+                                    )}
+
+                                  {hasCapture && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void openLightboxForTx(alert)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-300 dark:hover:border-stone-700 dark:hover:text-stone-100"
+                                      title="Ver comprobante en visor completo"
+                                    >
+                                      <ImageIcon className="h-3.5 w-3.5 text-stone-400 dark:text-stone-400" strokeWidth={1.5} />
+                                      <span className="hidden xl:inline">Captura</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setInspectedAlert(alert)}
+                                    className="inline-flex items-center justify-center rounded-md border border-stone-200 bg-white p-1.5 text-stone-500 transition hover:border-stone-300 hover:bg-stone-50 hover:text-stone-900 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400 dark:hover:border-stone-700 dark:hover:text-stone-100"
+                                    title="Ver correo / payload original"
+                                    aria-label="Ver payload"
+                                  >
+                                    <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                  </button>
+
+                                  {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAlertToRevert(alert);
+                                        setRevertReason('');
+                                      }}
+                                      className="inline-flex items-center justify-center rounded-md border border-stone-200 bg-white p-1.5 text-stone-500 transition hover:border-rose-700/35 hover:bg-rose-50 hover:text-rose-700 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400 dark:hover:border-rose-500/40 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                                      title="Deshacer conciliación"
+                                      aria-label="Deshacer conciliación"
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                    </button>
+                                  )}
+
+                                  {alert.estado !== 'CONCILIADO' &&
+                                    alert.estado !== 'DESCARTADO' &&
+                                    !alert.liquidado_at && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openDiscardModalForAlerts([alert])}
+                                        className="inline-flex items-center justify-center rounded-md border border-stone-200 bg-white p-1.5 text-stone-500 transition hover:border-rose-700/35 hover:bg-rose-50 hover:text-rose-700 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-400 dark:hover:border-rose-500/40 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                                        title="Eliminar / descartar correo"
+                                        aria-label="Eliminar movimiento"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                      </button>
+                                    )}
+
+                                  {alert.estado === 'DESCARTADO' && (
+                                    <button
+                                      type="button"
+                                      disabled={restoringAlertId === alert.id}
+                                      onClick={() => void handleRestoreDiscardedAlert(alert)}
+                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-700/25 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 cursor-pointer dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                      title="Restaurar movimiento"
+                                    >
+                                      {restoringAlertId === alert.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" strokeWidth={1.5} />
+                                      ) : (
+                                        <RotateCcw className="h-3 w-3" strokeWidth={1.5} />
+                                      )}
+                                      Restaurar
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                ) : (
-                  <div className="divide-y divide-stone-200/80 dark:divide-stone-800">
+
+                  {/* VISTA MÓVIL / TABLET (< lg): Tarjetas Limpias sin Scroll Horizontal */}
+                  <div className="divide-y divide-stone-200/80 lg:hidden dark:divide-stone-800">
                     {filteredAlerts.map((alert) => {
                       const badge = getPlatformBadgeMeta(alert.plataforma);
                       const candidateOrder = findAssociatedCaptureOrder(alert);
@@ -4881,12 +5176,279 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           candidateOrder?.comprobante_base64
                       );
                       const isBatchSelected = selectedAlertIds.includes(alert.id);
-                      const isInspected = selectedInspectorAlert?.id === alert.id;
+                      const canBatchSelect =
+                        alert.estado !== 'CONCILIADO' &&
+                        alert.estado !== 'DESCARTADO' &&
+                        !alert.liquidado_at;
+
+                      return (
+                        <div
+                          key={alert.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            setSelectedInspectorAlertId(alert.id);
+                            setIsInspectorDrawerOpen(true);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedInspectorAlertId(alert.id);
+                              setIsInspectorDrawerOpen(true);
+                            }
+                          }}
+                          className={`flex items-start gap-3 px-4 py-3 transition cursor-pointer ${
+                            isBatchSelected
+                              ? 'bg-stone-100/80 dark:bg-stone-800/40'
+                              : 'hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50'
+                          }`}
+                        >
+                          <div
+                            className="pt-0.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {canBatchSelect ? (
+                              <input
+                                type="checkbox"
+                                checked={isBatchSelected}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => toggleSelectAlert(alert.id)}
+                                className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
+                              />
+                            ) : (
+                              <span className="inline-flex h-4 w-4 items-center justify-center text-xs text-stone-300 dark:text-stone-700">
+                                ·
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span
+                                className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
+                              >
+                                {badge.label}
+                              </span>
+                              <span className="font-mono text-[11px] tabular-nums text-stone-500 dark:text-stone-400">
+                                {formatDateTime(alert.fecha_transaccion)}
+                              </span>
+                            </div>
+                            <p className="mt-1 truncate text-sm font-medium text-stone-900 dark:text-stone-100">
+                              {alert.remitente_o_contraparte || 'Remitente no identificado'}
+                            </p>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs">
+                              <span className="font-mono text-[11px] text-stone-500 dark:text-stone-400">
+                                {alert.referencia || 'SIN-REF'}
+                              </span>
+                              {alert.cliente_asignado_nombre && (
+                                <span className="inline-flex items-center gap-1 text-stone-700 dark:text-stone-300">
+                                  <UserCheck className="h-3 w-3 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
+                                  {alert.cliente_asignado_nombre}
+                                </span>
+                              )}
+                              {hasCapture && (
+                                <ImageIcon className="h-3 w-3 text-stone-400" strokeWidth={1.5} />
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
+                            <span
+                              className={`font-mono text-sm font-semibold tabular-nums ${
+                                alert.tipo_movimiento === 'ENVIADO'
+                                  ? 'text-rose-700 dark:text-rose-400'
+                                  : alert.estado === 'CONCILIADO'
+                                    ? 'text-emerald-700 dark:text-emerald-400'
+                                    : 'text-stone-900 dark:text-stone-100'
+                              }`}
+                            >
+                              {alert.estado === 'CONCILIADO'
+                                ? formatMoney(alert.monto_neto, alert.moneda)
+                                : formatMoney(alert.monto_bruto, alert.moneda)}
+                            </span>
+                            <div
+                              className="flex items-center gap-1.5"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {alert.estado !== 'CONCILIADO' &&
+                              alert.estado !== 'DESCARTADO' &&
+                              !alert.liquidado_at &&
+                              alert.tipo_movimiento === 'RECIBIDO' ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    openManualReconciliationModal(
+                                      alert,
+                                      candidateOrder
+                                    )
+                                  }
+                                  className="rounded-md border border-amber-700/35 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 dark:border-amber-500/35 dark:bg-amber-950/35 dark:text-amber-300"
+                                >
+                                  Conciliar
+                                </button>
+                              ) : (
+                                <span className="rounded-full border border-stone-200 px-2 py-0.5 text-[10px] font-medium text-stone-600 dark:border-stone-700 dark:text-stone-400">
+                                  {alert.liquidado_at
+                                    ? alert.numero_ciclo
+                                      ? `CICLO #${alert.numero_ciclo}`
+                                      : 'LIQUIDADO'
+                                    : alert.estado}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Pie de Totales en Vista */}
+              {filteredAlerts.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-[#FAF9F6] px-4 py-2.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                  <div className="font-medium text-stone-600 dark:text-stone-400">
+                    Totales en vista ({visibleTableTotals.totalRows} reg. ·{' '}
+                    {visibleTableTotals.conciliadosCount} conc.)
+                  </div>
+                  <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums">
+                    <div>
+                      <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400">Bruto </span>
+                      <strong className="text-stone-900 dark:text-stone-100">
+                        {formatMoney(visibleTableTotals.brutoAllUsd, 'USD')}
+                      </strong>
+                      {visibleTableTotals.brutoAllUsdt > 0 && (
+                        <span className="ml-1.5 text-[11px] text-stone-500 dark:text-stone-400">
+                          / {formatMoney(visibleTableTotals.brutoAllUsdt, 'USDT')}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400">Com. </span>
+                      <span className="text-stone-700 dark:text-stone-300">
+                        -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-stone-500 dark:text-stone-400">Neto </span>
+                      <strong className="text-emerald-700 dark:text-emerald-400">
+                        {formatMoney(visibleTableTotals.netoUsd, 'USD')}
+                      </strong>
+                      {visibleTableTotals.netoUsdt > 0 && (
+                        <span className="ml-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
+                          / {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Barra Flotante Inferior de Acciones Masivas por Lote (siempre accesible en scroll) */}
+            {selectedAlertIds.length > 0 && (
+              <div className="sticky bottom-4 z-30 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-900/20 bg-stone-900/95 px-4 py-3 text-stone-50 shadow-xl backdrop-blur-sm dark:border-stone-700 dark:bg-[#1C1A18]/95 dark:text-stone-100">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-stone-800 font-mono text-xs font-semibold tabular-nums text-stone-100">
+                    {selectedAlertIds.length}
+                  </span>
+                  <div>
+                    <p className="text-sm font-medium">
+                      {selectedAlertIds.length} movimientos seleccionados para lote
+                    </p>
+                    <p className="text-xs text-stone-300 dark:text-stone-400">
+                      Monto total bruto:{' '}
+                      <strong className="font-mono tabular-nums text-white dark:text-stone-100">
+                        $
+                        {alerts
+                          .filter((a) => selectedAlertIds.includes(a.id))
+                          .reduce((sum, a) => sum + a.monto_bruto, 0)
+                          .toFixed(2)}{' '}
+                        USD
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const receivedOnlyIds = alerts
+                        .filter(
+                          (a) =>
+                            selectedAlertIds.includes(a.id) &&
+                            a.tipo_movimiento === 'RECIBIDO'
+                        )
+                        .map((a) => a.id);
+                      if (receivedOnlyIds.length === 0) {
+                        setBannerMessage({
+                          type: 'warning',
+                          text: 'Solo se pueden asignar al cliente pagos de tipo RECIBIDO. Los correos ENVIADOS solo pueden eliminarse.',
+                        });
+                        return;
+                      }
+                      if (receivedOnlyIds.length !== selectedAlertIds.length) {
+                        setSelectedAlertIds(receivedOnlyIds);
+                      }
+                      setBatchTargetClient('');
+                      setBatchNotes('Asignación masiva por lote (auditoría)');
+                      setIsBatchModalOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-stone-100 px-3.5 py-2 text-xs font-medium text-stone-950 transition hover:bg-white cursor-pointer"
+                  >
+                    <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    Asignar seleccionados al cliente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const selectedRecords = alerts.filter((a) =>
+                        selectedAlertIds.includes(a.id)
+                      );
+                      openDiscardModalForAlerts(selectedRecords);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-rose-500/40 bg-rose-700 px-3.5 py-2 text-xs font-medium text-white transition hover:bg-rose-600 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                    Eliminar ({selectedAlertIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAlertIds([])}
+                    className="rounded-lg border border-stone-700 px-3 py-2 text-xs font-medium text-stone-300 transition hover:bg-stone-800 cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Inspector Slide-Over Drawer (Escritorio derecho / Móvil Bottom Sheet) bajo demanda */}
+            <Dialog.Root
+              open={isInspectorDrawerOpen && Boolean(selectedInspectorAlert)}
+              onOpenChange={setIsInspectorDrawerOpen}
+            >
+              <Dialog.Portal>
+                <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/45 backdrop-blur-[2px]" />
+                <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 flex max-h-[88vh] flex-col overflow-hidden rounded-t-2xl border-t border-stone-200 bg-white text-stone-900 shadow-2xl focus:outline-none lg:inset-y-0 lg:left-auto lg:right-0 lg:max-h-none lg:w-full lg:max-w-md lg:rounded-none lg:border-l lg:border-t-0 dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100">
+                  {selectedInspectorAlert &&
+                    (() => {
+                      const alert = selectedInspectorAlert;
+                      const badge = getPlatformBadgeMeta(alert.plataforma);
+                      const candidateOrder = findAssociatedCaptureOrder(alert);
+                      const hasCapture = Boolean(
+                        alert.has_capture ||
+                          alert.comprobante_base64 ||
+                          candidateOrder?.has_capture ||
+                          candidateOrder?.comprobante_base64
+                      );
                       const reportedSender =
                         alert.remitente_reportado ||
                         candidateOrder?.remitente_reportado ||
                         candidateOrder?.nombre_remitente_reportado ||
                         null;
+                      const reportedCode =
+                        alert.codigo_orden || candidateOrder?.codigo_orden || null;
                       const reportedRef =
                         alert.referencia_reportada ||
                         candidateOrder?.referencia_reportada ||
@@ -4908,753 +5470,276 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                           senderSimilarity < 0.65 &&
                           !(isRefVerified && senderSimilarity >= 0.4)
                       );
-                      const canBatchSelect =
-                        alert.estado !== 'CONCILIADO' &&
-                        alert.estado !== 'DESCARTADO' &&
-                        !alert.liquidado_at;
 
                       return (
-                        <div
-                          key={alert.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
-                            setSelectedInspectorAlertId(alert.id);
-                            if (
-                              typeof window !== 'undefined' &&
-                              window.innerWidth < 1024
-                            ) {
-                              setIsMobileInspectorOpen(true);
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setSelectedInspectorAlertId(alert.id);
-                              if (
-                                typeof window !== 'undefined' &&
-                                window.innerWidth < 1024
-                              ) {
-                                setIsMobileInspectorOpen(true);
-                              }
-                            }
-                          }}
-                          className={`group flex items-start gap-3 px-4 py-3.5 transition cursor-pointer ${
-                            isInspected
-                              ? 'border-l-2 border-l-amber-700 bg-amber-50/50 dark:border-l-amber-500 dark:bg-amber-950/20'
-                              : isBatchSelected
-                                ? 'bg-stone-100/80 dark:bg-stone-800/40'
-                                : 'hover:bg-[#FAF9F6] dark:hover:bg-stone-900/50'
-                          }`}
-                        >
-                          {/* Checkbox Lote con stopPropagation */}
-                          <div
-                            className="pt-0.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {canBatchSelect ? (
-                              <input
-                                type="checkbox"
-                                checked={isBatchSelected}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={() => toggleSelectAlert(alert.id)}
-                                className="h-4 w-4 rounded border-stone-300 text-stone-900 focus:ring-amber-700 cursor-pointer dark:border-stone-700 dark:bg-stone-900"
-                              />
-                            ) : (
-                              <span className="inline-flex h-4 w-4 items-center justify-center text-xs text-stone-300 dark:text-stone-700">
-                                ·
-                              </span>
-                            )}
-                          </div>
+                        <>
+                          {/* Manija táctil móvil */}
+                          <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-stone-300 lg:hidden dark:bg-stone-700" />
 
-                          {/* Columna Central: Remitente, Canal, Referencia, Titular */}
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span
-                                className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
-                              >
-                                {badge.label}
-                              </span>
-                              {alert.tipo_movimiento === 'RECIBIDO' ? (
-                                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
-                                  <ArrowDownLeft className="h-3 w-3" strokeWidth={1.5} />
-                                  Recibido
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-400">
-                                  <ArrowUpRight className="h-3 w-3" strokeWidth={1.5} />
-                                  Enviado
-                                </span>
-                              )}
-                              <span className="font-mono text-[11px] tabular-nums text-stone-400 dark:text-stone-500">
-                                · {formatDateTime(alert.fecha_transaccion)}
-                              </span>
-                            </div>
-
-                            <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                              <span className="truncate text-sm font-semibold text-stone-900 dark:text-stone-100">
-                                {alert.remitente_o_contraparte || (
-                                  <span className="italic text-amber-700 dark:text-amber-400">
-                                    Remitente no identificado
+                          {/* Cabecera fija del Drawer */}
+                          <div className="shrink-0 border-b border-stone-200 px-5 py-4 dark:border-stone-800">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
+                                  >
+                                    {badge.label}
                                   </span>
-                                )}
-                              </span>
-                              <span className="font-mono text-xs text-stone-500 dark:text-stone-400">
-                                {alert.referencia || 'SIN-REF'}
-                              </span>
-                            </div>
-
-                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
-                              {alert.cliente_asignado_nombre ? (
-                                <span className="inline-flex items-center gap-1 text-stone-700 dark:text-stone-300">
-                                  <UserCheck className="h-3 w-3 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
-                                  <span className="font-medium">
-                                    {alert.cliente_asignado_nombre}
+                                  {alert.tipo_movimiento === 'RECIBIDO' ? (
+                                    <span className="inline-flex items-center gap-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                                      <ArrowDownLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                      Recibido
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-0.5 text-xs font-medium text-rose-700 dark:text-rose-400">
+                                      <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                      Enviado
+                                    </span>
+                                  )}
+                                  {alert.liquidado_at ? (
+                                    <span className="rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
+                                      {alert.numero_ciclo
+                                        ? `CICLO #${alert.numero_ciclo}`
+                                        : 'LIQUIDADO'}
+                                    </span>
+                                  ) : alert.estado === 'CONCILIADO' ? (
+                                    <span className="rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                      CONCILIADO
+                                    </span>
+                                  ) : alert.estado === 'DESCARTADO' ? (
+                                    <span className="rounded-full border border-rose-700/25 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
+                                      ELIMINADO
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                      {alert.estado === 'REVISION_MANUAL'
+                                        ? 'REVISIÓN MANUAL'
+                                        : 'DETECTADO'}
+                                    </span>
+                                  )}
+                                </div>
+                                <Dialog.Title className="mt-2 font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
+                                  {alert.remitente_o_contraparte || 'Remitente no identificado'}
+                                </Dialog.Title>
+                                <Dialog.Description className="mt-0.5 flex items-center gap-1.5 font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
+                                  <span>{formatDateTime(alert.fecha_transaccion)}</span>
+                                  <span>·</span>
+                                  <span className="font-semibold text-stone-700 dark:text-stone-300">
+                                    {alert.referencia || 'SIN-REF'}
                                   </span>
-                                </span>
-                              ) : (
-                                <span className="text-[11px] text-stone-400 dark:text-stone-500">
-                                  Sin titular asignado
-                                </span>
-                              )}
-
-                              {hasNameDisparity && (
-                                <span className="inline-flex items-center gap-1 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
-                                  <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
-                                  Diferencia de nombre
-                                </span>
-                              )}
-
-                              {hasCapture && (
-                                <span className="inline-flex items-center gap-1 text-[11px] text-stone-500 dark:text-stone-400">
-                                  <ImageIcon className="h-3 w-3" strokeWidth={1.5} />
-                                  Captura
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Columna Derecha: Monto Neto, Estado y Acción Rápida */}
-                          <div className="flex shrink-0 flex-col items-end gap-1.5 text-right">
-                            <div>
-                              <div
-                                className={`font-mono text-sm font-semibold tabular-nums tracking-tight ${
-                                  alert.tipo_movimiento === 'ENVIADO'
-                                    ? 'text-rose-700 dark:text-rose-400'
-                                    : 'text-stone-900 dark:text-stone-100'
-                                }`}
-                              >
-                                {alert.estado === 'CONCILIADO'
-                                  ? formatMoney(alert.monto_neto, alert.moneda)
-                                  : formatMoney(alert.monto_bruto, alert.moneda)}
+                                  {alert.referencia && alert.referencia !== 'SIN-REF' && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleCopyReference(alert.id, alert.referencia || '')
+                                      }
+                                      className="rounded p-0.5 text-stone-400 transition hover:bg-stone-100 hover:text-stone-700 cursor-pointer dark:hover:bg-stone-800 dark:hover:text-stone-200"
+                                      title="Copiar referencia"
+                                    >
+                                      {copiedRefId === alert.id ? (
+                                        <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" strokeWidth={2} />
+                                      ) : (
+                                        <Copy className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                      )}
+                                    </button>
+                                  )}
+                                </Dialog.Description>
                               </div>
-                              {alert.estado === 'CONCILIADO' &&
-                                alert.monto_comision > 0 && (
-                                  <div className="font-mono text-[10px] tabular-nums text-stone-400 dark:text-stone-500">
-                                    Bruto {formatMoney(alert.monto_bruto, alert.moneda)} · -{alert.porcentaje_comision}%
-                                  </div>
+                              <Dialog.Close asChild>
+                                <button
+                                  type="button"
+                                  className="rounded-lg p-1.5 text-stone-400 transition hover:bg-stone-100 hover:text-stone-900 cursor-pointer dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                                  aria-label="Cerrar detalle"
+                                >
+                                  <X className="h-4 w-4" strokeWidth={1.5} />
+                                </button>
+                              </Dialog.Close>
+                            </div>
+                          </div>
+
+                          {/* Cuerpo scrolleable del Drawer */}
+                          <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+                            {/* Desglose Financiero */}
+                            <div className="grid grid-cols-3 divide-x divide-stone-200 rounded-lg border border-stone-200 bg-[#FAF9F6] dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]">
+                              <div className="px-3 py-2.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Bruto
+                                </span>
+                                <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                                  {formatMoney(alert.monto_bruto, alert.moneda)}
+                                </p>
+                              </div>
+                              <div className="px-3 py-2.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Comisión
+                                </span>
+                                <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
+                                  {alert.estado === 'CONCILIADO' && alert.monto_comision > 0
+                                    ? `-${formatMoney(alert.monto_comision, alert.moneda)}`
+                                    : formatMoney(0, alert.moneda)}
+                                </p>
+                                {alert.estado === 'CONCILIADO' && (
+                                  <span className="font-mono text-[10px] text-stone-500 dark:text-stone-400">
+                                    {alert.porcentaje_comision}%
+                                  </span>
                                 )}
+                              </div>
+                              <div className="px-3 py-2.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Neto
+                                </span>
+                                <p
+                                  className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${
+                                    alert.estado === 'CONCILIADO'
+                                      ? 'text-emerald-700 dark:text-emerald-400'
+                                      : 'text-stone-900 dark:text-stone-100'
+                                  }`}
+                                >
+                                  {alert.estado === 'CONCILIADO'
+                                    ? formatMoney(alert.monto_neto, alert.moneda)
+                                    : formatMoney(alert.monto_bruto, alert.moneda)}
+                                </p>
+                              </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5">
-                              {alert.liquidado_at ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                                  {alert.numero_ciclo
-                                    ? `CICLO #${alert.numero_ciclo}`
-                                    : 'LIQUIDADO'}
-                                </span>
-                              ) : alert.estado === 'CONCILIADO' ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-700/20 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
-                                  CONCILIADO
-                                </span>
-                              ) : alert.estado === 'REVISION_MANUAL' ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
-                                  REVISIÓN MANUAL
-                                </span>
-                              ) : alert.estado === 'DETECTADO' ? (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50/70 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
-                                  DETECTADO
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-rose-700/25 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
-                                  ELIMINADO
-                                </span>
-                              )}
+                            {/* Titular & Orden */}
+                            <dl className="grid grid-cols-2 gap-3 text-xs">
+                              <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                                <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Titular Asignado
+                                </dt>
+                                <dd className="mt-1 font-medium text-stone-900 dark:text-stone-100">
+                                  {alert.cliente_asignado_nombre ? (
+                                    <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
+                                      <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                      {alert.cliente_asignado_nombre}
+                                    </span>
+                                  ) : (
+                                    <span className="text-stone-400 dark:text-stone-500">
+                                      En espera de orden
+                                    </span>
+                                  )}
+                                </dd>
+                              </div>
 
-                              {/* Botón inline rápido Conciliar con stopPropagation */}
-                              {alert.estado !== 'CONCILIADO' &&
-                                alert.estado !== 'DESCARTADO' &&
-                                !alert.liquidado_at &&
-                                alert.tipo_movimiento === 'RECIBIDO' && (
+                              <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
+                                <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Orden / Liquidación
+                                </dt>
+                                <dd className="mt-1 font-mono text-stone-800 dark:text-stone-200">
+                                  {reportedCode ?? '—'}
+                                  {alert.codigo_liquidacion && (
+                                    <span className="block text-[10px] text-amber-700 dark:text-amber-400">
+                                      {alert.codigo_liquidacion}
+                                    </span>
+                                  )}
+                                </dd>
+                              </div>
+                            </dl>
+
+                            {/* Comparativa Reporte Cliente */}
+                            <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                  Reporte del Cliente (Portal)
+                                </span>
+                                {hasNameDisparity && (
+                                  <span className="inline-flex items-center gap-1 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
+                                    <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
+                                    Diferencia de nombre
+                                  </span>
+                                )}
+                              </div>
+                              {reportedSender || reportedRef ? (
+                                <div className="mt-2 grid grid-cols-2 gap-2">
+                                  <div>
+                                    <span className="text-[10px] text-stone-500 dark:text-stone-400">
+                                      Remitente reportado
+                                    </span>
+                                    <p className="font-medium text-stone-900 dark:text-stone-100">
+                                      {reportedSender ?? '—'}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-stone-500 dark:text-stone-400">
+                                      Ref. reportada
+                                    </span>
+                                    <p className="font-mono font-medium text-stone-900 dark:text-stone-100">
+                                      {reportedRef ?? '—'}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="mt-1.5 italic text-stone-400 dark:text-stone-500">
+                                  Sin reporte del cliente asociado aún.
+                                </p>
+                              )}
+                              {alert.nota_auditoria && (
+                                <p className="mt-2 border-t border-stone-200 pt-2 text-[11px] text-stone-600 dark:border-stone-800 dark:text-stone-400">
+                                  Nota: {alert.nota_auditoria}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Comprobante proporcionado en formato vertical */}
+                            {hasCapture && (
+                              <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3.5 dark:border-stone-800 dark:bg-[#121110]">
+                                <div className="mb-2.5 flex items-center justify-between">
+                                  <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
+                                    Comprobante del Cliente
+                                  </span>
                                   <button
                                     type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openManualReconciliationModal(
-                                        alert,
-                                        candidateOrder
-                                      );
+                                    onClick={() => {
+                                      setIsInspectorDrawerOpen(false);
+                                      void openLightboxForTx(alert);
                                     }}
-                                    className="inline-flex items-center gap-1 rounded-md bg-stone-900 px-2 py-0.5 text-[10px] font-medium text-stone-50 transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                                    className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500 cursor-pointer"
                                   >
-                                    Conciliar
+                                    <Eye className="h-3 w-3" strokeWidth={1.5} />
+                                    Ampliar en Visor
+                                  </button>
+                                </div>
+                                {isLoadingInspectorPreview ? (
+                                  <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-stone-300 text-xs text-stone-400 dark:border-stone-700">
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={1.5} />
+                                    Cargando comprobante...
+                                  </div>
+                                ) : inspectorPreviewBase64 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsInspectorDrawerOpen(false);
+                                      void openLightboxForTx(alert);
+                                    }}
+                                    className="mx-auto block max-w-[240px] overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm transition hover:border-amber-700/50 cursor-pointer dark:border-stone-700"
+                                  >
+                                    <img
+                                      src={inspectorPreviewBase64}
+                                      alt="Vista previa de comprobante"
+                                      className="max-h-72 w-auto object-contain"
+                                    />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsInspectorDrawerOpen(false);
+                                      void openLightboxForTx(alert);
+                                    }}
+                                    className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 py-5 text-xs font-medium text-stone-600 transition hover:border-amber-700 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:text-stone-100 cursor-pointer"
+                                  >
+                                    <ImageIcon className="h-4 w-4" strokeWidth={1.5} />
+                                    Abrir captura en visor completo
                                   </button>
                                 )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Pie de Totales en Vista */}
-                {filteredAlerts.length > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-[#FAF9F6] px-4 py-3 text-xs dark:border-stone-800 dark:bg-[#121110]">
-                    <div className="font-medium text-stone-600 dark:text-stone-400">
-                      Totales en vista ({visibleTableTotals.totalRows} reg. ·{' '}
-                      {visibleTableTotals.conciliadosCount} conc.)
-                    </div>
-                    <div className="flex flex-wrap items-center gap-4 font-mono tabular-nums">
-                      <div>
-                        <span className="text-[10px] uppercase text-stone-400">Bruto </span>
-                        <strong className="text-stone-900 dark:text-stone-100">
-                          {formatMoney(visibleTableTotals.brutoAllUsd, 'USD')}
-                        </strong>
-                        {visibleTableTotals.brutoAllUsdt > 0 && (
-                          <span className="ml-1.5 text-[11px] text-stone-500">
-                            / {formatMoney(visibleTableTotals.brutoAllUsdt, 'USDT')}
-                          </span>
-                        )}
-                      </div>
-                      <div>
-                        <span className="text-[10px] uppercase text-stone-400">Com. </span>
-                        <span className="text-stone-600 dark:text-stone-400">
-                          -{formatMoney(visibleTableTotals.comisionUsd, 'USD')}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] uppercase text-stone-400">Neto </span>
-                        <strong className="text-emerald-700 dark:text-emerald-400">
-                          {formatMoney(visibleTableTotals.netoUsd, 'USD')}
-                        </strong>
-                        {visibleTableTotals.netoUsdt > 0 && (
-                          <span className="ml-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
-                            / {formatMoney(visibleTableTotals.netoUsdt, 'USDT')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              {/* DERECHA (5 cols ≈ 40%): Inspector Sticky en Escritorio */}
-              <aside
-                aria-label="Inspector de Movimiento"
-                className="hidden lg:sticky lg:top-6 lg:col-span-5 lg:block"
-              >
-                {(() => {
-                  const alert = selectedInspectorAlert;
-                  if (!alert) {
-                    return (
-                      <div className="rounded-xl border border-stone-200/90 bg-white p-8 text-center shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
-                        <FileText
-                          className="mx-auto h-8 w-8 text-stone-300 dark:text-stone-700"
-                          strokeWidth={1.5}
-                        />
-                        <p className="mt-3 font-serif text-base text-stone-700 dark:text-stone-300">
-                          Ningún movimiento seleccionado
-                        </p>
-                        <p className="mt-1 text-xs text-stone-500 dark:text-stone-400">
-                          Haz clic en cualquier fila de la izquierda para auditar el correo bancario, el comprobante y ejecutar acciones.
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  const badge = getPlatformBadgeMeta(alert.plataforma);
-                  const candidateOrder = findAssociatedCaptureOrder(alert);
-                  const hasCapture = Boolean(
-                    alert.has_capture ||
-                      alert.comprobante_base64 ||
-                      candidateOrder?.has_capture ||
-                      candidateOrder?.comprobante_base64
-                  );
-                  const reportedSender =
-                    alert.remitente_reportado ||
-                    candidateOrder?.remitente_reportado ||
-                    candidateOrder?.nombre_remitente_reportado ||
-                    null;
-                  const reportedCode =
-                    alert.codigo_orden || candidateOrder?.codigo_orden || null;
-                  const reportedRef =
-                    alert.referencia_reportada ||
-                    candidateOrder?.referencia_reportada ||
-                    null;
-                  const senderSimilarity =
-                    reportedSender && alert.remitente_o_contraparte
-                      ? calculateSenderSimilarity(
-                          reportedSender,
-                          alert.remitente_o_contraparte
-                        )
-                      : 1;
-                  const isRefVerified = referencesMatch(
-                    reportedRef,
-                    alert.referencia
-                  );
-                  const hasNameDisparity = Boolean(
-                    reportedSender &&
-                      alert.remitente_o_contraparte &&
-                      senderSimilarity < 0.65 &&
-                      !(isRefVerified && senderSimilarity >= 0.4)
-                  );
-
-                  return (
-                    <div className="overflow-hidden rounded-xl border border-stone-200/90 bg-white shadow-sm dark:border-stone-800 dark:bg-[#1C1A18]">
-                      {/* Cabecera Inspector */}
-                      <div className="border-b border-stone-200 px-5 py-4 dark:border-stone-800">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium ${badge.badgeClass}`}
-                            >
-                              {badge.label}
-                            </span>
-                            {alert.tipo_movimiento === 'RECIBIDO' ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                                <ArrowDownLeft className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                Recibido
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 dark:text-rose-400">
-                                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                Enviado
-                              </span>
-                            )}
-                          </div>
-
-                          {alert.liquidado_at ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-stone-300 bg-stone-100 px-2.5 py-0.5 text-[11px] font-medium text-stone-700 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300">
-                              {alert.numero_ciclo
-                                ? `CICLO #${alert.numero_ciclo} · LIQUIDADO`
-                                : 'LIQUIDADO'}
-                            </span>
-                          ) : alert.estado === 'CONCILIADO' ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-700/20 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-950/40 dark:text-emerald-400">
-                              <CheckCircle2 className="h-3 w-3" strokeWidth={1.5} />
-                              CONCILIADO
-                            </span>
-                          ) : alert.estado === 'REVISION_MANUAL' ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
-                              <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
-                              REVISIÓN MANUAL
-                            </span>
-                          ) : alert.estado === 'DETECTADO' ? (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-700/25 bg-amber-50/70 px-2.5 py-0.5 text-[11px] font-medium text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-400">
-                              <Clock className="h-3 w-3" strokeWidth={1.5} />
-                              DETECTADO
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full border border-rose-700/25 bg-rose-50 px-2.5 py-0.5 text-[11px] font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400">
-                              <Trash2 className="h-3 w-3" strokeWidth={1.5} />
-                              ELIMINADO
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className="mt-2.5 font-serif text-xl font-medium tracking-tight text-stone-900 dark:text-stone-100">
-                          {alert.remitente_o_contraparte || 'Remitente no identificado'}
-                        </h3>
-                        <p className="mt-0.5 font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
-                          {formatDateTime(alert.fecha_transaccion)} · Ref.{' '}
-                          <span className="font-semibold text-stone-700 dark:text-stone-300">
-                            {alert.referencia || 'SIN-REF'}
-                          </span>
-                        </p>
-                      </div>
-
-                      {/* Desglose Financiero */}
-                      <div className="grid grid-cols-3 divide-x divide-stone-200 border-b border-stone-200 bg-[#FAF9F6]/70 dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]/60">
-                        <div className="px-4 py-3">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                            Monto Bruto
-                          </span>
-                          <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                            {formatMoney(alert.monto_bruto, alert.moneda)}
-                          </p>
-                        </div>
-                        <div className="px-4 py-3">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                            Comisión
-                          </span>
-                          <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-stone-900 dark:text-stone-100">
-                            {alert.estado === 'CONCILIADO' && alert.monto_comision > 0
-                              ? `-${formatMoney(alert.monto_comision, alert.moneda)}`
-                              : formatMoney(0, alert.moneda)}
-                          </p>
-                          {alert.estado === 'CONCILIADO' && (
-                            <span className="font-mono text-[10px] text-stone-500">
-                              {alert.porcentaje_comision}%
-                            </span>
-                          )}
-                        </div>
-                        <div className="px-4 py-3">
-                          <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                            Monto Neto
-                          </span>
-                          <p
-                            className={`mt-0.5 font-mono text-sm font-semibold tabular-nums ${
-                              alert.estado === 'CONCILIADO'
-                                ? 'text-emerald-700 dark:text-emerald-400'
-                                : 'text-stone-900 dark:text-stone-100'
-                            }`}
-                          >
-                            {alert.estado === 'CONCILIADO'
-                              ? formatMoney(alert.monto_neto, alert.moneda)
-                              : formatMoney(alert.monto_bruto, alert.moneda)}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Cuerpo del Inspector: Titular, Reporte Cliente, Auditoría y Captura */}
-                      <div className="space-y-4 p-5">
-                        <dl className="grid grid-cols-2 gap-3 text-xs">
-                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
-                            <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                              Titular Asignado
-                            </dt>
-                            <dd className="mt-1 font-medium text-stone-900 dark:text-stone-100">
-                              {alert.cliente_asignado_nombre ? (
-                                <span className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
-                                  <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                  {alert.cliente_asignado_nombre}
-                                </span>
-                              ) : (
-                                <span className="text-stone-400 dark:text-stone-500">
-                                  En espera de orden
-                                </span>
-                              )}
-                            </dd>
-                          </div>
-
-                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
-                            <dt className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                              Orden / Liquidación
-                            </dt>
-                            <dd className="mt-1 font-mono text-stone-800 dark:text-stone-200">
-                              {reportedCode ?? '—'}
-                              {alert.codigo_liquidacion && (
-                                <span className="block text-[10px] text-amber-700 dark:text-amber-400">
-                                  {alert.codigo_liquidacion}
-                                </span>
-                              )}
-                            </dd>
-                          </div>
-                        </dl>
-
-                        {/* Comparativa con Reporte del Cliente */}
-                        <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3.5 text-xs dark:border-stone-800 dark:bg-[#121110]">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                              Reporte del Cliente (Portal)
-                            </span>
-                            {hasNameDisparity && (
-                              <span className="inline-flex items-center gap-1 rounded border border-amber-700/30 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 dark:border-amber-500/35 dark:bg-amber-950/40 dark:text-amber-400">
-                                <AlertTriangle className="h-3 w-3" strokeWidth={1.5} />
-                                Diferencia de nombre
-                              </span>
-                            )}
-                          </div>
-                          {reportedSender || reportedRef ? (
-                            <div className="mt-2 grid grid-cols-2 gap-2">
-                              <div>
-                                <span className="text-[10px] text-stone-400">Remitente reportado</span>
-                                <p className="font-medium text-stone-900 dark:text-stone-100">
-                                  {reportedSender ?? '—'}
-                                </p>
                               </div>
-                              <div>
-                                <span className="text-[10px] text-stone-400">Ref. reportada</span>
-                                <p className="font-mono font-medium text-stone-900 dark:text-stone-100">
-                                  {reportedRef ?? '—'}
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="mt-1.5 italic text-stone-400 dark:text-stone-500">
-                              Sin reporte del cliente asociado aún.
-                            </p>
-                          )}
-                          {alert.nota_auditoria && (
-                            <p className="mt-2 border-t border-stone-200 pt-2 text-[11px] text-stone-500 dark:border-stone-800 dark:text-stone-400">
-                              Nota: {alert.nota_auditoria}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Vista Previa Rápida de Captura */}
-                        {hasCapture && (
-                          <div className="rounded-lg border border-stone-200/80 bg-[#FAF9F6] p-3 dark:border-stone-800 dark:bg-[#121110]">
-                            <div className="mb-2 flex items-center justify-between">
-                              <span className="text-[10px] font-medium uppercase tracking-wider text-stone-500 dark:text-stone-400">
-                                Comprobante del Cliente
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => void openLightboxForTx(alert)}
-                                className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 hover:underline dark:text-amber-500 cursor-pointer"
-                              >
-                                <Eye className="h-3 w-3" strokeWidth={1.5} />
-                                Ampliar
-                              </button>
-                            </div>
-                            {isLoadingInspectorPreview ? (
-                              <div className="flex h-36 items-center justify-center rounded-md border border-dashed border-stone-300 text-xs text-stone-400 dark:border-stone-700">
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" strokeWidth={1.5} />
-                                Cargando comprobante...
-                              </div>
-                            ) : inspectorPreviewBase64 ? (
-                              <button
-                                type="button"
-                                onClick={() => void openLightboxForTx(alert)}
-                                className="block w-full overflow-hidden rounded-md border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950 cursor-pointer"
-                              >
-                                <img
-                                  src={inspectorPreviewBase64}
-                                  alt="Vista previa de comprobante"
-                                  className="mx-auto max-h-48 w-full object-contain"
-                                />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => void openLightboxForTx(alert)}
-                                className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-stone-300 py-5 text-xs font-medium text-stone-600 transition hover:border-amber-700 hover:text-stone-900 dark:border-stone-700 dark:text-stone-400 dark:hover:text-stone-100 cursor-pointer"
-                              >
-                                <ImageIcon className="h-4 w-4" strokeWidth={1.5} />
-                                Abrir captura en visor completo
-                              </button>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Acciones del Inspector */}
-                        <div className="flex flex-wrap items-center gap-2 border-t border-stone-200 pt-4 dark:border-stone-800">
-                          {alert.estado !== 'CONCILIADO' &&
-                            alert.estado !== 'DESCARTADO' &&
-                            !alert.liquidado_at &&
-                            alert.tipo_movimiento === 'RECIBIDO' && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openManualReconciliationModal(
-                                    alert,
-                                    candidateOrder
-                                  )
-                                }
-                                className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
-                              >
-                                <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                Conciliar
-                              </button>
-                            )}
-
-                          {hasCapture && (
-                            <button
-                              type="button"
-                              onClick={() => void openLightboxForTx(alert)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
-                            >
-                              <ImageIcon className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
-                              Ver Captura
-                            </button>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => setInspectedAlert(alert)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#121110] dark:text-stone-200 dark:hover:bg-stone-900"
-                          >
-                            <FileText className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
-                            Payload
-                          </button>
-
-                          {alert.estado !== 'CONCILIADO' &&
-                            alert.estado !== 'DESCARTADO' &&
-                            !alert.liquidado_at && (
-                              <button
-                                type="button"
-                                onClick={() => openDiscardModalForAlerts([alert])}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
-                                Eliminar
-                              </button>
-                            )}
-
-                          {alert.estado === 'DESCARTADO' && (
-                            <button
-                              type="button"
-                              disabled={restoringAlertId === alert.id}
-                              onClick={() => void handleRestoreDiscardedAlert(alert)}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/25 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 cursor-pointer dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
-                            >
-                              {restoringAlertId === alert.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.5} />
-                              ) : (
-                                <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
-                              )}
-                              Restaurar
-                            </button>
-                          )}
-
-                          {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setAlertToRevert(alert);
-                                setRevertReason('');
-                              }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
-                              Deshacer
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </aside>
-            </div>
-
-            {/* Bottom Sheet Móvil para el Inspector (< lg) */}
-            <Dialog.Root
-              open={isMobileInspectorOpen && Boolean(selectedInspectorAlert)}
-              onOpenChange={setIsMobileInspectorOpen}
-            >
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-40 bg-stone-950/50 backdrop-blur-sm lg:hidden" />
-                <Dialog.Content className="fixed inset-x-0 bottom-0 z-50 max-h-[86vh] overflow-y-auto rounded-t-2xl border-t border-stone-200 bg-white p-5 text-stone-900 shadow-2xl dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-100 lg:hidden">
-                  <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-stone-300 dark:bg-stone-700" />
-                  {selectedInspectorAlert &&
-                    (() => {
-                      const alert = selectedInspectorAlert;
-                      const badge = getPlatformBadgeMeta(alert.plataforma);
-                      const candidateOrder = findAssociatedCaptureOrder(alert);
-                      const hasCapture = Boolean(
-                        alert.has_capture ||
-                          alert.comprobante_base64 ||
-                          candidateOrder?.has_capture ||
-                          candidateOrder?.comprobante_base64
-                      );
-                      const reportedSender =
-                        alert.remitente_reportado ||
-                        candidateOrder?.remitente_reportado ||
-                        candidateOrder?.nombre_remitente_reportado ||
-                        null;
-                      const reportedRef =
-                        alert.referencia_reportada ||
-                        candidateOrder?.referencia_reportada ||
-                        null;
-
-                      return (
-                        <div className="space-y-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`inline-flex items-center rounded border px-2 py-0.5 text-[10px] font-medium ${badge.badgeClass}`}
-                                >
-                                  {badge.label}
-                                </span>
-                                <span className="font-mono text-xs text-stone-500">
-                                  {alert.referencia || 'SIN-REF'}
-                                </span>
-                              </div>
-                              <Dialog.Title className="mt-1.5 font-serif text-lg font-medium text-stone-900 dark:text-stone-100">
-                                {alert.remitente_o_contraparte || 'Remitente no identificado'}
-                              </Dialog.Title>
-                              <Dialog.Description className="font-mono text-xs tabular-nums text-stone-500 dark:text-stone-400">
-                                {formatDateTime(alert.fecha_transaccion)}
-                              </Dialog.Description>
-                            </div>
-                            <Dialog.Close asChild>
-                              <button
-                                type="button"
-                                className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100 dark:hover:bg-stone-800"
-                              >
-                                <X className="h-4 w-4" strokeWidth={1.5} />
-                              </button>
-                            </Dialog.Close>
-                          </div>
-
-                          <div className="grid grid-cols-3 divide-x divide-stone-200 rounded-lg border border-stone-200 bg-[#FAF9F6] dark:divide-stone-800 dark:border-stone-800 dark:bg-[#121110]">
-                            <div className="px-3 py-2.5">
-                              <span className="text-[10px] uppercase text-stone-500">Bruto</span>
-                              <p className="font-mono text-sm font-semibold tabular-nums">
-                                {formatMoney(alert.monto_bruto, alert.moneda)}
-                              </p>
-                            </div>
-                            <div className="px-3 py-2.5">
-                              <span className="text-[10px] uppercase text-stone-500">Com.</span>
-                              <p className="font-mono text-sm font-semibold tabular-nums">
-                                -{formatMoney(alert.monto_comision, alert.moneda)}
-                              </p>
-                            </div>
-                            <div className="px-3 py-2.5">
-                              <span className="text-[10px] uppercase text-stone-500">Neto</span>
-                              <p className="font-mono text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
-                                {formatMoney(
-                                  alert.estado === 'CONCILIADO'
-                                    ? alert.monto_neto
-                                    : alert.monto_bruto,
-                                  alert.moneda
-                                )}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="rounded-lg border border-stone-200 bg-[#FAF9F6] p-3 text-xs dark:border-stone-800 dark:bg-[#121110]">
-                            <p>
-                              <span className="text-stone-500">Titular: </span>
-                              <strong className="font-medium">
-                                {alert.cliente_asignado_nombre ?? 'Sin titular asignado'}
-                              </strong>
-                            </p>
-                            {reportedSender && (
-                              <p className="mt-1">
-                                <span className="text-stone-500">Reportado: </span>
-                                <span className="font-medium">{reportedSender}</span>
-                                {reportedRef && (
-                                  <span className="ml-1.5 font-mono text-stone-500">
-                                    ({reportedRef})
-                                  </span>
-                                )}
-                              </p>
                             )}
                           </div>
 
-                          {hasCapture && inspectorPreviewBase64 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setIsMobileInspectorOpen(false);
-                                void openLightboxForTx(alert);
-                              }}
-                              className="block w-full overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-950"
-                            >
-                              <img
-                                src={inspectorPreviewBase64}
-                                alt="Comprobante"
-                                className="mx-auto max-h-44 w-full object-contain"
-                              />
-                            </button>
-                          )}
-
-                          <div className="flex flex-wrap gap-2 pt-2">
+                          {/* Pie fijo con acciones del Drawer */}
+                          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-stone-200 bg-[#FAF9F6] px-5 py-3.5 dark:border-stone-800 dark:bg-[#121110]">
                             {alert.estado !== 'CONCILIADO' &&
                               alert.estado !== 'DESCARTADO' &&
                               !alert.liquidado_at &&
@@ -5662,13 +5747,13 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setIsMobileInspectorOpen(false);
+                                    setIsInspectorDrawerOpen(false);
                                     openManualReconciliationModal(
                                       alert,
                                       candidateOrder
                                     );
                                   }}
-                                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2.5 text-xs font-medium text-stone-50 dark:bg-stone-100 dark:text-stone-950"
+                                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-3.5 py-2 text-xs font-medium text-stone-50 shadow-sm transition hover:bg-stone-800 cursor-pointer dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
                                 >
                                   <UserCheck className="h-3.5 w-3.5" strokeWidth={1.5} />
                                   Conciliar
@@ -5678,35 +5763,35 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setIsMobileInspectorOpen(false);
+                                  setIsInspectorDrawerOpen(false);
                                   void openLightboxForTx(alert);
                                 }}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2.5 text-xs font-medium dark:border-stone-800"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:bg-stone-900"
                               >
-                                <ImageIcon className="h-3.5 w-3.5" strokeWidth={1.5} />
+                                <ImageIcon className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
                                 Captura
                               </button>
                             )}
                             <button
                               type="button"
                               onClick={() => {
-                                setIsMobileInspectorOpen(false);
+                                setIsInspectorDrawerOpen(false);
                                 setInspectedAlert(alert);
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 px-3 py-2.5 text-xs font-medium dark:border-stone-800"
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-700 transition hover:bg-stone-50 cursor-pointer dark:border-stone-800 dark:bg-[#1C1A18] dark:text-stone-200 dark:hover:bg-stone-900"
                             >
-                              <FileText className="h-3.5 w-3.5" strokeWidth={1.5} />
+                              <FileText className="h-3.5 w-3.5 text-stone-400" strokeWidth={1.5} />
                               Payload
                             </button>
                             {alert.estado === 'CONCILIADO' && !alert.liquidado_at && (
                               <button
                                 type="button"
                                 onClick={() => {
-                                  setIsMobileInspectorOpen(false);
+                                  setIsInspectorDrawerOpen(false);
                                   setAlertToRevert(alert);
                                   setRevertReason('');
                                 }}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
                               >
                                 <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
                                 Deshacer
@@ -5718,10 +5803,10 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setIsMobileInspectorOpen(false);
+                                    setIsInspectorDrawerOpen(false);
                                     openDiscardModalForAlerts([alert]);
                                   }}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400"
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-rose-700/25 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 transition hover:bg-rose-100 cursor-pointer dark:border-rose-500/35 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/70"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" strokeWidth={1.5} />
                                   Eliminar
@@ -5732,17 +5817,17 @@ export default function BankReconciliationPanel(): React.JSX.Element {
                                 type="button"
                                 disabled={restoringAlertId === alert.id}
                                 onClick={() => {
-                                  setIsMobileInspectorOpen(false);
+                                  setIsInspectorDrawerOpen(false);
                                   void handleRestoreDiscardedAlert(alert);
                                 }}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/25 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-700 dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-700/25 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 cursor-pointer dark:border-emerald-500/35 dark:bg-emerald-950/40 dark:text-emerald-400"
                               >
                                 <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.5} />
                                 Restaurar
                               </button>
                             )}
                           </div>
-                        </div>
+                        </>
                       );
                     })()}
                 </Dialog.Content>
